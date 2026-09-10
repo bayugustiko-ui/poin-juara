@@ -1,0 +1,963 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Poin Juara</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<style>
+:root{
+  --bg:#F3F5F9; --surface:#FFFFFF; --surface-2:#E8EBF2; --border:#D7DCE6;
+  --text:#171A24; --text-muted:#5C6474;
+  --accent:#245C4B; --accent-strong:#14332A; --accent-soft:#DCEEE8; --accent-contrast:#FFFFFF;
+  --gold:#A9782E;
+  --good:#2E7D4F; --good-soft:#E1F1E6;
+  --warn:#B7862E; --warn-soft:#F6EAD4;
+  --bad:#B23B2E; --bad-soft:#F8E3DF;
+  --team-ds:#2C6E63; --team-ds-soft:#DFEFEB;
+  --team-ypcr:#3A4E8C; --team-ypcr-soft:#E2E6F5;
+  --team-buddies:#9C4A2E; --team-buddies-soft:#F3E3DA;
+  --shadow:0 1px 2px rgba(23,26,36,.06), 0 8px 24px -12px rgba(23,26,36,.18);
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#10141B; --surface:#171C26; --surface-2:#202632; --border:#2C3341;
+    --text:#EDEFF3; --text-muted:#9AA3B2;
+    --accent:#57B79E; --accent-strong:#8AD4BE; --accent-soft:#1B2E29; --accent-contrast:#0C1712;
+    --gold:#D3A24C; --good:#4FAE76; --good-soft:#1B2E22; --warn:#D3A24C; --warn-soft:#332815;
+    --bad:#E0685A; --bad-soft:#331E1B;
+    --team-ds:#4FA593; --team-ds-soft:#17302B; --team-ypcr:#7C8EE0; --team-ypcr-soft:#1E2338;
+    --team-buddies:#D98B63; --team-buddies-soft:#33221A;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 24px -12px rgba(0,0,0,.5);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#10141B; --surface:#171C26; --surface-2:#202632; --border:#2C3341;
+  --text:#EDEFF3; --text-muted:#9AA3B2;
+  --accent:#57B79E; --accent-strong:#8AD4BE; --accent-soft:#1B2E29; --accent-contrast:#0C1712;
+  --gold:#D3A24C; --good:#4FAE76; --good-soft:#1B2E22; --warn:#D3A24C; --warn-soft:#332815;
+  --bad:#E0685A; --bad-soft:#331E1B;
+  --team-ds:#4FA593; --team-ds-soft:#17302B; --team-ypcr:#7C8EE0; --team-ypcr-soft:#1E2338;
+  --team-buddies:#D98B63; --team-buddies-soft:#33221A;
+  --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 24px -12px rgba(0,0,0,.5);
+  color-scheme:dark;
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--bg);color:var(--text);font-family:'Public Sans',system-ui,sans-serif;line-height:1.5;-webkit-font-smoothing:antialiased;}
+h1,h2,h3,.disp{font-family:'Sora',system-ui,sans-serif;text-wrap:balance;margin:0;}
+.mono{font-family:'IBM Plex Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums;}
+a{color:inherit;} button{font-family:inherit;}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+#app{max-width:1040px;margin:0 auto;padding:0 16px 64px;min-height:100vh;}
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 0 14px;border-bottom:1px solid var(--border);margin-bottom:20px;flex-wrap:wrap;}
+.brand{display:flex;align-items:center;gap:10px;}
+.brand-mark{width:36px;height:36px;border-radius:10px;background:linear-gradient(155deg,var(--accent),var(--accent-strong));color:var(--accent-contrast);display:flex;align-items:center;justify-content:center;font-family:'Sora',sans-serif;font-weight:700;font-size:15px;flex:none;}
+.brand-name{font-family:'Sora',sans-serif;font-weight:700;font-size:18px;letter-spacing:-0.01em;}
+.brand-tag{font-size:12px;color:var(--text-muted);}
+.user-chip{display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:6px 8px 6px 14px;box-shadow:var(--shadow);}
+.user-chip .who{font-size:13px;font-weight:600;}
+.link-btn{background:none;border:none;color:var(--text-muted);font-size:13px;cursor:pointer;text-decoration:underline;text-underline-offset:2px;padding:4px;}
+.link-btn:hover{color:var(--text);}
+.nav-tabs{display:flex;gap:6px;overflow-x:auto;padding-bottom:2px;margin-bottom:24px;-ms-overflow-style:none;scrollbar-width:none;}
+.nav-tabs::-webkit-scrollbar{display:none;}
+.nav-tab{white-space:nowrap;padding:9px 16px;border-radius:10px;border:1px solid transparent;background:transparent;color:var(--text-muted);font-weight:600;font-size:14px;cursor:pointer;}
+.nav-tab:hover{color:var(--text);}
+.nav-tab.active{background:var(--surface);border-color:var(--border);color:var(--text);box-shadow:var(--shadow);}
+.stack{display:flex;flex-direction:column;gap:16px;}
+.grid{display:grid;gap:16px;}
+.grid.cols-3{grid-template-columns:repeat(3,1fr);}
+.grid.cols-2{grid-template-columns:repeat(2,1fr);}
+@media (max-width:720px){.grid.cols-3,.grid.cols-2{grid-template-columns:1fr;}}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:20px;box-shadow:var(--shadow);}
+.card.tight{padding:16px;}
+.section-title{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);font-weight:600;margin:0 0 12px;}
+.stat-card{display:flex;flex-direction:column;gap:6px;}
+.stat-card .label{font-size:13px;color:var(--text-muted);font-weight:500;}
+.stat-card .value{font-family:'Sora',sans-serif;font-size:30px;font-weight:700;}
+.stat-card .sub{font-size:12.5px;color:var(--text-muted);}
+.stat-card.accent{background:linear-gradient(155deg,var(--accent-soft),var(--surface));border-color:var(--accent-soft);}
+.stat-card.accent .value{color:var(--accent-strong);}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:11px 20px;border-radius:11px;border:1px solid transparent;font-weight:600;font-size:14.5px;cursor:pointer;}
+.btn:active{transform:scale(.98);}
+.btn-primary{background:var(--accent);color:var(--accent-contrast);}
+.btn-primary:hover{background:var(--accent-strong);}
+.btn-primary:disabled{opacity:.45;cursor:not-allowed;}
+.btn-ghost{background:var(--surface);border-color:var(--border);color:var(--text);}
+.btn-ghost:hover{background:var(--surface-2);}
+.btn-danger{background:var(--bad-soft);color:var(--bad);}
+.btn-sm{padding:7px 13px;font-size:13px;border-radius:9px;}
+.btn-block{width:100%;}
+.badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;}
+.badge-team-ds{background:var(--team-ds-soft);color:var(--team-ds);}
+.badge-team-ypcr{background:var(--team-ypcr-soft);color:var(--team-ypcr);}
+.badge-team-buddies{background:var(--team-buddies-soft);color:var(--team-buddies);}
+.badge-good{background:var(--good-soft);color:var(--good);}
+.badge-warn{background:var(--warn-soft);color:var(--warn);}
+.badge-bad{background:var(--bad-soft);color:var(--bad);}
+.field{display:flex;flex-direction:column;gap:6px;}
+.field label{font-size:13px;font-weight:600;color:var(--text-muted);}
+.field input[type=text],.field input[type=tel],.field input[type=number],.field input[type=password],.field input[type=email],.field select{
+  padding:11px 13px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14.5px;font-family:inherit;width:100%;
+}
+.field input:focus,.field select:focus{border-color:var(--accent);}
+.field .hint{font-size:12px;color:var(--text-muted);}
+.seg{display:flex;border:1px solid var(--border);border-radius:11px;overflow:hidden;}
+.seg button{flex:1;padding:10px 8px;background:var(--surface);border:none;border-right:1px solid var(--border);color:var(--text-muted);font-weight:600;font-size:13.5px;cursor:pointer;}
+.seg button:last-child{border-right:none;}
+.seg button.active{background:var(--accent);color:var(--accent-contrast);}
+.empty-msg{color:var(--text-muted);font-size:14px;padding:20px 0;text-align:center;}
+.photo-box{display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
+.photo-preview{width:88px;height:88px;border-radius:12px;object-fit:cover;border:1px solid var(--border);background:var(--surface-2);flex:none;}
+.photo-placeholder{width:88px;height:88px;border-radius:12px;border:1.5px dashed var(--border);display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:11px;text-align:center;flex:none;background:var(--surface-2);}
+.opt{display:flex;align-items:flex-start;gap:11px;border:1.5px solid var(--border);border-radius:12px;padding:13px 14px;cursor:pointer;margin-bottom:9px;background:var(--surface);}
+.opt:has(input:checked){border-color:var(--accent);background:var(--accent-soft);}
+.opt input{margin-top:3px;accent-color:var(--accent);flex:none;}
+.opt-text{font-size:14.5px;}
+.progress-track{height:8px;border-radius:99px;background:var(--surface-2);overflow:hidden;}
+.progress-fill{height:100%;background:var(--accent);border-radius:99px;transition:width .25s ease;}
+.leader-row{display:flex;align-items:center;gap:14px;padding:12px 4px;border-bottom:1px solid var(--border);}
+.leader-row:last-child{border-bottom:none;}
+.leader-row.me{background:var(--accent-soft);border-radius:12px;padding:12px 12px;border-bottom:none;}
+.rank-chip{width:32px;height:32px;border-radius:9px;background:var(--surface-2);color:var(--text-muted);display:flex;align-items:center;justify-content:center;font-family:'Sora',sans-serif;font-weight:700;font-size:13px;flex:none;}
+.rank-chip.top1{background:var(--gold);color:#fff;}
+.rank-chip.top2{background:#9AA3B2;color:#fff;}
+.rank-chip.top3{background:#B4805A;color:#fff;}
+.leader-name{font-weight:600;font-size:14.5px;}
+.leader-points{margin-left:auto;font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:15px;}
+.prize-card{display:flex;flex-direction:column;gap:10px;}
+.prize-name{font-weight:700;font-size:15.5px;font-family:'Sora',sans-serif;}
+.prize-cost{font-family:'IBM Plex Mono',monospace;font-weight:600;color:var(--gold);font-size:15px;}
+.prize-stock{font-size:12.5px;color:var(--text-muted);}
+.table-wrap{overflow-x:auto;}
+table{width:100%;border-collapse:collapse;font-size:13.5px;}
+th{text-align:left;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:600;padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap;}
+td{padding:10px;border-bottom:1px solid var(--border);vertical-align:middle;}
+tr:last-child td{border-bottom:none;}
+.thumb{width:38px;height:38px;border-radius:8px;object-fit:cover;border:1px solid var(--border);cursor:pointer;background:var(--surface-2);}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:12px 20px;border-radius:11px;font-size:13.5px;font-weight:600;box-shadow:var(--shadow);z-index:50;max-width:90vw;}
+.toast.error{background:var(--bad);color:#fff;}
+.toast.success{background:var(--good);color:#fff;}
+.modal-backdrop{position:fixed;inset:0;background:rgba(10,12,16,.55);display:flex;align-items:center;justify-content:center;z-index:60;padding:20px;}
+.modal{background:var(--surface);border-radius:16px;padding:22px;max-width:480px;width:100%;max-height:85vh;overflow-y:auto;box-shadow:var(--shadow);}
+.modal img{width:100%;border-radius:10px;}
+hr.sep{border:none;border-top:1px solid var(--border);margin:6px 0;}
+.subhead{font-size:12.5px;color:var(--text-muted);margin-top:-6px;}
+.pill-toggle{display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:600;}
+.switch{width:36px;height:21px;border-radius:99px;background:var(--surface-2);border:1px solid var(--border);position:relative;flex:none;}
+.switch.on{background:var(--accent);}
+.switch::after{content:'';position:absolute;top:2px;left:2px;width:15px;height:15px;border-radius:50%;background:#fff;transition:transform .15s;}
+.switch.on::after{transform:translateX(15px);}
+.qcard{border:1px solid var(--border);border-radius:12px;padding:14px;background:var(--bg);}
+.footer-note{text-align:center;color:var(--text-muted);font-size:12px;margin-top:36px;}
+.compare-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.compare-grid img{width:100%;border-radius:10px;border:1px solid var(--border);}
+.compare-grid .lbl{font-size:12px;color:var(--text-muted);margin-top:4px;text-align:center;}
+</style>
+</head>
+<body>
+<div id="app"><div class="empty-msg">Memuat Poin Juara&hellip;</div></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+<script>
+(function(){
+"use strict";
+
+var firebaseConfig = {
+  apiKey: "AIzaSyD8B23YRj-O2lLk5NBrUODrpRje9p_DdGU",
+  authDomain: "poin-juara.firebaseapp.com",
+  projectId: "poin-juara",
+  storageBucket: "poin-juara.firebasestorage.app",
+  messagingSenderId: "37955518486",
+  appId: "1:37955518486:web:ea63f97589c379fe217537"
+};
+firebase.initializeApp(firebaseConfig);
+var db = firebase.firestore();
+var auth = firebase.auth();
+
+var TEAMS = ["Direct Sales","YPCR","Buddies"];
+function teamKey(t){ if(t==="Direct Sales") return "ds"; if(t==="YPCR") return "ypcr"; return "buddies"; }
+function esc(s){
+  return String(s==null?"":s).replace(/[&<>"']/g,function(c){
+    return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+  });
+}
+function fmtDate(iso){
+  if(!iso) return "-";
+  try{
+    var d = new Date(iso);
+    return d.toLocaleDateString('id-ID',{day:'numeric',month:'short',year:'numeric'}) + " " + d.toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit'});
+  }catch(e){ return iso; }
+}
+
+var LS_KEY = "pj_member_id";
+
+var state = {
+  view: "loading", memberId: null, adminUser: null,
+  identifyMode: "search", identifySearch: "",
+  registerName: "", registerTeam: "", registerPhone: "", registerPhoto: null,
+  activeQuizId: null, quizStep: 1, quizPhoto: null, quizAnswers: {}, lastResult: null,
+  adminTab: "members", adminEmail: "", adminPassword: "", adminError: "",
+  adminMembersFilter: "all", leaderboardFilter: "all",
+  newQuizTitle: "", editingQuizId: null,
+  qDraft: {text:"",opts:["","","",""],correct:0,points:10},
+  newPrize: {name:"",cost:"",stock:""},
+  compareModal: null, toast: null,
+};
+
+var cache = {
+  members: {}, membersLoaded:false,
+  membersPrivate: {},
+  quizzes: {}, quizzesLoaded:false,
+  submissions: {}, submissionsLoaded:false,
+  submissionsPrivate: {},
+  prizes: {}, prizesLoaded:false,
+  redemptions: {}, redemptionsLoaded:false,
+};
+var unsubPrivate = [];
+
+function showToast(type,msg){
+  state.toast = {type:type,msg:msg};
+  renderApp();
+  setTimeout(function(){ state.toast=null; renderApp(); }, 2600);
+}
+
+function memberList(){ return Object.keys(cache.members).map(function(id){ return Object.assign({id:id}, cache.members[id]); }); }
+function submissionList(){ return Object.keys(cache.submissions).map(function(id){ return Object.assign({id:id}, cache.submissions[id]); }); }
+function redemptionList(){ return Object.keys(cache.redemptions).map(function(id){ return Object.assign({id:id}, cache.redemptions[id]); }); }
+function pointsForMember(memberId){
+  var total = 0;
+  submissionList().forEach(function(s){ if(s.memberId===memberId) total += (s.pointsEarned||0); });
+  return total;
+}
+function spentForMember(memberId){
+  var total = 0;
+  redemptionList().forEach(function(r){ if(r.memberId===memberId && (r.status==="pending"||r.status==="fulfilled")) total += (r.pointCost||0); });
+  return total;
+}
+function balanceForMember(memberId){ return pointsForMember(memberId) - spentForMember(memberId); }
+function rankedMembers(teamFilter){
+  var list = memberList().map(function(m){ return Object.assign({}, m, {totalPoints: pointsForMember(m.id)}); });
+  if(teamFilter && teamFilter!=="all") list = list.filter(function(m){ return m.team===teamFilter; });
+  list.sort(function(a,b){ return b.totalPoints - a.totalPoints; });
+  return list;
+}
+function currentMember(){ return state.memberId ? Object.assign({id:state.memberId}, cache.members[state.memberId]) : null; }
+function memberSubmissions(memberId){ return submissionList().filter(function(s){ return s.memberId===memberId; }); }
+function memberRedemptions(memberId){ return redemptionList().filter(function(r){ return r.memberId===memberId; }).sort(function(a,b){ return (b.requestedAt||"").localeCompare(a.requestedAt||""); }); }
+function availableQuizzes(memberId){
+  var taken = {};
+  memberSubmissions(memberId).forEach(function(s){ taken[s.quizId]=true; });
+  return Object.keys(cache.quizzes).map(function(id){ return Object.assign({id:id}, cache.quizzes[id]); })
+    .filter(function(q){ return q.active; })
+    .map(function(q){ return Object.assign({}, q, {taken: !!taken[q.id]}); });
+}
+function activePrizes(){
+  return Object.keys(cache.prizes).map(function(id){ return Object.assign({id:id}, cache.prizes[id]); }).filter(function(p){ return p.active!==false; });
+}
+
+function compressPhoto(file){
+  return new Promise(function(resolve,reject){
+    var reader = new FileReader();
+    reader.onload = function(){
+      var img = new Image();
+      img.onload = function(){
+        var maxDim = 480;
+        var w = img.width, h = img.height;
+        if(w > h && w > maxDim){ h = Math.round(h*maxDim/w); w = maxDim; }
+        else if(h >= w && h > maxDim){ w = Math.round(w*maxDim/h); h = maxDim; }
+        var canvas = document.createElement("canvas");
+        canvas.width = w; canvas.height = h;
+        var ctx = canvas.getContext("2d");
+        ctx.drawImage(img,0,0,w,h);
+        resolve(canvas.toDataURL("image/jpeg",0.6));
+      };
+      img.onerror = reject;
+      img.src = reader.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function teamBadge(team){ return '<span class="badge badge-team-'+teamKey(team)+'">'+esc(team)+'</span>'; }
+function photoField(dataUrl, inputName, label){
+  return '<div class="photo-box">'+
+    (dataUrl ? '<img class="photo-preview" src="'+dataUrl+'">' : '<div class="photo-placeholder">Belum ada foto</div>')+
+    '<div class="stack" style="gap:8px;">'+
+      '<label class="btn btn-ghost btn-sm" style="cursor:pointer;">'+ (dataUrl?"Ambil Ulang":"Ambil Foto") +
+        '<input type="file" accept="image/*" capture="user" data-photo-input="'+inputName+'" style="display:none;">'+
+      '</label>'+
+      '<div class="field hint">'+esc(label)+'</div>'+
+    '</div>'+
+  '</div>';
+}
+
+function renderTopbar(){
+  var m = currentMember();
+  var userChip = "";
+  if(state.view!=="adminLogin" && state.view!=="admin"){
+    if(m){
+      userChip = '<div class="user-chip"><span class="who">'+esc(m.name)+'</span>'+teamBadge(m.team)+
+        '<button class="btn btn-ghost btn-sm" data-action="switchAccount">Ganti akun</button></div>';
+    } else {
+      userChip = '<button class="link-btn" data-action="goAdminLogin">Masuk sebagai Admin</button>';
+    }
+  } else if(state.adminUser){
+    userChip = '<button class="link-btn" data-action="exitAdmin">Keluar dari Admin</button>';
+  }
+  return '<div class="topbar">'+
+    '<div class="brand"><div class="brand-mark">PJ</div><div><div class="brand-name">Poin Juara</div><div class="brand-tag">Direct Sales &middot; YPCR &middot; Buddies</div></div></div>'+
+    userChip+
+  '</div>';
+}
+
+function renderNavTabs(){
+  if(state.view==="admin"){
+    var tabs = [["members","Anggota"],["quizzes","Kuis"],["submissions","Hasil"],["prizes","Hadiah"],["redemptions","Penukaran"]];
+    return '<div class="nav-tabs">'+tabs.map(function(t){
+      return '<button class="nav-tab '+(state.adminTab===t[0]?"active":"")+'" data-action="setAdminTab" data-val="'+t[0]+'">'+t[1]+'</button>';
+    }).join("")+'</div>';
+  }
+  if(["dashboard","leaderboard","rewards","quiz","quizResult"].indexOf(state.view)>=0 && state.memberId){
+    var mtabs = [["dashboard","Beranda"],["leaderboard","Papan Peringkat"],["rewards","Tukar Hadiah"]];
+    return '<div class="nav-tabs">'+mtabs.map(function(t){
+      return '<button class="nav-tab '+(state.view===t[0]?"active":"")+'" data-action="setView" data-val="'+t[0]+'">'+t[1]+'</button>';
+    }).join("")+'</div>';
+  }
+  return "";
+}
+
+function viewHome(){
+  return '<div class="card" style="text-align:center;padding:40px 24px;">'+
+    '<h1 class="disp" style="font-size:26px;margin:0 0 8px;">Selamat datang di Poin Juara</h1>'+
+    '<p style="color:var(--text-muted);max-width:460px;margin:0 auto 24px;">Program knowledge check &amp; reward untuk tim Direct Sales, YPCR, dan Buddies. Kerjakan post test, kumpulkan poin, naik peringkat, dan tukar dengan hadiah.</p>'+
+    '<button class="btn btn-primary" data-action="setView" data-val="identify">Mulai &mdash; Cari / Daftar Akun</button>'+
+  '</div>';
+}
+
+function viewIdentify(){
+  var members = memberList().sort(function(a,b){ return (a.name||"").localeCompare(b.name||""); });
+  var q = state.identifySearch.toLowerCase();
+  var filtered = members.filter(function(m){ return !q || (m.name||"").toLowerCase().indexOf(q)>=0; });
+  var html = '<div class="card">'+
+    '<div class="seg" style="margin-bottom:18px;">'+
+      '<button class="'+(state.identifyMode==="search"?"active":"")+'" data-action="setIdentifyMode" data-val="search">Sudah Terdaftar</button>'+
+      '<button class="'+(state.identifyMode==="register"?"active":"")+'" data-action="setIdentifyMode" data-val="register">Daftar Baru</button>'+
+    '</div>';
+  if(state.identifyMode==="search"){
+    html += '<div class="field" style="margin-bottom:14px;"><input type="text" placeholder="Cari nama kamu&hellip;" value="'+esc(state.identifySearch)+'" data-input="identifySearch"></div>';
+    if(!cache.membersLoaded){ html += '<div class="empty-msg">Memuat data anggota&hellip;</div>'; }
+    else if(filtered.length===0){ html += '<div class="empty-msg">Belum ada / tidak ditemukan. Coba daftar baru.</div>'; }
+    else {
+      html += '<div class="stack" style="gap:8px;max-height:360px;overflow-y:auto;">'+filtered.map(function(m){
+        return '<div class="leader-row"><div><div class="leader-name">'+esc(m.name)+'</div>'+teamBadge(m.team)+'</div>'+
+          '<button class="btn btn-primary btn-sm" style="margin-left:auto;" data-action="selectMember" data-val="'+m.id+'">Ini saya</button></div>';
+      }).join("")+'</div>';
+    }
+  } else {
+    html += '<div class="stack">'+
+      '<div class="field"><label>Nama Lengkap</label><input type="text" value="'+esc(state.registerName)+'" data-input="registerName" placeholder="cth. Siti Rahma"></div>'+
+      '<div class="field"><label>Tim</label><div class="seg">'+TEAMS.map(function(t){
+        return '<button class="'+(state.registerTeam===t?"active":"")+'" data-action="setRegisterTeam" data-val="'+esc(t)+'">'+esc(t)+'</button>';
+      }).join("")+'</div></div>'+
+      '<div class="field"><label>No. HP (opsional)</label><input type="tel" value="'+esc(state.registerPhone)+'" data-input="registerPhone" placeholder="08xx-xxxx-xxxx"></div>'+
+      '<div class="field"><label>Foto Registrasi (wajah, untuk verifikasi)</label>'+photoField(state.registerPhoto,"registerPhoto","Gunakan kamera depan HP. Foto ini jadi acuan verifikasi saat post test.")+'</div>'+
+      '<button class="btn btn-primary btn-block" data-action="submitRegister">Daftar &amp; Masuk</button>'+
+    '</div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+function viewDashboard(){
+  var m = currentMember();
+  if(!m) return viewIdentify();
+  var pts = pointsForMember(m.id);
+  var ranked = rankedMembers("all");
+  var rankIdx = ranked.findIndex(function(x){ return x.id===m.id; });
+  var quizzes = availableQuizzes(m.id);
+  var todo = quizzes.filter(function(q){ return !q.taken; });
+  var done = quizzes.filter(function(q){ return q.taken; });
+  var html = '<div class="stack">';
+  html += '<div class="grid cols-3">'+
+    '<div class="card stat-card accent"><div class="label">Total Poin</div><div class="value mono">'+pts+'</div><div class="sub">Saldo tukar: '+balanceForMember(m.id)+' poin</div></div>'+
+    '<div class="card stat-card"><div class="label">Peringkat</div><div class="value">#'+(rankIdx>=0?rankIdx+1:"-")+'</div><div class="sub">dari '+ranked.length+' anggota</div></div>'+
+    '<div class="card stat-card"><div class="label">Post Test Selesai</div><div class="value">'+done.length+' / '+quizzes.length+'</div><div class="sub">'+todo.length+' menunggu dikerjakan</div></div>'+
+  '</div>';
+  html += '<div class="card"><div class="section-title">Post Test Tersedia</div>';
+  if(!cache.quizzesLoaded){ html += '<div class="empty-msg">Memuat kuis&hellip;</div>'; }
+  else if(quizzes.length===0){ html += '<div class="empty-msg">Belum ada post test aktif. Cek lagi nanti.</div>'; }
+  else {
+    html += '<div class="stack" style="gap:10px;">'+quizzes.map(function(q){
+      if(q.taken){
+        var sub = memberSubmissions(m.id).filter(function(s){return s.quizId===q.id;})[0];
+        return '<div class="qcard" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">'+
+          '<div style="flex:1;"><div style="font-weight:600;">'+esc(q.title)+'</div><div class="subhead">Skor '+(sub?sub.score:"?")+'/'+(sub?sub.totalQuestions:"?")+' &middot; +'+(sub?sub.pointsEarned:0)+' poin</div></div>'+
+          '<span class="badge badge-good">Selesai</span></div>';
+      }
+      return '<div class="qcard" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">'+
+        '<div style="flex:1;"><div style="font-weight:600;">'+esc(q.title)+'</div><div class="subhead">'+((q.questions||[]).length)+' soal</div></div>'+
+        '<button class="btn btn-primary btn-sm" data-action="startQuiz" data-val="'+q.id+'">Mulai</button></div>';
+    }).join("")+'</div>';
+  }
+  html += '</div>';
+  html += '<div class="card"><div class="section-title">Papan Peringkat &mdash; Top 5</div>'+leaderRowsHtml(ranked.slice(0,5), m.id)+
+    '<button class="btn btn-ghost btn-sm" style="margin-top:12px;" data-action="setView" data-val="leaderboard">Lihat semua</button></div>';
+  html += '</div>';
+  return html;
+}
+
+function leaderRowsHtml(list, meId){
+  if(list.length===0) return '<div class="empty-msg">Belum ada data.</div>';
+  return list.map(function(m,i){
+    var rankClass = i===0?"top1":i===1?"top2":i===2?"top3":"";
+    return '<div class="leader-row '+(m.id===meId?"me":"")+'">'+
+      '<div class="rank-chip '+rankClass+'">'+(i+1)+'</div>'+
+      '<div><div class="leader-name">'+esc(m.name)+'</div>'+teamBadge(m.team)+'</div>'+
+      '<div class="leader-points mono">'+m.totalPoints+'</div>'+
+    '</div>';
+  }).join("");
+}
+
+function viewLeaderboard(){
+  var f = state.leaderboardFilter;
+  var ranked = rankedMembers(f);
+  var m = currentMember();
+  var chips = [["all","Semua"]].concat(TEAMS.map(function(t){return [t,t];}));
+  return '<div class="card"><div class="section-title">Papan Peringkat</div>'+
+    '<div class="seg" style="margin-bottom:16px;">'+chips.map(function(c){
+      return '<button class="'+(f===c[0]?"active":"")+'" data-action="setLeaderboardFilter" data-val="'+esc(c[0])+'">'+esc(c[1])+'</button>';
+    }).join("")+'</div>'+
+    leaderRowsHtml(ranked, m?m.id:null)+
+  '</div>';
+}
+
+function viewRewards(){
+  var m = currentMember();
+  if(!m) return viewIdentify();
+  var bal = balanceForMember(m.id);
+  var prizes = activePrizes();
+  var html = '<div class="stack">';
+  html += '<div class="card stat-card accent"><div class="label">Saldo Poin Kamu</div><div class="value mono">'+bal+'</div><div class="sub">Total didapat '+pointsForMember(m.id)+' &middot; terpakai '+spentForMember(m.id)+'</div></div>';
+  html += '<div class="card"><div class="section-title">Katalog Hadiah</div>';
+  if(!cache.prizesLoaded){ html += '<div class="empty-msg">Memuat hadiah&hellip;</div>'; }
+  else if(prizes.length===0){ html += '<div class="empty-msg">Belum ada hadiah tersedia.</div>'; }
+  else {
+    html += '<div class="grid cols-3">'+prizes.map(function(p){
+      var canAfford = bal >= p.cost;
+      var inStock = p.stock===-1 || p.stock>0;
+      var disabled = !canAfford || !inStock;
+      return '<div class="card tight prize-card">'+
+        '<div class="prize-name">'+esc(p.name)+'</div>'+
+        '<div class="prize-cost">'+p.cost+' poin</div>'+
+        '<div class="prize-stock">'+(p.stock===-1?"Stok tidak terbatas":"Stok: "+p.stock)+'</div>'+
+        '<button class="btn '+(disabled?"btn-ghost":"btn-primary")+' btn-sm" '+(disabled?"disabled":"")+' data-action="redeemPrize" data-val="'+p.id+'">'+
+          (!inStock?"Stok habis":!canAfford?"Poin kurang":"Tukar")+
+        '</button></div>';
+    }).join("")+'</div>';
+  }
+  html += '</div>';
+  var myR = memberRedemptions(m.id);
+  html += '<div class="card"><div class="section-title">Riwayat Penukaran Saya</div>';
+  if(myR.length===0){ html += '<div class="empty-msg">Belum ada penukaran.</div>'; }
+  else {
+    html += '<div class="stack" style="gap:8px;">'+myR.map(function(r){
+      var b = r.status==="fulfilled"?"badge-good":r.status==="rejected"?"badge-bad":"badge-warn";
+      var lbl = r.status==="fulfilled"?"Diberikan":r.status==="rejected"?"Ditolak":"Menunggu";
+      return '<div class="leader-row"><div><div class="leader-name">'+esc(r.prizeName)+'</div><div class="subhead">'+fmtDate(r.requestedAt)+' &middot; '+r.pointCost+' poin</div></div><span class="badge '+b+'" style="margin-left:auto;">'+lbl+'</span></div>';
+    }).join("")+'</div>';
+  }
+  html += '</div></div>';
+  return html;
+}
+
+function viewQuiz(){
+  var m = currentMember();
+  var q = cache.quizzes[state.activeQuizId];
+  if(!m || !q) return viewDashboard();
+  var qObj = Object.assign({id:state.activeQuizId}, q);
+  if(state.quizStep===1){
+    return '<div class="card"><div class="section-title">Langkah 1 dari 2 &middot; Verifikasi Foto</div>'+
+      '<h2 class="disp" style="font-size:19px;margin:0 0 10px;">'+esc(qObj.title)+'</h2>'+
+      '<p style="color:var(--text-muted);font-size:14px;">Ambil foto wajah kamu sekarang (kamera depan) sebagai bukti kamu yang mengerjakan post test ini.</p>'+
+      photoField(state.quizPhoto,"quizPhoto","Wajib diambil sebelum lanjut ke soal.")+
+      '<div style="display:flex;gap:10px;margin-top:20px;">'+
+        '<button class="btn btn-ghost" data-action="setView" data-val="dashboard">Batal</button>'+
+        '<button class="btn btn-primary" '+(state.quizPhoto?"":"disabled")+' data-action="quizNextStep">Lanjut ke Soal</button>'+
+      '</div></div>';
+  }
+  var questions = qObj.questions||[];
+  var answered = Object.keys(state.quizAnswers).length;
+  var pct = questions.length? Math.round(answered/questions.length*100):0;
+  var html = '<div class="card"><div class="section-title">Langkah 2 dari 2 &middot; Soal</div>'+
+    '<h2 class="disp" style="font-size:19px;margin:0 0 10px;">'+esc(qObj.title)+'</h2>'+
+    '<div class="progress-track" style="margin-bottom:6px;"><div class="progress-fill" style="width:'+pct+'%;"></div></div>'+
+    '<div class="subhead" style="margin-bottom:16px;">'+answered+' / '+questions.length+' terjawab</div>';
+  questions.forEach(function(qq,qi){
+    html += '<div class="qcard" style="margin-bottom:14px;"><div style="font-weight:600;margin-bottom:10px;">'+(qi+1)+'. '+esc(qq.text)+'</div>';
+    (qq.options||[]).forEach(function(opt,oi){
+      var checked = state.quizAnswers[qq.id]===oi;
+      html += '<label class="opt"><input type="radio" name="q_'+qq.id+'" value="'+oi+'" data-quiz-answer="'+qq.id+'" '+(checked?"checked":"")+'><span class="opt-text">'+esc(opt)+'</span></label>';
+    });
+    html += '</div>';
+  });
+  html += '<div style="display:flex;gap:10px;margin-top:10px;">'+
+    '<button class="btn btn-ghost" data-action="quizPrevStep">Kembali</button>'+
+    '<button class="btn btn-primary" id="quizSubmitBtn" '+(answered<questions.length?"disabled":"")+' data-action="submitQuiz">Kumpulkan Jawaban</button>'+
+  '</div></div>';
+  return html;
+}
+
+function viewQuizResult(){
+  var r = state.lastResult;
+  if(!r) return viewDashboard();
+  return '<div class="card" style="text-align:center;padding:36px 20px;">'+
+    '<div class="section-title">Post Test Selesai</div>'+
+    '<div class="disp" style="font-size:34px;font-weight:700;margin:6px 0;">'+r.score+' / '+r.totalQuestions+'</div>'+
+    '<div style="color:var(--text-muted);margin-bottom:18px;">Jawaban benar &middot; kamu mendapat <strong class="mono" style="color:var(--gold);">+'+r.pointsEarned+' poin</strong></div>'+
+    '<button class="btn btn-primary" data-action="setView" data-val="dashboard">Kembali ke Beranda</button>'+
+  '</div>';
+}
+
+function viewAdminLogin(){
+  return '<div class="card" style="max-width:360px;margin:0 auto;">'+
+    '<div class="section-title">Masuk Admin</div>'+
+    '<div class="stack">'+
+    '<div class="field"><label>Email</label><input type="email" value="'+esc(state.adminEmail)+'" data-input="adminEmail" placeholder="admin@contoh.com"></div>'+
+    '<div class="field"><label>Kata Sandi</label><input type="password" value="'+esc(state.adminPassword)+'" data-input="adminPassword"></div>'+
+    (state.adminError ? '<div class="err" style="color:var(--bad);font-size:13px;">'+esc(state.adminError)+'</div>' : '')+
+    '<button class="btn btn-primary btn-block" data-action="submitAdminLogin">Masuk</button>'+
+    '<button class="btn btn-ghost btn-block" data-action="setView" data-val="home">Kembali</button>'+
+    '</div>'+
+    '<p class="field hint" style="margin-top:12px;">Akun admin dibuat lewat Firebase Console (Authentication &rarr; Users).</p>'+
+  '</div>';
+}
+
+function viewAdmin(){
+  if(!state.adminUser) return viewAdminLogin();
+  var fns = { members: adminMembers, quizzes: adminQuizzes, submissions: adminSubmissions, prizes: adminPrizes, redemptions: adminRedemptions };
+  return (fns[state.adminTab]||adminMembers)();
+}
+
+function adminMembers(){
+  var f = state.adminMembersFilter;
+  var list = memberList().map(function(m){ return Object.assign({},m,{totalPoints:pointsForMember(m.id)}); });
+  if(f!=="all") list = list.filter(function(m){ return m.team===f; });
+  list.sort(function(a,b){ return b.totalPoints-a.totalPoints; });
+  var chips = [["all","Semua"]].concat(TEAMS.map(function(t){return [t,t];}));
+  var html = '<div class="card"><div class="section-title">Anggota Terdaftar ('+memberList().length+')</div>'+
+    '<div class="seg" style="margin-bottom:14px;">'+chips.map(function(c){
+      return '<button class="'+(f===c[0]?"active":"")+'" data-action="setAdminMembersFilter" data-val="'+esc(c[0])+'">'+esc(c[1])+'</button>';
+    }).join("")+'</div>';
+  if(!cache.membersLoaded){ html += '<div class="empty-msg">Memuat&hellip;</div>'; }
+  else if(list.length===0){ html += '<div class="empty-msg">Belum ada anggota.</div>'; }
+  else {
+    html += '<div class="table-wrap"><table><thead><tr><th></th><th>Nama</th><th>Tim</th><th>No. HP</th><th>Poin</th><th>Post Test</th><th>Daftar</th><th></th></tr></thead><tbody>'+
+      list.map(function(m){
+        var priv = cache.membersPrivate[m.id] || {};
+        var subCount = memberSubmissions(m.id).length;
+        return '<tr><td>'+(priv.photoDataUrl?'<img class="thumb" src="'+priv.photoDataUrl+'" data-action="viewMemberCompare" data-val="'+m.id+'">':'<div class="thumb"></div>')+'</td>'+
+          '<td>'+esc(m.name)+'</td><td>'+teamBadge(m.team)+'</td><td class="mono">'+esc(priv.phone||"-")+'</td>'+
+          '<td class="mono">'+m.totalPoints+'</td><td>'+subCount+'</td><td>'+fmtDate(m.createdAt)+'</td>'+
+          '<td><button class="btn btn-danger btn-sm" data-action="deleteMember" data-val="'+m.id+'">Hapus</button></td></tr>';
+      }).join("")+'</tbody></table></div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+function adminQuizzes(){
+  var quizzes = Object.keys(cache.quizzes).map(function(id){ return Object.assign({id:id}, cache.quizzes[id]); });
+  var html = '<div class="stack">';
+  html += '<div class="card"><div class="section-title">Buat Post Test Baru</div>'+
+    '<div style="display:flex;gap:10px;flex-wrap:wrap;">'+
+    '<input type="text" style="flex:1;min-width:200px;" placeholder="Judul post test" value="'+esc(state.newQuizTitle)+'" data-input="newQuizTitle">'+
+    '<button class="btn btn-primary" data-action="createQuiz">Buat</button></div></div>';
+  if(!cache.quizzesLoaded){ html += '<div class="card"><div class="empty-msg">Memuat&hellip;</div></div>'; }
+  else if(quizzes.length===0){ html += '<div class="card"><div class="empty-msg">Belum ada post test.</div></div>'; }
+  else {
+    quizzes.forEach(function(q){
+      var isEditing = state.editingQuizId===q.id;
+      html += '<div class="card"><div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">'+
+          '<div style="flex:1;"><div style="font-weight:700;font-family:Sora,sans-serif;">'+esc(q.title)+'</div><div class="subhead">'+(q.questions||[]).length+' soal</div></div>'+
+          '<div class="pill-toggle" data-action="toggleQuizActive" data-val="'+q.id+'"><div class="switch '+(q.active?"on":"")+'"></div>'+(q.active?"Aktif":"Nonaktif")+'</div>'+
+          '<button class="btn btn-ghost btn-sm" data-action="toggleEditQuiz" data-val="'+q.id+'">'+(isEditing?"Tutup":"Kelola Soal")+'</button>'+
+          '<button class="btn btn-danger btn-sm" data-action="deleteQuiz" data-val="'+q.id+'">Hapus</button>'+
+        '</div>';
+      if(isEditing){
+        html += '<hr class="sep" style="margin:14px 0;">';
+        (q.questions||[]).forEach(function(qq,qi){
+          html += '<div class="qcard" style="margin-bottom:10px;"><div style="display:flex;justify-content:space-between;gap:10px;"><div style="font-weight:600;">'+(qi+1)+'. '+esc(qq.text)+'</div><button class="btn btn-danger btn-sm" data-action="deleteQuestion" data-quiz="'+q.id+'" data-val="'+qq.id+'">Hapus</button></div>'+
+            '<ul style="margin:8px 0 0;padding-left:18px;font-size:13.5px;">'+(qq.options||[]).map(function(o,oi){ return '<li style="'+(oi===qq.correctIndex?"color:var(--good);font-weight:600;":"")+'">'+esc(o)+(oi===qq.correctIndex?" (benar)":"")+'</li>'; }).join("")+'</ul>'+
+            '<div class="subhead" style="margin-top:6px;">'+qq.points+' poin</div></div>';
+        });
+        html += '<div class="qcard"><div class="section-title" style="margin-bottom:10px;">Tambah Soal</div><div class="stack" style="gap:10px;">'+
+          '<input type="text" placeholder="Pertanyaan" value="'+esc(state.qDraft.text)+'" data-input="qDraftText">'+
+          [0,1,2,3].map(function(i){
+            return '<div style="display:flex;gap:8px;align-items:center;"><input type="radio" name="qDraftCorrect" '+(state.qDraft.correct===i?"checked":"")+' data-action="setQDraftCorrect" data-val="'+i+'"><input type="text" style="flex:1;" placeholder="Opsi '+(i+1)+'" value="'+esc(state.qDraft.opts[i])+'" data-input="qDraftOpt'+i+'"></div>';
+          }).join("")+
+          '<div style="display:flex;gap:10px;align-items:center;"><label style="font-size:13px;color:var(--text-muted);">Poin</label><input type="number" style="width:90px;" value="'+state.qDraft.points+'" data-input="qDraftPoints"></div>'+
+          '<button class="btn btn-primary" data-action="addQuestion" data-val="'+q.id+'">Tambah Soal</button>'+
+          '</div></div>';
+      }
+      html += '</div>';
+    });
+  }
+  html += '</div>';
+  return html;
+}
+
+function adminSubmissions(){
+  var list = submissionList().sort(function(a,b){ return (b.submittedAt||"").localeCompare(a.submittedAt||""); });
+  var html = '<div class="card"><div class="section-title">Hasil Post Test ('+list.length+')</div>';
+  if(!cache.submissionsLoaded){ html += '<div class="empty-msg">Memuat&hellip;</div>'; }
+  else if(list.length===0){ html += '<div class="empty-msg">Belum ada submission.</div>'; }
+  else {
+    html += '<div class="table-wrap"><table><thead><tr><th></th><th>Nama</th><th>Tim</th><th>Kuis</th><th>Skor</th><th>Poin</th><th>Waktu</th></tr></thead><tbody>'+
+      list.map(function(s){
+        var priv = cache.submissionsPrivate[s.id] || {};
+        return '<tr><td>'+(priv.photoDataUrl?'<img class="thumb" src="'+priv.photoDataUrl+'" data-action="viewSubmissionCompare" data-val="'+s.id+'">':'<div class="thumb"></div>')+'</td>'+
+          '<td>'+esc(s.memberName)+'</td><td>'+teamBadge(s.team)+'</td><td>'+esc(s.quizTitle)+'</td>'+
+          '<td class="mono">'+s.score+'/'+s.totalQuestions+'</td><td class="mono">'+s.pointsEarned+'</td><td>'+fmtDate(s.submittedAt)+'</td></tr>';
+      }).join("")+'</tbody></table></div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+function adminPrizes(){
+  var list = Object.keys(cache.prizes).map(function(id){ return Object.assign({id:id}, cache.prizes[id]); });
+  var np = state.newPrize;
+  var html = '<div class="stack">';
+  html += '<div class="card"><div class="section-title">Tambah Hadiah</div><div class="grid cols-3">'+
+    '<div class="field"><label>Nama Hadiah</label><input type="text" value="'+esc(np.name)+'" data-input="newPrizeName"></div>'+
+    '<div class="field"><label>Biaya Poin</label><input type="number" value="'+esc(np.cost)+'" data-input="newPrizeCost"></div>'+
+    '<div class="field"><label>Stok (kosongkan = tak terbatas)</label><input type="number" value="'+esc(np.stock)+'" data-input="newPrizeStock"></div>'+
+    '</div><button class="btn btn-primary" style="margin-top:12px;" data-action="createPrize">Tambah</button></div>';
+  if(!cache.prizesLoaded){ html += '<div class="card"><div class="empty-msg">Memuat&hellip;</div></div>'; }
+  else if(list.length===0){ html += '<div class="card"><div class="empty-msg">Belum ada hadiah.</div></div>'; }
+  else {
+    html += '<div class="card"><div class="table-wrap"><table><thead><tr><th>Nama</th><th>Biaya</th><th>Stok</th><th>Status</th><th></th></tr></thead><tbody>'+
+      list.map(function(p){
+        return '<tr><td>'+esc(p.name)+'</td><td class="mono">'+p.cost+'</td><td class="mono">'+(p.stock===-1?"~":p.stock)+'</td>'+
+          '<td><div class="pill-toggle" data-action="togglePrizeActive" data-val="'+p.id+'"><div class="switch '+(p.active!==false?"on":"")+'"></div>'+(p.active!==false?"Aktif":"Nonaktif")+'</div></td>'+
+          '<td><button class="btn btn-danger btn-sm" data-action="deletePrize" data-val="'+p.id+'">Hapus</button></td></tr>';
+      }).join("")+'</tbody></table></div></div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+function adminRedemptions(){
+  var list = redemptionList().sort(function(a,b){ return (b.requestedAt||"").localeCompare(a.requestedAt||""); });
+  var html = '<div class="card"><div class="section-title">Permintaan Penukaran Hadiah</div>';
+  if(!cache.redemptionsLoaded){ html += '<div class="empty-msg">Memuat&hellip;</div>'; }
+  else if(list.length===0){ html += '<div class="empty-msg">Belum ada permintaan.</div>'; }
+  else {
+    html += '<div class="stack" style="gap:10px;">'+list.map(function(r){
+      var b = r.status==="fulfilled"?"badge-good":r.status==="rejected"?"badge-bad":"badge-warn";
+      var lbl = r.status==="fulfilled"?"Diberikan":r.status==="rejected"?"Ditolak":"Menunggu";
+      var actions = r.status==="pending" ?
+        '<button class="btn btn-primary btn-sm" data-action="approveRedemption" data-val="'+r.id+'">Setujui</button>'+
+        '<button class="btn btn-danger btn-sm" data-action="rejectRedemption" data-val="'+r.id+'">Tolak</button>' : "";
+      return '<div class="qcard" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">'+
+        '<div style="flex:1;"><div style="font-weight:600;">'+esc(r.memberName)+' &middot; '+teamBadge(r.team)+'</div>'+
+        '<div class="subhead">'+esc(r.prizeName)+' &middot; '+r.pointCost+' poin &middot; '+fmtDate(r.requestedAt)+'</div></div>'+
+        '<span class="badge '+b+'">'+lbl+'</span>'+actions+'</div>';
+    }).join("")+'</div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+function renderApp(){
+  var app = document.getElementById("app");
+  if(state.view==="loading"){ app.innerHTML = '<div class="empty-msg">Memuat Poin Juara&hellip;</div>'; return; }
+  var content;
+  switch(state.view){
+    case "home": content = viewHome(); break;
+    case "identify": content = viewIdentify(); break;
+    case "dashboard": content = viewDashboard(); break;
+    case "leaderboard": content = viewLeaderboard(); break;
+    case "rewards": content = viewRewards(); break;
+    case "quiz": content = viewQuiz(); break;
+    case "quizResult": content = viewQuizResult(); break;
+    case "adminLogin": content = viewAdminLogin(); break;
+    case "admin": content = viewAdmin(); break;
+    default: content = viewHome();
+  }
+  var body = renderTopbar() + renderNavTabs() + content;
+  if(state.toast){ body += '<div class="toast '+esc(state.toast.type)+'">'+esc(state.toast.msg)+'</div>'; }
+  if(state.compareModal){
+    var cm = state.compareModal;
+    body += '<div class="modal-backdrop" data-action="closeCompareModal"><div class="modal" onclick="event.stopPropagation()">'+
+      '<div class="section-title">Bandingkan Foto</div>'+
+      '<div class="compare-grid">'+
+        '<div><img src="'+(cm.reg||"")+'"><div class="lbl">Foto registrasi</div></div>'+
+        '<div><img src="'+(cm.verify||cm.reg||"")+'"><div class="lbl">'+(cm.verify?"Foto verifikasi":"(tidak ada foto verifikasi)")+'</div></div>'+
+      '</div>'+
+      '<button class="btn btn-ghost btn-block" style="margin-top:12px;" data-action="closeCompareModal">Tutup</button>'+
+    '</div></div>';
+  }
+  body += '<div class="footer-note">Poin Juara &middot; program internal Direct Sales / YPCR / Buddies</div>';
+  app.innerHTML = body;
+}
+
+function goHomeOrDash(){ state.view = state.memberId ? "dashboard" : "home"; renderApp(); }
+
+var actions = {
+  setView: function(v){ state.view = v; renderApp(); },
+  setIdentifyMode: function(v){ state.identifyMode = v; renderApp(); },
+  setRegisterTeam: function(v){ state.registerTeam = v; renderApp(); },
+  switchAccount: function(){ localStorage.removeItem(LS_KEY); state.memberId=null; state.view="home"; renderApp(); },
+  goAdminLogin: function(){ state.view="adminLogin"; renderApp(); },
+  exitAdmin: function(){ auth.signOut(); state.view = state.memberId?"dashboard":"home"; renderApp(); },
+  selectMember: function(v){ state.memberId = v; localStorage.setItem(LS_KEY, v); state.view = "dashboard"; renderApp(); },
+  submitRegister: function(){
+    if(!state.registerName.trim()){ showToast("error","Nama wajib diisi."); return; }
+    if(!state.registerTeam){ showToast("error","Pilih tim dulu."); return; }
+    if(!state.registerPhoto){ showToast("error","Foto registrasi wajib diambil."); return; }
+    var ref = db.collection("members").doc();
+    var id = ref.id;
+    var now = new Date().toISOString();
+    Promise.all([
+      ref.set({ name: state.registerName.trim(), team: state.registerTeam, totalPoints:0, createdAt: now }),
+      db.collection("members_private").doc(id).set({ phone: state.registerPhone.trim(), photoDataUrl: state.registerPhoto })
+    ]).then(function(){
+      localStorage.setItem(LS_KEY, id);
+      state.memberId = id;
+      state.registerName=""; state.registerTeam=""; state.registerPhone=""; state.registerPhoto=null;
+      state.view = "dashboard";
+      showToast("success","Berhasil daftar. Selamat bergabung!");
+    }).catch(function(err){ showToast("error","Gagal menyimpan: "+err.message); });
+  },
+  startQuiz: function(v){ state.activeQuizId = v; state.quizStep=1; state.quizPhoto=null; state.quizAnswers={}; state.view="quiz"; renderApp(); },
+  quizNextStep: function(){ if(!state.quizPhoto){ showToast("error","Ambil foto dulu."); return;} state.quizStep=2; renderApp(); },
+  quizPrevStep: function(){ state.quizStep=1; renderApp(); },
+  submitQuiz: function(){
+    var m = currentMember();
+    var q = cache.quizzes[state.activeQuizId];
+    if(!m || !q) return;
+    var questions = q.questions||[];
+    var score=0, points=0;
+    questions.forEach(function(qq){ if(state.quizAnswers[qq.id]===qq.correctIndex){ score++; points+=(qq.points||0); } });
+    var ref = db.collection("submissions").doc();
+    var id = ref.id;
+    Promise.all([
+      ref.set({
+        memberId:m.id, memberName:m.name, team:m.team, quizId: state.activeQuizId, quizTitle:q.title,
+        answers: state.quizAnswers, score:score, totalQuestions:questions.length, pointsEarned: points,
+        submittedAt: new Date().toISOString()
+      }),
+      db.collection("submissions_private").doc(id).set({ photoDataUrl: state.quizPhoto })
+    ]).then(function(){
+      state.lastResult = {score:score,totalQuestions:questions.length,pointsEarned:points};
+      state.view="quizResult";
+      renderApp();
+    }).catch(function(err){ showToast("error","Gagal mengirim jawaban: "+err.message); });
+  },
+  setLeaderboardFilter: function(v){ state.leaderboardFilter=v; renderApp(); },
+  redeemPrize: function(v){
+    var m = currentMember();
+    var p = cache.prizes[v];
+    if(!m || !p) return;
+    var bal = balanceForMember(m.id);
+    if(bal < p.cost){ showToast("error","Poin tidak cukup."); return; }
+    if(p.stock!==-1 && p.stock<=0){ showToast("error","Stok habis."); return; }
+    db.collection("redemptions").add({
+      memberId:m.id, memberName:m.name, team:m.team, prizeId:v, prizeName:p.name, pointCost:p.cost,
+      status:"pending", requestedAt:new Date().toISOString()
+    }).then(function(){
+      if(p.stock!==-1){ db.collection("prizes").doc(v).update({stock: p.stock-1}); }
+      showToast("success","Permintaan penukaran terkirim.");
+    }).catch(function(err){ showToast("error","Gagal menukar: "+err.message); });
+  },
+  submitAdminLogin: function(){
+    if(!state.adminEmail || !state.adminPassword){ state.adminError="Isi email dan kata sandi."; renderApp(); return; }
+    auth.signInWithEmailAndPassword(state.adminEmail, state.adminPassword).then(function(){
+      state.adminError=""; state.adminPassword=""; state.view="admin"; renderApp();
+    }).catch(function(err){ state.adminError = "Login gagal: email/kata sandi salah."; renderApp(); });
+  },
+  setAdminTab: function(v){ state.adminTab=v; renderApp(); },
+  setAdminMembersFilter: function(v){ state.adminMembersFilter=v; renderApp(); },
+  deleteMember: function(v){
+    if(!confirm("Hapus anggota ini? Riwayat post test tetap tersimpan.")) return;
+    db.collection("members").doc(v).delete();
+    db.collection("members_private").doc(v).delete();
+  },
+  viewMemberCompare: function(v){
+    var priv = cache.membersPrivate[v] || {};
+    state.compareModal = { reg: priv.photoDataUrl, verify: null };
+    renderApp();
+  },
+  viewSubmissionCompare: function(v){
+    var s = cache.submissions[v];
+    var priv = cache.submissionsPrivate[v] || {};
+    var memberPriv = s ? (cache.membersPrivate[s.memberId] || {}) : {};
+    state.compareModal = { reg: memberPriv.photoDataUrl, verify: priv.photoDataUrl };
+    renderApp();
+  },
+  closeCompareModal: function(){ state.compareModal=null; renderApp(); },
+  createQuiz: function(){
+    if(!state.newQuizTitle.trim()){ showToast("error","Judul wajib diisi."); return; }
+    db.collection("quizzes").add({title:state.newQuizTitle.trim(), active:true, questions:[], createdAt:new Date().toISOString()})
+      .then(function(){ state.newQuizTitle=""; showToast("success","Post test dibuat."); });
+  },
+  toggleQuizActive: function(v){
+    var q = cache.quizzes[v]; if(!q) return;
+    db.collection("quizzes").doc(v).update({active: !q.active});
+  },
+  toggleEditQuiz: function(v){ state.editingQuizId = state.editingQuizId===v ? null : v; renderApp(); },
+  deleteQuiz: function(v){ if(!confirm("Hapus post test ini?")) return; db.collection("quizzes").doc(v).delete(); },
+  setQDraftCorrect: function(v){ state.qDraft.correct = parseInt(v,10); renderApp(); },
+  addQuestion: function(v){
+    var d = state.qDraft;
+    if(!d.text.trim() || d.opts.some(function(o){return !o.trim();})){ showToast("error","Lengkapi pertanyaan dan semua opsi."); return; }
+    var q = cache.quizzes[v]; if(!q) return;
+    var newQ = {id: Math.random().toString(36).slice(2,10), text:d.text.trim(), options:d.opts.map(function(o){return o.trim();}), correctIndex:d.correct, points: parseInt(d.points,10)||0};
+    var questions = (q.questions||[]).concat([newQ]);
+    db.collection("quizzes").doc(v).update({questions:questions}).then(function(){
+      state.qDraft = {text:"",opts:["","","",""],correct:0,points:10};
+      showToast("success","Soal ditambahkan.");
+    });
+  },
+  deleteQuestion: function(v, el){
+    var quizId = el.getAttribute("data-quiz");
+    var q = cache.quizzes[quizId]; if(!q) return;
+    var questions = (q.questions||[]).filter(function(qq){ return qq.id!==v; });
+    db.collection("quizzes").doc(quizId).update({questions:questions});
+  },
+  createPrize: function(){
+    var np = state.newPrize;
+    if(!np.name.trim() || np.cost===""){ showToast("error","Lengkapi nama dan biaya poin."); return; }
+    var stock = np.stock===""? -1 : parseInt(np.stock,10);
+    db.collection("prizes").add({name:np.name.trim(), cost:parseInt(np.cost,10)||0, stock:stock, active:true, createdAt:new Date().toISOString()})
+      .then(function(){ state.newPrize={name:"",cost:"",stock:""}; showToast("success","Hadiah ditambahkan."); });
+  },
+  togglePrizeActive: function(v){ var p = cache.prizes[v]; if(!p) return; db.collection("prizes").doc(v).update({active: p.active===false}); },
+  deletePrize: function(v){ if(!confirm("Hapus hadiah ini?")) return; db.collection("prizes").doc(v).delete(); },
+  approveRedemption: function(v){ db.collection("redemptions").doc(v).update({status:"fulfilled", resolvedAt:new Date().toISOString()}); },
+  rejectRedemption: function(v){
+    var r = cache.redemptions[v]; if(!r) return;
+    db.collection("redemptions").doc(v).update({status:"rejected", resolvedAt:new Date().toISOString()}).then(function(){
+      var p = cache.prizes[r.prizeId];
+      if(p && p.stock!==-1){ db.collection("prizes").doc(r.prizeId).update({stock:p.stock+1}); }
+    });
+  }
+};
+
+var inputMap = {
+  identifySearch:"identifySearch", registerName:"registerName", registerPhone:"registerPhone",
+  adminEmail:"adminEmail", adminPassword:"adminPassword", newQuizTitle:"newQuizTitle",
+  qDraftText:function(v){ state.qDraft.text=v; }, qDraftOpt0:function(v){ state.qDraft.opts[0]=v; },
+  qDraftOpt1:function(v){ state.qDraft.opts[1]=v; }, qDraftOpt2:function(v){ state.qDraft.opts[2]=v; },
+  qDraftOpt3:function(v){ state.qDraft.opts[3]=v; }, qDraftPoints:function(v){ state.qDraft.points=v; },
+  newPrizeName:function(v){ state.newPrize.name=v; }, newPrizeCost:function(v){ state.newPrize.cost=v; },
+  newPrizeStock:function(v){ state.newPrize.stock=v; }
+};
+
+document.getElementById("app").addEventListener("click", function(e){
+  var el = e.target.closest("[data-action]");
+  if(!el) return;
+  var action = el.getAttribute("data-action");
+  var val = el.getAttribute("data-val");
+  if(actions[action]) actions[action](val, el);
+});
+document.getElementById("app").addEventListener("input", function(e){
+  var el = e.target;
+  var key = el.getAttribute("data-input");
+  if(key && inputMap[key]){
+    var mapper = inputMap[key];
+    if(typeof mapper==="function") mapper(el.value); else state[mapper] = el.value;
+  }
+});
+document.getElementById("app").addEventListener("change", function(e){
+  var el = e.target;
+  var photoTarget = el.getAttribute("data-photo-input");
+  if(photoTarget && el.files && el.files[0]){
+    compressPhoto(el.files[0]).then(function(dataUrl){
+      if(photoTarget==="registerPhoto") state.registerPhoto = dataUrl;
+      if(photoTarget==="quizPhoto") state.quizPhoto = dataUrl;
+      renderApp();
+    }).catch(function(){ showToast("error","Gagal memproses foto."); });
+    return;
+  }
+  var ansKey = el.getAttribute("data-quiz-answer");
+  if(ansKey){
+    state.quizAnswers[ansKey] = parseInt(el.value,10);
+    var q = cache.quizzes[state.activeQuizId];
+    var total = (q.questions||[]).length;
+    var answered = Object.keys(state.quizAnswers).length;
+    var fill = document.querySelector(".progress-fill");
+    if(fill) fill.style.width = Math.round(answered/total*100)+"%";
+    var btn = document.getElementById("quizSubmitBtn");
+    if(btn) btn.disabled = answered<total;
+    var label = el.closest(".card").querySelector(".progress-track").nextElementSibling;
+    if(label) label.textContent = answered+" / "+total+" terjawab";
+  }
+});
+
+function subscribePublic(){
+  db.collection("members").onSnapshot(function(qs){
+    var m = {}; qs.forEach(function(d){ m[d.id]=d.data(); });
+    cache.members = m; cache.membersLoaded = true; renderApp();
+  }, function(err){ cache.membersLoaded = true; console.error(err); });
+
+  db.collection("quizzes").onSnapshot(function(qs){
+    var m = {}; qs.forEach(function(d){ m[d.id]=d.data(); });
+    cache.quizzes = m; cache.quizzesLoaded = true; renderApp();
+  }, function(err){ cache.quizzesLoaded = true; console.error(err); });
+
+  db.collection("submissions").onSnapshot(function(qs){
+    var m = {}; qs.forEach(function(d){ m[d.id]=d.data(); });
+    cache.submissions = m; cache.submissionsLoaded = true; renderApp();
+  }, function(err){ cache.submissionsLoaded = true; console.error(err); });
+
+  db.collection("prizes").onSnapshot(function(qs){
+    var m = {}; qs.forEach(function(d){ m[d.id]=d.data(); });
+    cache.prizes = m; cache.prizesLoaded = true; renderApp();
+  }, function(err){ cache.prizesLoaded = true; console.error(err); });
+
+  db.collection("redemptions").onSnapshot(function(qs){
+    var m = {}; qs.forEach(function(d){ m[d.id]=d.data(); });
+    cache.redemptions = m; cache.redemptionsLoaded = true; renderApp();
+  }, function(err){ cache.redemptionsLoaded = true; console.error(err); });
+}
+
+function subscribePrivate(){
+  unsubPrivate.push(db.collection("members_private").onSnapshot(function(qs){
+    var m = {}; qs.forEach(function(d){ m[d.id]=d.data(); });
+    cache.membersPrivate = m; renderApp();
+  }, function(err){ console.error(err); }));
+  unsubPrivate.push(db.collection("submissions_private").onSnapshot(function(qs){
+    var m = {}; qs.forEach(function(d){ m[d.id]=d.data(); });
+    cache.submissionsPrivate = m; renderApp();
+  }, function(err){ console.error(err); }));
+}
+function unsubscribePrivate(){
+  unsubPrivate.forEach(function(fn){ fn(); });
+  unsubPrivate = [];
+  cache.membersPrivate = {}; cache.submissionsPrivate = {};
+}
+
+auth.onAuthStateChanged(function(user){
+  state.adminUser = user;
+  if(user){ subscribePrivate(); }
+  else { unsubscribePrivate(); }
+  renderApp();
+});
+
+subscribePublic();
+var saved = localStorage.getItem(LS_KEY);
+if(saved){ state.memberId = saved; state.view = "dashboard"; } else { state.view = "home"; }
+renderApp();
+
+})();
+</script>
+</body>
+</html>
