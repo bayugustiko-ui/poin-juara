@@ -261,7 +261,7 @@ import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
   collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, addDoc,
   query, where, orderBy, limit, startAfter, onSnapshot, writeBatch,
-  increment, deleteField, Timestamp, getCountFromServer, getAggregateFromServer, sum, average
+  increment, deleteField, getCountFromServer, getAggregateFromServer, average
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 import { getAuth, signInWithEmailAndPassword, signInAnonymously, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 
@@ -284,22 +284,27 @@ const auth = getAuth(app);
 
 /* ============ konstanta ============ */
 const GROUPS = ["Direct Sales", "YPCR", "Buddies"];
-/* Satu field poin per group supaya leaderboard per group cukup orderBy satu field
-   (dokumen tanpa field itu otomatis tidak ikut) — tanpa composite index. */
+/* Satu field poin per group: leaderboard per group cukup orderBy satu field, tanpa composite index. */
 const GRP_FIELD = { "Direct Sales": "pDS", "YPCR": "pYPCR", "Buddies": "pBUD" };
 const POIN_KUESIONER = 25;
 const POIN_PER_BENAR = 5;
-const SESI_JAM = 12;
 const HALAMAN = 50;
 /* Batas soal per post test: rules menghitung ulang nilai soal demi soal tanpa loop */
 const MAKS_SOAL = 20;
-const LS = "deby_uid";
+/* Firestore membatasi 500 operasi per batch */
+const IMPORT_BATCH = 450;
+/* Leaderboard petugas dibaca dari 1 dokumen ringkasan; Admin memperbaruinya bila lebih tua dari ini */
+const LB_BASI_JAM = 6;
+/* Storage gratis 1 GB tidak pernah reset: foto aktivitas punya masa simpan, foto baseline disimpan */
+const HAPUS_FOTO_HARI = { kuesioner: 60, posttest: 60, redeem: 120 };
+const FOTO_AKTIVITAS = { dim: 300, q: 0.5 };
+const FOTO_BASELINE = { dim: 400, q: 0.55 };
 
-/* Format mengikuti data sales: user_id 10 digit angka, code alfanumerik bersufiks _XX */
+/* Format mengikuti data Digipos: user_id 10 digit; username huruf/angka, boleh titik, sufiks _XX opsional */
 const USERID_RE = /^\d{10}$/;
-const KODE_RE = /^[A-Z0-9]+(?:_[A-Z0-9]+)+$/;
-const normUserId = (v) => String(v || "").replace(/\s+/g, "");
-const normKode = (v) => String(v || "").replace(/\s+/g, "").toUpperCase();
+const KODE_RE = /^[A-Z0-9.]+(?:_[A-Z0-9]+)*$/;
+const normUserId = (v) => String(v == null ? "" : v).replace(/\s+/g, "");
+const normKode = (v) => String(v == null ? "" : v).replace(/\s+/g, "").toUpperCase();
 
 /* ============ helper ============ */
 function esc(s) {
@@ -324,16 +329,18 @@ function periode(iso) {
   const d = iso ? new Date(iso) : new Date();
   return d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0");
 }
+function hariIni() {
+  const d = new Date();
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
 function nowIso() { return new Date().toISOString(); }
+function tambahHari(n) { return new Date(Date.now() + n * 86400000).toISOString(); }
 function uid() { return Math.random().toString(36).slice(2, 11); }
 function grpClass(g) { return g === "Direct Sales" ? "grp-ds" : g === "YPCR" ? "grp-ypcr" : "grp-bud"; }
 function grpTag(g) { return '<span class="grp ' + grpClass(g) + '">' + esc(g) + "</span>"; }
 function fmtNum(n) { return (n == null ? 0 : n).toLocaleString("id-ID"); }
+function namaTampil(p) { return (p && (p.nama || p.kode || p.id)) || "-"; }
 
-async function hashPin(pin) {
-  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("deby::" + pin));
-  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
-}
 function kompresFoto(file, maxDim, q) {
   return new Promise((res, rej) => {
     const fr = new FileReader();
@@ -357,9 +364,12 @@ function kompresFoto(file, maxDim, q) {
 }
 
 /* ============ state ============ */
+const kosongTarget = () => ({ group: "semua", area: "", regional: "" });
+const kosongModul = () => Object.assign({ judul: "", mulai: "", selesai: "" }, kosongTarget());
+
 const S = {
   mode: "petugas",
-  view: "masuk",
+  view: "boot",
   tab: "home",
   me: null,
   profilSaya: null,
@@ -367,51 +377,52 @@ const S = {
   adminOk: false,
   adminCek: false,
   adminMenu: "dashboard",
-  pesanMasuk: "",
-  masuk: { id: "", pin: "", err: "" },
-  daftar: { nama: "", group: "", userId: "", kode: "", nomor: "", area: "", regional: "", branch: "", cluster: "", pin: "", pin2: "", foto: null, err: "", busy: false },
+  masuk: { id: "", username: "", err: "", info: "", busy: false },
+  daftar: { nama: "", group: "", userId: "", kode: "", nomor: "", area: "", regional: "", branch: "", cluster: "", foto: null, err: "", busy: false },
+  lengkapi: { nama: "", nomor: "", foto: null, err: "", busy: false },
   gate: null,
   run: null,
   hasil: null,
   lbFilter: "semua",
-  profil: { nomor: "", pin: "", pin2: "", foto: null },
+  profil: { nomor: "", foto: null },
   admLogin: { email: "", pass: "", err: "" },
   fPetugas: { group: "", status: "", q: "" },
   fRedeem: "pending",
-  draftKu: { judul: "", target: "semua" },
-  draftPt: { judul: "", target: "semua" },
+  draftModul: { kuesioner: kosongModul(), posttest: kosongModul() },
   draftSoal: { teks: "", opsi: ["", "", "", ""], kunci: 0 },
-  draftKn: { judul: "", tipe: "PDF", url: "", target: "semua" },
+  draftKn: Object.assign({ judul: "", tipe: "PDF", url: "" }, kosongTarget()),
   draftHd: { nama: "", poin: "", stok: "" },
   draftAdj: { id: "", poin: "", alasan: "" },
   bulkWilayah: "",
+  imp: { namaFile: "", sheet: "", valid: [], salah: [], group: "Direct Sales", busy: false, log: [], hasil: null },
   openQ: null,
   modal: null,
   toast: null
 };
 
-/* Cache kecil — tidak pernah memuat seluruh koleksi besar */
+/* Cache kecil — petugas tidak pernah memuat seluruh koleksi besar */
 const C = {
   wilayah: [], wilayahLoaded: false,
-  kuesioner: {}, posttest: {}, knowledge: {}, hadiah: {}, katalogLoaded: false,
+  katalog: { kuesioner: [], posttest: [], knowledge: [], diperbarui: null, loaded: false },
+  hadiah: {}, hadiahLoaded: false,
   mine: { respons: [], hasil: [], redeem: [], ledger: [], loaded: false },
-  lb: { rows: [], loading: false, filter: null },
+  lb: null, lbLoading: false,
   rank: null,
   adm: {
-    stats: null,
+    kuesioner: {}, posttest: {}, knowledge: {}, katalogLoaded: false,
+    stats: null, reviewList: [],
     petugas: { rows: [], cursor: null, habis: false, loading: false, key: "" },
-    priv: {},
     redeem: [], redeemLoaded: false,
     ledger: [], ledgerLoaded: false,
-    kunci: {}, peserta: {},
-    fotoCache: {}
+    kunci: {}, peserta: {}, fotoCache: {},
+    fotoBersih: null
   }
 };
 
 function toast(kind, msg) {
   S.toast = { kind, msg };
   render();
-  setTimeout(() => { S.toast = null; render(); }, 2800);
+  setTimeout(() => { S.toast = null; render(); }, 3000);
 }
 function snap(p) {
   /* Snapshot identitas + wilayah saat aktivitas terjadi, supaya CSV join per periode tetap benar
@@ -425,19 +436,108 @@ function snap(p) {
 
 
 /* =====================================================================
-   DATA LAYER — setiap fungsi hanya membaca yang dibutuhkan layar itu.
-   ID dokumen deterministik dipakai sebagai kunci anti-dobel di server:
-   respons/{kuesionerId}_{userId}, hasil/{testId}_{userId},
-   redeem/{userId}_{periode}, ledger/kue_..|pt_..|rdm_..|adj_..
+   DATA LAYER
+   - Petugas login tanpa PIN: ID Digipos + Username Digipos, terkunci ke 1 HP
+     (identitas anonim perangkat disimpan di perangkat/{userId} dan sesiAuth/{authUid}).
+   - Petugas membaca ringkasan (publik/katalog, publik/leaderboard) — bukan koleksi penuh.
+   - ID dokumen deterministik = kunci anti-dobel di server.
    ===================================================================== */
 
 const col = (n) => collection(db, n);
-const unsubs = { katalog: [], mine: [], admin: [] };
+const unsubs = { admin: [], redeem: [] };
 function stop(key) { unsubs[key].forEach((f) => { try { f(); } catch (e) {} }); unsubs[key] = []; }
 function rows(qs) { const out = []; qs.forEach((d) => out.push(Object.assign({ id: d.id }, d.data()))); return out; }
 function mapOf(qs) { const m = {}; qs.forEach((d) => { m[d.id] = d.data(); }); return m; }
+const listOf = (o) => Object.keys(o || {}).map((k) => Object.assign({ id: k }, o[k]));
+function errKode(kode, extra) { const e = new Error(kode); e.kode = kode; return Object.assign(e, extra || {}); }
 
-/* ---------- master & katalog (kecil) ---------- */
+/* ---------- identitas perangkat ---------- */
+async function pastikanAnon() {
+  if (auth.authStateReady) await auth.authStateReady();
+  const u = auth.currentUser;
+  if (u && u.isAnonymous) {
+    try { await u.getIdToken(true); return u.uid; }
+    catch (e) { await signOut(auth).catch(() => {}); }
+  } else if (u) {
+    await signOut(auth);
+  }
+  return (await signInAnonymously(auth)).user.uid;
+}
+
+/* Saat aplikasi dibuka: perangkat ini sudah terikat ke akun siapa? */
+async function sesiPerangkat() {
+  if (auth.authStateReady) await auth.authStateReady();
+  const u = auth.currentUser;
+  if (!u || !u.isAnonymous) return null;
+  try {
+    const sa = await getDoc(doc(db, "sesiAuth", u.uid));
+    return sa.exists() ? sa.data().userId : null;
+  } catch (e) { return null; }
+}
+
+async function ikatPerangkat(userId, kode) {
+  const authUid = await pastikanAnon();
+  const sa = await getDoc(doc(db, "sesiAuth", authUid));
+  if (sa.exists()) {
+    if (sa.data().userId === userId) return "sudah";
+    throw errKode("hp-akun-lain", { akunLain: sa.data().userId });
+  }
+  return authUid;
+}
+
+async function masukPetugas(idInput, usernameInput) {
+  const userId = normUserId(idInput);
+  const kode = normKode(usernameInput);
+  if (!USERID_RE.test(userId)) throw errKode("format-id");
+  if (!kode) throw errKode("username-kosong");
+  const d = await getDoc(doc(db, "petugas", userId));
+  if (!d.exists()) throw errKode("tidak-terdaftar");
+  const p = d.data();
+  if (p.kode !== kode) throw errKode("username-salah");
+  if (p.status === "nonaktif") throw errKode("nonaktif");
+  const authUid = await ikatPerangkat(userId, kode);
+  if (authUid === "sudah") return userId;
+  const b = writeBatch(db);
+  b.set(doc(db, "perangkat", userId), { authUid, kode, waktu: nowIso() });
+  b.set(doc(db, "sesiAuth", authUid), { userId });
+  try { await b.commit(); }
+  catch (e) { if (e.code === "permission-denied") throw errKode("terikat-hp-lain"); throw e; }
+  return userId;
+}
+
+/* Petugas yang ID-nya tidak ada di data import: status review sampai disetujui Admin */
+async function daftarBaru(d) {
+  const userId = normUserId(d.userId);
+  const kode = normKode(d.kode);
+  if ((await getDoc(doc(db, "petugas", userId))).exists()) throw errKode("sudah-terdaftar");
+  const dobel = await getDocs(query(col("petugas"), where("kode", "==", kode), limit(1)));
+  if (!dobel.empty) throw errKode("username-dipakai");
+  const authUid = await ikatPerangkat(userId, kode);
+  if (authUid === "sudah") throw errKode("sudah-terdaftar");
+  const pub = {
+    nama: d.nama.trim(), group: d.group, kode,
+    area: d.area, regional: d.regional, branch: d.branch, cluster: d.cluster,
+    status: "review", sumber: "daftar", createdAt: nowIso(), poinPeringkat: 0, saldo: 0
+  };
+  pub[GRP_FIELD[d.group]] = 0;
+  const b = writeBatch(db);
+  b.set(doc(db, "petugas", userId), pub);
+  b.set(doc(db, "petugas_cek", userId), { nomor: d.nomor.trim(), foto: d.foto });
+  b.set(doc(db, "perangkat", userId), { authUid, kode, waktu: nowIso() });
+  b.set(doc(db, "sesiAuth", authUid), { userId });
+  await b.commit();
+  return userId;
+}
+
+/* Petugas hasil import melengkapi profil saat pertama masuk → langsung aktif */
+async function lengkapiProfil(p, l) {
+  const b = writeBatch(db);
+  b.update(doc(db, "petugas", p.id), { nama: l.nama.trim(), status: "aktif", lengkapAt: nowIso() });
+  b.set(doc(db, "petugas_cek", p.id), { nomor: l.nomor.trim(), foto: l.foto });
+  await b.commit();
+}
+
+/* ---------- master & ringkasan (sekali muat per sesi) ---------- */
 async function loadWilayah() {
   try {
     const d = await getDoc(doc(db, "master", "wilayah"));
@@ -447,82 +547,79 @@ async function loadWilayah() {
   render();
 }
 
-function subscribeKatalog() {
-  stop("katalog");
-  const seen = new Set();
-  ["kuesioner", "posttest", "knowledge", "hadiah"].forEach((name) => {
-    unsubs.katalog.push(onSnapshot(col(name), (qs) => {
-      C[name] = mapOf(qs);
-      seen.add(name);
-      if (seen.size === 4) C.katalogLoaded = true;
-      render();
-    }, () => { seen.add(name); if (seen.size === 4) C.katalogLoaded = true; render(); }));
-  });
-}
-
-/* ---------- sesi petugas ---------- */
-/* Tiap perangkat petugas memakai identitas anonim (gratis di paket Spark) supaya
-   rules tahu SIAPA yang membaca/menulis — bukan cuma siapa yang tahu PIN. */
-async function pastikanAnon() {
-  if (auth.authStateReady) await auth.authStateReady();
-  const u = auth.currentUser;
-  if (u && u.isAnonymous) {
-    /* Auto clean-up Firebase menghapus identitas anonim >30 hari; paksa refresh
-       supaya identitas yang sudah terhapus diganti, bukan berujung pesan "PIN salah". */
-    try { await u.getIdToken(true); return u.uid; }
-    catch (e) { await signOut(auth).catch(() => {}); }
-  } else if (u) {
-    await signOut(auth);
-  }
-  return (await signInAnonymously(auth)).user.uid;
-}
-async function buatSesi(userId, pin) {
-  const authUid = await pastikanAnon();
-  const berlaku = Timestamp.fromMillis(Date.now() + SESI_JAM * 3600 * 1000);
-  const b = writeBatch(db);
-  b.set(doc(db, "sesi", userId), { pinHash: await hashPin(pin), authUid, berlakuSampai: berlaku, waktu: nowIso() });
-  b.set(doc(db, "sesiAuth", authUid), { userId, berlakuSampai: berlaku });
-  await b.commit();
-}
-
-async function cariUserId(input) {
-  const raw = String(input || "").trim();
-  if (USERID_RE.test(normUserId(raw))) return normUserId(raw);
-  const kode = normKode(raw);
-  if (!KODE_RE.test(kode)) return null;
-  const qs = await getDocs(query(col("petugas"), where("kode", "==", kode), limit(1)));
-  return qs.empty ? null : qs.docs[0].id;
-}
-
-function subscribeSaya(userId) {
-  stop("mine");
-  C.mine = { respons: [], hasil: [], redeem: [], ledger: [], loaded: false };
-  unsubs.mine.push(onSnapshot(doc(db, "petugas", userId), (d) => {
-    S.profilSaya = d.exists() ? Object.assign({ id: d.id }, d.data()) : null;
-    if (!d.exists()) { keluarPetugas(); return; }
-    render();
-  }, () => render()));
-  const seen = new Set();
-  ["respons", "hasil", "redeem", "ledger"].forEach((name) => {
-    unsubs.mine.push(onSnapshot(query(col(name), where("userId", "==", userId)), (qs) => {
-      C.mine[name] = rows(qs).sort((a, b) => (a.waktu || "").localeCompare(b.waktu || ""));
-      seen.add(name);
-      if (seen.size === 4) C.mine.loaded = true;
-      render();
-    }, () => { seen.add(name); if (seen.size === 4) C.mine.loaded = true; render(); }));
-  });
-}
-
-function keluarPetugas() {
-  stop("mine");
-  localStorage.removeItem(LS);
-  S.me = null; S.profilSaya = null; S.view = "masuk"; S.tab = "home";
-  C.mine = { respons: [], hasil: [], redeem: [], ledger: [], loaded: false };
-  C.rank = null; C.lb = { rows: [], loading: false, filter: null };
+async function loadKatalog(force) {
+  if (C.katalog.loaded && !force) return;
+  try {
+    const d = await getDoc(doc(db, "publik", "katalog"));
+    const k = d.exists() ? d.data() : {};
+    C.katalog = { kuesioner: k.kuesioner || [], posttest: k.posttest || [], knowledge: k.knowledge || [], diperbarui: k.diperbarui || null, loaded: true };
+  } catch (e) { C.katalog.loaded = true; }
   render();
 }
 
-/* ---------- turunan data milik sendiri ---------- */
+async function loadHadiah(force) {
+  if (C.hadiahLoaded && !force) return;
+  try { C.hadiah = mapOf(await getDocs(col("hadiah"))); } catch (e) { C.hadiah = {}; }
+  C.hadiahLoaded = true;
+  render();
+}
+
+async function loadLeaderboard(force) {
+  if (C.lb && !force) return;
+  C.lbLoading = true; render();
+  try {
+    const d = await getDoc(doc(db, "publik", "leaderboard"));
+    C.lb = d.exists() ? d.data() : { diperbarui: null };
+  } catch (e) { C.lb = { diperbarui: null }; }
+  C.lbLoading = false;
+  render();
+}
+
+async function loadRank(force) {
+  const p = S.profilSaya;
+  if (!p || (C.rank && !force)) return;
+  const f = GRP_FIELD[p.group];
+  try {
+    const [atas, total, atasGrup, totalGrup] = await Promise.all([
+      getCountFromServer(query(col("petugas"), where("poinPeringkat", ">", p.poinPeringkat || 0))),
+      getCountFromServer(col("petugas")),
+      getCountFromServer(query(col("petugas"), where(f, ">", p[f] || 0))),
+      getCountFromServer(query(col("petugas"), where("group", "==", p.group)))
+    ]);
+    C.rank = { global: atas.data().count + 1, total: total.data().count, grup: atasGrup.data().count + 1, totalGrup: totalGrup.data().count };
+  } catch (e) { C.rank = null; }
+  render();
+}
+
+/* ---------- data milik petugas (sekali muat, diperbarui setelah aksi) ---------- */
+async function loadSaya(userId) {
+  const nama = ["respons", "hasil", "redeem", "ledger"];
+  try {
+    const hasil = await Promise.all([getDoc(doc(db, "petugas", userId))]
+      .concat(nama.map((n) => getDocs(query(col(n), where("userId", "==", userId))))));
+    const pd = hasil[0];
+    if (!pd.exists()) { keluarPetugas("Akun tidak ditemukan. Hubungi Admin."); return false; }
+    S.profilSaya = Object.assign({ id: pd.id }, pd.data());
+    nama.forEach((n, i) => { C.mine[n] = rows(hasil[i + 1]).sort((a, b) => (a.waktu || "").localeCompare(b.waktu || "")); });
+    C.mine.loaded = true;
+    if (S.profilSaya.status === "nonaktif") { keluarPetugas("Akun dinonaktifkan. Hubungi Admin."); return false; }
+  } catch (e) {
+    toast("no", "Gagal memuat data akun: " + e.message);
+  }
+  render();
+  return true;
+}
+
+function keluarPetugas(pesan) {
+  S.me = null; S.profilSaya = null; S.view = "masuk"; S.tab = "home";
+  S.gate = null; S.run = null; S.hasil = null;
+  S.masuk.err = ""; S.masuk.info = pesan || "";
+  C.mine = { respons: [], hasil: [], redeem: [], ledger: [], loaded: false };
+  C.rank = null;
+  render();
+}
+
+/* ---------- turunan ---------- */
 function saldoSaya() { return (S.profilSaya && S.profilSaya.saldo) || 0; }
 function poinPeringkatSaya() { return (S.profilSaya && S.profilSaya.poinPeringkat) || 0; }
 function ditahanSaya() { return C.mine.redeem.filter((r) => r.status === "pending").reduce((s, r) => s + (r.poin || 0), 0); }
@@ -530,70 +627,30 @@ function tersediaSaya() { return saldoSaya() - ditahanSaya(); }
 function redeemBulanIniSaya() { return C.mine.redeem.filter((r) => r.periode === periode() && r.status !== "ditolak"); }
 function sudahKuesioner(kid) { return C.mine.respons.some((r) => r.kuesionerId === kid); }
 function hasilPosttest(tid) { return C.mine.hasil.find((h) => h.testId === tid); }
-function untukGroup(d, g) { return !d.target || d.target === "semua" || d.target === g; }
-const listOf = (o) => Object.keys(o).map((k) => Object.assign({ id: k }, o[k]));
+function bolehBeraktivitas() { return !!(S.profilSaya && S.profilSaya.status === "aktif"); }
 
-/* ---------- leaderboard & peringkat (tanpa membaca seluruh koleksi) ---------- */
-async function loadLeaderboard(filter) {
-  const field = filter === "semua" ? "poinPeringkat" : GRP_FIELD[filter];
-  C.lb = { rows: C.lb.filter === filter ? C.lb.rows : [], loading: true, filter };
-  render();
-  try {
-    const qs = await getDocs(query(col("petugas"), orderBy(field, "desc"), limit(25)));
-    C.lb.rows = rows(qs).filter((p) => p.status !== "nonaktif").slice(0, 20)
-      .map((p) => ({ id: p.id, nama: p.nama, group: p.group, area: p.area, poin: p[field] || 0 }));
-  } catch (e) { C.lb.rows = []; }
-  C.lb.loading = false;
-  render();
+function sesuaiTarget(item, p) {
+  const t = item.target || {};
+  if (t.group && t.group !== "semua" && t.group !== p.group) return false;
+  if (t.area && t.area !== p.area) return false;
+  if (t.regional && t.regional !== p.regional) return false;
+  const h = hariIni();
+  if (item.mulai && h < item.mulai) return false;
+  if (item.selesai && h > item.selesai) return false;
+  return true;
 }
-
-async function loadRank() {
+function tugasSaya() {
   const p = S.profilSaya;
-  if (!p) return;
-  const f = GRP_FIELD[p.group];
-  try {
-    const [atasGlobal, total, atasGrup, totalGrup] = await Promise.all([
-      getCountFromServer(query(col("petugas"), where("poinPeringkat", ">", p.poinPeringkat || 0))),
-      getCountFromServer(col("petugas")),
-      getCountFromServer(query(col("petugas"), where(f, ">", p[f] || 0))),
-      getCountFromServer(query(col("petugas"), where("group", "==", p.group)))
-    ]);
-    C.rank = {
-      global: atasGlobal.data().count + 1, total: total.data().count,
-      grup: atasGrup.data().count + 1, totalGrup: totalGrup.data().count,
-      untuk: p.poinPeringkat || 0
-    };
-  } catch (e) { C.rank = null; }
-  render();
-}
-
-/* ---------- tulis: registrasi ---------- */
-async function daftarPetugas(d) {
-  const userId = normUserId(d.userId);
-  const kode = normKode(d.kode);
-  if ((await getDoc(doc(db, "petugas", userId))).exists()) throw new Error("User ID " + userId + " sudah terdaftar.");
-  const dobel = await getDocs(query(col("petugas"), where("kode", "==", kode), limit(1)));
-  if (!dobel.empty) throw new Error("Kode " + kode + " sudah dipakai akun lain.");
-  const b = writeBatch(db);
-  const pub = {
-    nama: d.nama.trim(), group: d.group, kode,
-    area: d.area, regional: d.regional, branch: d.branch, cluster: d.cluster,
-    status: "aktif", createdAt: nowIso(),
-    poinPeringkat: 0, saldo: 0, pDS: null, pYPCR: null, pBUD: null
+  return {
+    ku: C.katalog.kuesioner.filter((k) => sesuaiTarget(k, p)),
+    pt: C.katalog.posttest.filter((t) => sesuaiTarget(t, p))
   };
-  delete pub.pDS; delete pub.pYPCR; delete pub.pBUD;
-  pub[GRP_FIELD[d.group]] = 0;
-  b.set(doc(db, "petugas", userId), pub);
-  b.set(doc(db, "petugas_cek", userId), { nomor: d.nomor.trim(), foto: d.foto, pinHash: await hashPin(d.pin) });
-  await b.commit();
-  await buatSesi(userId, d.pin);
-  return userId;
 }
 
 /* ---------- tulis: aktivitas ---------- */
 async function simpanFotoAktivitas(p, tujuan, foto) {
   const ref = doc(col("foto_aktivitas"));
-  await setDoc(ref, Object.assign(snap(p), { tipe: tujuan, foto, waktu: nowIso() }));
+  await setDoc(ref, Object.assign(snap(p), { tipe: tujuan, foto, waktu: nowIso(), hapusSetelah: tambahHari(HAPUS_FOTO_HARI[tujuan] || 60) }));
   return ref.id;
 }
 
@@ -613,20 +670,17 @@ async function submitKuesioner(p, k, jawaban, fotoId) {
   const ledgerId = "kue_" + k.id + "_" + p.id;
   const b = writeBatch(db);
   b.set(doc(db, "respons", k.id + "_" + p.id), Object.assign({}, s, {
-    grupPeriode: p.group + "|" + s.periode,
-    kuesionerId: k.id, judul: k.judul, jawaban: detail, fotoId, waktu: w
+    grupPeriode: p.group + "|" + s.periode, kuesionerId: k.id, judul: k.judul, jawaban: detail, fotoId, waktu: w
   }));
   b.set(doc(db, "ledger", ledgerId), Object.assign({}, s, {
-    delta: POIN_KUESIONER, jenis: "kuesioner", ref: k.id,
-    aktivitas: "Kuesioner " + k.judul + " — Lengkap", waktu: w, oleh: "sistem"
+    delta: POIN_KUESIONER, jenis: "kuesioner", ref: k.id, aktivitas: "Kuesioner " + k.judul + " — Lengkap", waktu: w, oleh: "sistem"
   }));
   tambahPoinKe(b, p, POIN_KUESIONER, ledgerId);
   await b.commit();
 }
 
-/* Anti-curang tanpa server berbayar:
-   1) jawaban dikunci permanen dulu, 2) baru kunci jawaban boleh dibaca,
-   3) rules menghitung ulang jumlah benar dari jawaban terkunci × kunci asli. */
+/* Anti-curang tanpa server berbayar: jawaban dikunci dulu → baru kunci jawaban boleh dibaca
+   → rules menghitung ulang jumlah benar dari jawaban terkunci × kunci asli. */
 async function kunciJawaban(p, t, jawaban) {
   const ref = doc(db, "jawaban", t.id + "_" + p.id);
   const idx = (t.soal || []).map((q) => (jawaban && jawaban[q.id] != null ? jawaban[q.id] : -1));
@@ -634,7 +688,6 @@ async function kunciJawaban(p, t, jawaban) {
     await setDoc(ref, { userId: p.id, testId: t.id, idx, waktu: nowIso() });
     return idx;
   } catch (e) {
-    /* sudah terkunci sebelumnya (mis. sinyal putus sebelum nilai tersimpan) — pakai yang terkunci */
     const ada = await getDoc(ref).catch(() => null);
     if (ada && ada.exists()) return ada.data().idx || [];
     throw e;
@@ -646,13 +699,6 @@ async function jawabanTerkunci(tid, userId) {
     return d.exists() ? (d.data().idx || []) : null;
   } catch (e) { return null; }
 }
-async function loadKunciAdmin() {
-  try {
-    const qs = await getDocs(col("posttest_kunci"));
-    qs.forEach((d) => { C.adm.kunci[d.id] = d.data().kunci || []; });
-    render();
-  } catch (e) {}
-}
 
 async function submitPosttest(p, t, jawaban, fotoId) {
   const w = nowIso();
@@ -663,11 +709,7 @@ async function submitPosttest(p, t, jawaban, fotoId) {
   const detail = (t.soal || []).map((q, i) => {
     const ok = idx[i] >= 0 && idx[i] === kunci[i];
     if (ok) benar++;
-    return {
-      soalId: q.id, soal: q.teks,
-      jawaban: (q.opsi || [])[idx[i]] != null ? q.opsi[idx[i]] : "",
-      kunci: (q.opsi || [])[kunci[i]] || "", benar: ok
-    };
+    return { soalId: q.id, soal: q.teks, jawaban: (q.opsi || [])[idx[i]] != null ? q.opsi[idx[i]] : "", kunci: (q.opsi || [])[kunci[i]] || "", benar: ok };
   });
   const total = detail.length;
   const poin = benar * POIN_PER_BENAR;
@@ -675,12 +717,10 @@ async function submitPosttest(p, t, jawaban, fotoId) {
   const ledgerId = "pt_" + t.id + "_" + p.id;
   const b = writeBatch(db);
   b.set(doc(db, "hasil", t.id + "_" + p.id), Object.assign({}, s, {
-    grupPeriode: p.group + "|" + s.periode,
-    testId: t.id, judul: t.judul, detail, benar, total, poin, fotoId, waktu: w
+    grupPeriode: p.group + "|" + s.periode, testId: t.id, judul: t.judul, detail, benar, total, poin, fotoId: fotoId || "", waktu: w
   }));
   b.set(doc(db, "ledger", ledgerId), Object.assign({}, s, {
-    delta: poin, jenis: "posttest", ref: t.id,
-    aktivitas: "Post Test " + t.judul + " — " + benar + " benar × " + POIN_PER_BENAR, waktu: w, oleh: "sistem"
+    delta: poin, jenis: "posttest", ref: t.id, aktivitas: "Post Test " + t.judul + " — " + benar + " benar × " + POIN_PER_BENAR, waktu: w, oleh: "sistem"
   }));
   tambahPoinKe(b, p, poin, ledgerId);
   await b.commit();
@@ -697,40 +737,84 @@ async function ajukanRedeem(p, hadiahId, h, fotoId) {
   await b.commit();
 }
 
-/* ---------- admin: statistik via agregasi server ---------- */
+/* ================= ADMIN ================= */
+function subscribeAdminKatalog() {
+  stop("admin");
+  const seen = new Set();
+  ["kuesioner", "posttest", "knowledge", "hadiah"].forEach((name) => {
+    unsubs.admin.push(onSnapshot(col(name), (qs) => {
+      if (name === "hadiah") { C.hadiah = mapOf(qs); C.hadiahLoaded = true; }
+      else C.adm[name] = mapOf(qs);
+      seen.add(name);
+      if (seen.size === 4) C.adm.katalogLoaded = true;
+      render();
+    }, () => { seen.add(name); if (seen.size === 4) C.adm.katalogLoaded = true; render(); }));
+  });
+}
+
+/* Ringkasan untuk petugas: 1 dokumen berisi modul aktif (tanpa kunci jawaban) */
+let katalogTimer = null;
+function jadwalkanRebuildKatalog() { clearTimeout(katalogTimer); katalogTimer = setTimeout(rebuildKatalog, 1500); }
+async function rebuildKatalog() {
+  const aktif = (m) => listOf(m).filter((x) => x.aktif);
+  const tgt = (x) => x.target || kosongTarget();
+  try {
+    await setDoc(doc(db, "publik", "katalog"), {
+      kuesioner: aktif(C.adm.kuesioner).map((x) => ({ id: x.id, judul: x.judul, target: tgt(x), mulai: x.mulai || "", selesai: x.selesai || "", pertanyaan: x.pertanyaan || [] })),
+      posttest: aktif(C.adm.posttest).map((x) => ({ id: x.id, judul: x.judul, target: tgt(x), mulai: x.mulai || "", selesai: x.selesai || "", soal: x.soal || [] })),
+      knowledge: aktif(C.adm.knowledge).map((x) => ({ id: x.id, judul: x.judul, tipe: x.tipe, url: x.url, target: tgt(x) })),
+      diperbarui: nowIso()
+    });
+  } catch (e) { toast("no", "Gagal memperbarui daftar tugas petugas: " + e.message); }
+}
+
+async function rebuildLeaderboard() {
+  const ambil = async (field) => rows(await getDocs(query(col("petugas"), orderBy(field, "desc"), limit(25))))
+    .filter((p) => p.status === "aktif").slice(0, 20)
+    .map((p) => ({ id: p.id, nama: namaTampil(p), group: p.group, area: p.area || "", regional: p.regional || "", poin: p[field] || 0 }));
+  const [semua, ds, ypcr, bud] = await Promise.all([ambil("poinPeringkat"), ambil("pDS"), ambil("pYPCR"), ambil("pBUD")]);
+  const data = { semua, "Direct Sales": ds, YPCR: ypcr, Buddies: bud, diperbarui: nowIso() };
+  await setDoc(doc(db, "publik", "leaderboard"), data);
+  C.lb = data;
+  render();
+}
+
 async function loadAdminStats() {
   const per = periode();
   const seminggu = new Date(Date.now() - 7 * 86400000).toISOString();
   const cnt = (q) => getCountFromServer(q).then((r) => r.data().count).catch(() => 0);
-  const [total, aktif, review, baru, respPer, pending, grpTotals, grpResp, pt] = await Promise.all([
+  const [total, aktif, review, belum, baru, respPer, pending, grpTotals, grpResp, pt, rv] = await Promise.all([
     cnt(col("petugas")),
     cnt(query(col("petugas"), where("status", "==", "aktif"))),
     cnt(query(col("petugas"), where("status", "==", "review"))),
+    cnt(query(col("petugas"), where("status", "==", "belum_lengkap"))),
     cnt(query(col("petugas"), where("createdAt", ">=", seminggu))),
     cnt(query(col("respons"), where("periode", "==", per))),
     cnt(query(col("redeem"), where("status", "==", "pending"))),
     Promise.all(GROUPS.map((g) => cnt(query(col("petugas"), where("group", "==", g))))),
     Promise.all(GROUPS.map((g) => cnt(query(col("respons"), where("grupPeriode", "==", g + "|" + per))))),
-    getAggregateFromServer(col("hasil"), { rata: average("benar"), soal: average("total") })
-      .then((r) => r.data()).catch(() => ({ rata: null, soal: null }))
+    getAggregateFromServer(col("hasil"), { rata: average("benar"), soal: average("total") }).then((r) => r.data()).catch(() => ({ rata: null, soal: null })),
+    getDocs(query(col("petugas"), where("status", "==", "review"), limit(20))).then(rows).catch(() => [])
   ]);
-  const kuAktif = listOf(C.kuesioner).filter((k) => k.aktif);
+  const kuAktif = listOf(C.adm.kuesioner).filter((k) => k.aktif);
   const perGroup = GROUPS.map((g, i) => {
-    const target = grpTotals[i] * Math.max(1, kuAktif.filter((k) => untukGroup(k, g)).length);
+    const target = grpTotals[i] * Math.max(1, kuAktif.filter((k) => { const t = k.target || {}; return !t.group || t.group === "semua" || t.group === g; }).length);
     return { g, anggota: grpTotals[i], isi: grpResp[i], target, pct: target ? Math.round(grpResp[i] / target * 100) : 0 };
   });
   const targetAll = perGroup.reduce((s, x) => s + x.target, 0);
-  C.adm.stats = {
-    total, aktif, review, baru, respPer, pending, perGroup,
-    completion: targetAll ? Math.round(respPer / targetAll * 100) : 0,
-    rataBenar: pt.rata, rataSoal: pt.soal, topSalah: null
-  };
+  C.adm.reviewList = rv;
+  C.adm.stats = { total, aktif, review, belum, baru, respPer, pending, perGroup, completion: targetAll ? Math.round(respPer / targetAll * 100) : 0, rataBenar: pt.rata, rataSoal: pt.soal, topSalah: null };
   render();
   loadSoalPalingSalah();
+  loadLeaderboard().then(() => {
+    const umur = C.lb && C.lb.diperbarui ? Date.now() - new Date(C.lb.diperbarui).getTime() : Infinity;
+    if (umur > LB_BASI_JAM * 3600000) rebuildLeaderboard().catch(() => {});
+  });
+  bersihkanFoto(false);
 }
 
 async function loadSoalPalingSalah() {
-  const pts = listOf(C.posttest).filter((t) => t.aktif);
+  const pts = listOf(C.adm.posttest).filter((t) => t.aktif);
   if (!pts.length || !C.adm.stats) return;
   const t = pts[0];
   try {
@@ -744,10 +828,117 @@ async function loadSoalPalingSalah() {
   } catch (e) {}
 }
 
-/* ---------- admin: data petugas per halaman ---------- */
+async function bersihkanFoto(manual) {
+  let total = 0;
+  try {
+    for (let r = 0; r < (manual ? 10 : 2); r++) {
+      const qs = await getDocs(query(col("foto_aktivitas"), where("hapusSetelah", "<", nowIso()), limit(400)));
+      if (qs.empty) break;
+      const b = writeBatch(db);
+      qs.forEach((d) => b.delete(d.ref));
+      await b.commit();
+      total += qs.size;
+      if (qs.size < 400) break;
+    }
+    C.adm.fotoBersih = { total, waktu: nowIso() };
+    if (manual) toast("ok", total ? fmtNum(total) + " foto kedaluwarsa dihapus." : "Tidak ada foto yang kedaluwarsa.");
+  } catch (e) { if (manual) toast("no", "Gagal membersihkan foto: " + e.message); }
+  render();
+}
+
+/* ---------- import petugas dari Excel ---------- */
+async function muatSheetJS() {
+  if (window.XLSX) return window.XLSX;
+  await new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+    s.onload = res;
+    s.onerror = () => rej(new Error("Gagal memuat pembaca Excel. Periksa koneksi internet."));
+    document.head.appendChild(s);
+  });
+  return window.XLSX;
+}
+
+async function bacaFileImport(file) {
+  const X = await muatSheetJS();
+  const wb = X.read(await file.arrayBuffer(), { type: "array" });
+  const adaUserId = (n) => ((X.utils.sheet_to_json(wb.Sheets[n], { header: 1, blankrows: false })[0]) || [])
+    .map((h) => String(h).trim().toLowerCase()).includes("user_id");
+  const sheet = wb.SheetNames.find(adaUserId) || wb.SheetNames[0];
+  return { sheet, data: X.utils.sheet_to_json(wb.Sheets[sheet], { defval: "", raw: true }) };
+}
+
+function siapkanImport(data, groupDefault) {
+  const pick = (r, keys) => {
+    for (const k of Object.keys(r)) if (keys.includes(String(k).trim().toLowerCase())) return String(r[k] == null ? "" : r[k]).trim();
+    return "";
+  };
+  const valid = [], salah = [], ids = new Set(), kodes = new Set();
+  data.forEach((r, i) => {
+    const userId = normUserId(pick(r, ["user_id", "id_digipos", "userid"]));
+    const kode = normKode(pick(r, ["username_digipos", "username", "code", "kode"]));
+    const cluster = pick(r, ["cluster_name", "cluster", "nama_cluster"]);
+    const branch = pick(r, ["branch", "branch_name", "nama_branch"]);
+    const regional = pick(r, ["regional", "regional_name", "nama_regional"]);
+    const area = pick(r, ["area_name", "area", "nama_area"]);
+    const nama = pick(r, ["nama", "name", "nama_lengkap"]);
+    const grp = pick(r, ["group", "grup"]);
+    let alasan = "";
+    if (!USERID_RE.test(userId)) alasan = "user_id bukan 10 digit";
+    else if (!KODE_RE.test(kode)) alasan = "format username tidak dikenali";
+    else if (!cluster || !branch || !regional || !area) alasan = "wilayah tidak lengkap";
+    else if (ids.has(userId)) alasan = "user_id dobel di file";
+    else if (kodes.has(kode)) alasan = "username dobel di file";
+    if (alasan) { salah.push({ baris: i + 2, userId, kode, alasan }); return; }
+    ids.add(userId); kodes.add(kode);
+    valid.push({ userId, kode, nama, group: GROUPS.includes(grp) ? grp : groupDefault, area, regional, branch, cluster });
+  });
+  return { valid, salah };
+}
+
+async function jalankanImport(valid, log) {
+  log("Membaca akun yang sudah ada…");
+  const ada = new Set();
+  (await getDocs(col("petugas"))).forEach((d) => ada.add(d.id));
+  const baru = valid.filter((r) => !ada.has(r.userId));
+  log(fmtNum(ada.size) + " akun sudah ada (dilewati), " + fmtNum(baru.length) + " akun baru akan dibuat.");
+  const now = nowIso();
+  for (let i = 0; i < baru.length; i += IMPORT_BATCH) {
+    const b = writeBatch(db);
+    baru.slice(i, i + IMPORT_BATCH).forEach((r) => {
+      const d = {
+        kode: r.kode, nama: r.nama || "", group: r.group, area: r.area, regional: r.regional, branch: r.branch, cluster: r.cluster,
+        status: "belum_lengkap", sumber: "import", createdAt: now, poinPeringkat: 0, saldo: 0
+      };
+      d[GRP_FIELD[r.group]] = 0;
+      b.set(doc(db, "petugas", r.userId), d);
+    });
+    await b.commit();
+    log("Tersimpan " + fmtNum(Math.min(i + IMPORT_BATCH, baru.length)) + " / " + fmtNum(baru.length));
+  }
+  const k = (w) => [w.area, w.regional, w.branch, w.cluster].join("|");
+  const peta = new Map();
+  (C.wilayah || []).forEach((w) => peta.set(k(w), w));
+  valid.forEach((r) => peta.set(k(r), { area: r.area, regional: r.regional, branch: r.branch, cluster: r.cluster }));
+  const rowsW = Array.from(peta.values()).sort((a, b) => k(a).localeCompare(k(b)));
+  await setDoc(doc(db, "master", "wilayah"), { rows: rowsW, updatedAt: nowIso() });
+  C.wilayah = rowsW; C.wilayahLoaded = true;
+  log("Master wilayah diperbarui: " + fmtNum(rowsW.length) + " cluster.");
+  return { dibuat: baru.length, dilewati: valid.length - baru.length, wilayah: rowsW.length };
+}
+
+/* ---------- admin: data petugas ---------- */
+async function cariUserId(input) {
+  const raw = String(input || "").trim();
+  if (USERID_RE.test(normUserId(raw))) return normUserId(raw);
+  const kode = normKode(raw);
+  if (!KODE_RE.test(kode)) return null;
+  const qs = await getDocs(query(col("petugas"), where("kode", "==", kode), limit(1)));
+  return qs.empty ? null : qs.docs[0].id;
+}
+
 async function loadPetugasPage(reset) {
-  const f = S.fPetugas;
-  const P = C.adm.petugas;
+  const f = S.fPetugas, P = C.adm.petugas;
   const key = f.group + "|" + f.status + "|" + f.q;
   if (reset || P.key !== key) { P.rows = []; P.cursor = null; P.habis = false; P.key = key; }
   if (P.habis || P.loading) return;
@@ -761,11 +952,13 @@ async function loadPetugasPage(reset) {
     } else {
       const cons = [];
       if (f.group) cons.push(where("group", "==", f.group));
-      if (f.status) cons.push(where("status", "==", f.status));
+      else if (f.status) cons.push(where("status", "==", f.status));
       if (P.cursor) cons.push(startAfter(P.cursor));
       cons.push(limit(HALAMAN));
       const qs = await getDocs(query(col("petugas"), ...cons));
-      P.rows = P.rows.concat(rows(qs));
+      let r = rows(qs);
+      if (f.group && f.status) r = r.filter((x) => x.status === f.status);
+      P.rows = P.rows.concat(r);
       P.cursor = qs.docs.length ? qs.docs[qs.docs.length - 1] : P.cursor;
       P.habis = qs.docs.length < HALAMAN;
     }
@@ -774,26 +967,42 @@ async function loadPetugasPage(reset) {
 }
 
 async function loadDetailPetugas(userId) {
-  const [pub, priv, fotos, led] = await Promise.all([
+  const [pub, priv, hp, fotos, led] = await Promise.all([
     getDoc(doc(db, "petugas", userId)),
     getDoc(doc(db, "petugas_cek", userId)),
+    getDoc(doc(db, "perangkat", userId)),
     getDocs(query(col("foto_aktivitas"), where("userId", "==", userId), limit(20))),
     getDocs(query(col("ledger"), where("userId", "==", userId), limit(200)))
   ]);
   return {
     pub: pub.exists() ? Object.assign({ id: pub.id }, pub.data()) : null,
     priv: priv.exists() ? priv.data() : {},
+    hp: hp.exists() ? hp.data() : null,
     fotos: rows(fotos).sort((a, b) => (b.waktu || "").localeCompare(a.waktu || "")),
     ledger: rows(led).sort((a, b) => (b.waktu || "").localeCompare(a.waktu || ""))
   };
 }
 
+async function resetHp(userId) {
+  const hp = await getDoc(doc(db, "perangkat", userId));
+  if (!hp.exists()) return false;
+  const b = writeBatch(db);
+  b.delete(doc(db, "perangkat", userId));
+  b.delete(doc(db, "sesiAuth", hp.data().authUid));
+  await b.commit();
+  return true;
+}
+
+async function setujuiPetugas(userId) {
+  await updateDoc(doc(db, "petugas", userId), { status: "aktif", disetujuiAt: nowIso(), disetujuiOleh: S.adminUser ? S.adminUser.email : "admin" });
+}
+
 /* ---------- admin: redeem & ledger ---------- */
 function subscribeAdminRedeem() {
-  stop("admin");
+  stop("redeem");
   C.adm.redeemLoaded = false;
   const cons = S.fRedeem === "semua" ? [limit(100)] : [where("status", "==", S.fRedeem), limit(100)];
-  unsubs.admin.push(onSnapshot(query(col("redeem"), ...cons), (qs) => {
+  unsubs.redeem.push(onSnapshot(query(col("redeem"), ...cons), (qs) => {
     C.adm.redeem = rows(qs).sort((a, b) => (b.waktu || "").localeCompare(a.waktu || ""));
     C.adm.redeemLoaded = true; render();
   }, () => { C.adm.redeemLoaded = true; render(); }));
@@ -801,11 +1010,16 @@ function subscribeAdminRedeem() {
 
 async function loadLedgerTerbaru() {
   C.adm.ledgerLoaded = false; render();
-  try {
-    const qs = await getDocs(query(col("ledger"), orderBy("waktu", "desc"), limit(50)));
-    C.adm.ledger = rows(qs);
-  } catch (e) { C.adm.ledger = []; }
+  try { C.adm.ledger = rows(await getDocs(query(col("ledger"), orderBy("waktu", "desc"), limit(50)))); }
+  catch (e) { C.adm.ledger = []; }
   C.adm.ledgerLoaded = true; render();
+}
+
+async function loadKunciAdmin() {
+  try {
+    (await getDocs(col("posttest_kunci"))).forEach((d) => { C.adm.kunci[d.id] = d.data().kunci || []; });
+    render();
+  } catch (e) {}
 }
 
 async function fotoById(id) {
@@ -817,25 +1031,20 @@ async function fotoById(id) {
 }
 
 async function setujuiRedeem(r) {
-  const p = (await getDoc(doc(db, "petugas", r.userId))).data();
+  const oleh = S.adminUser ? S.adminUser.email : "admin";
   const b = writeBatch(db);
-  b.set(doc(db, "ledger", "rdm_" + r.id), Object.assign({}, {
+  b.set(doc(db, "ledger", "rdm_" + r.id), {
     userId: r.userId, kode: r.kode || "", nama: r.nama || "", group: r.group || "",
-    area: r.area || "", regional: r.regional || "", branch: r.branch || "", cluster: r.cluster || "",
-    periode: periode()
-  }, {
-    delta: -r.poin, jenis: "redeem", ref: r.id, aktivitas: "Penukaran " + r.hadiahNama,
-    waktu: nowIso(), oleh: S.adminUser ? S.adminUser.email : "admin"
-  }));
+    area: r.area || "", regional: r.regional || "", branch: r.branch || "", cluster: r.cluster || "", periode: periode(),
+    delta: -r.poin, jenis: "redeem", ref: r.id, aktivitas: "Penukaran " + r.hadiahNama, waktu: nowIso(), oleh
+  });
   b.update(doc(db, "petugas", r.userId), { saldo: increment(-r.poin), lastLedger: "rdm_" + r.id });
-  b.update(doc(db, "redeem", r.id), { status: "selesai", selesaiAt: nowIso(), oleh: S.adminUser ? S.adminUser.email : "admin" });
+  b.update(doc(db, "redeem", r.id), { status: "selesai", selesaiAt: nowIso(), oleh });
   await b.commit();
-  return p;
 }
 
 async function tolakRedeem(r, alasan) {
-  /* Dokumen dipindah ke ID baru supaya slot {userId}_{periode} kosong lagi:
-     kuota 1x/bulan petugas kembali tersedia. */
+  /* Dipindah ke ID baru supaya slot {userId}_{periode} kosong lagi: kuota 1x/bulan kembali */
   const b = writeBatch(db);
   const copy = Object.assign({}, r);
   delete copy.id;
@@ -855,8 +1064,7 @@ async function catatAdjustment(userId, delta, alasan) {
   const ledgerId = "adj_" + userId + "_" + Date.now();
   const b = writeBatch(db);
   b.set(doc(db, "ledger", ledgerId), Object.assign(snap(p), {
-    delta, jenis: "adjustment", ref: "", aktivitas: "Manual Adj — " + alasan,
-    alasan, waktu: nowIso(), oleh: S.adminUser ? S.adminUser.email : "admin"
+    delta, jenis: "adjustment", ref: "", aktivitas: "Manual Adj — " + alasan, alasan, waktu: nowIso(), oleh: S.adminUser ? S.adminUser.email : "admin"
   }));
   tambahPoinKe(b, p, delta, ledgerId);
   await b.commit();
@@ -874,42 +1082,19 @@ function hero(eyebrow, judul, sub) {
   return '<div class="hero"><div class="eyebrow">' + eyebrow + "</div><h1>" + judul + "</h1>" + (sub ? "<p>" + sub + "</p>" : "") + "</div>";
 }
 function barisLb(arr, meId) {
-  if (!arr.length) return '<div class="empty">Belum ada poin yang tercatat.</div>';
+  if (!arr || !arr.length) return '<div class="empty">Belum ada poin yang tercatat.</div>';
   return arr.map((p, i) => {
     const cls = i === 0 ? "r1" : i === 1 ? "r2" : i === 2 ? "r3" : "";
     return '<div class="lb-row ' + (p.id === meId ? "me" : "") + '"><div class="lb-rank ' + cls + '">#' + (i + 1) + "</div>" +
       '<div class="grow"><div class="lb-name">' + esc(p.nama) + (p.id === meId ? " (Anda)" : "") + "</div>" +
-      '<div class="lb-sub">' + esc(p.group) + " &middot; " + esc(p.area || "-") + "</div></div>" +
+      '<div class="lb-sub">' + esc(p.group) + " &middot; " + esc(p.regional || p.area || "-") + "</div></div>" +
       '<div class="lb-pts">' + fmtNum(p.poin) + "</div></div>";
   }).join("");
 }
-function tugasSaya() {
-  const p = S.profilSaya;
-  const ku = listOf(C.kuesioner).filter((k) => k.aktif && untukGroup(k, p.group));
-  const pt = listOf(C.posttest).filter((t) => t.aktif && untukGroup(t, p.group));
-  return { ku, pt };
+function kotakInfo(teks, warna) {
+  const c = warna === "warn" ? "background:var(--warn-soft);color:var(--warn);border-color:#EBD5B4;" : "background:var(--surface-3);color:var(--ink-dim);border-color:var(--border);";
+  return '<div class="card" style="' + c + 'font-size:13px;font-weight:600;">' + teks + "</div>";
 }
-
-/* ============ masuk & daftar ============ */
-function vMasuk() {
-  const m = S.masuk;
-  return '<div class="wrap-plain">' +
-    '<div class="hero" style="border-radius:0 0 18px 18px;"><div class="eyebrow">Youth GTM &middot; Internal</div><h1>DEBY</h1>' +
-    "<p>Direct Sales Empowerment &amp; Benefits from Youth GTM</p></div>" +
-    '<div class="pad"><div class="card lift"><div class="card-title">Masuk Petugas</div>' +
-    '<div class="field"><label class="req">User ID atau Kode Digipos</label>' +
-    '<input type="text" class="mono" value="' + esc(m.id) + '" data-in="masuk.id" placeholder="5571191005 / AHA1927381_DS" autocomplete="username"></div>' +
-    '<div class="field"><label class="req">PIN</label>' +
-    '<input type="password" inputmode="numeric" value="' + esc(m.pin) + '" data-in="masuk.pin" placeholder="PIN" autocomplete="current-password"></div>' +
-    (m.err ? '<div class="err" style="margin-top:12px;">' + esc(m.err) + "</div>" : "") +
-    '<button class="btn btn-primary btn-block" style="margin-top:16px;" data-do="masuk">Masuk</button>' +
-    '<div style="text-align:center;margin-top:14px;font-size:13px;color:var(--ink-dim);">Belum punya akun? ' +
-    '<button style="background:none;border:none;color:var(--red);font-weight:700;cursor:pointer;padding:0;" data-do="keDaftar">Registrasi Mandiri</button></div>' +
-    "</div>" +
-    '<div style="text-align:center;margin-top:18px;"><button style="background:none;border:none;color:var(--ink-faint);font-size:12px;cursor:pointer;" data-do="ke" data-v="admLogin">Masuk sebagai Super Admin</button></div>' +
-    "</div></div>";
-}
-
 function opsiWilayah(level, d) {
   const out = [];
   C.wilayah.forEach((r) => {
@@ -921,34 +1106,54 @@ function opsiWilayah(level, d) {
   return out.filter((v, i, a) => v && a.indexOf(v) === i).sort();
 }
 
+/* ============ masuk ============ */
+function vMasuk() {
+  const m = S.masuk;
+  return '<div class="wrap-plain">' +
+    '<div class="hero" style="border-radius:0 0 18px 18px;"><div class="eyebrow">Youth GTM &middot; Internal</div><h1>DEBY</h1>' +
+    "<p>Direct Sales Empowerment &amp; Benefits from Youth GTM</p></div>" +
+    '<div class="pad stack"><div class="card lift"><div class="card-title">Masuk Petugas</div>' +
+    '<div class="field"><label class="req">ID Digipos</label>' +
+    '<input type="text" inputmode="numeric" class="mono" value="' + esc(m.id) + '" data-in="masuk.id" placeholder="10 digit, cth. 5571188240" autocomplete="username"></div>' +
+    '<div class="field"><label class="req">Username Digipos</label>' +
+    '<input type="text" class="mono" value="' + esc(m.username) + '" data-in="masuk.username" placeholder="cth. MAR9789836_DS" style="text-transform:uppercase;" autocapitalize="characters"></div>' +
+    (m.info ? '<div class="note" style="margin-top:12px;">' + esc(m.info) + "</div>" : "") +
+    (m.err ? '<div class="err" style="margin-top:12px;">' + m.err + "</div>" : "") +
+    '<button class="btn btn-primary btn-block" style="margin-top:16px;" data-do="masuk" ' + (m.busy ? "disabled" : "") + ">" + (m.busy ? "Memeriksa…" : "Masuk") + "</button>" +
+    '<div style="text-align:center;margin-top:14px;font-size:13px;color:var(--ink-dim);">ID belum terdaftar? ' +
+    '<button style="background:none;border:none;color:var(--red);font-weight:700;cursor:pointer;padding:0;" data-do="keDaftar">Daftar sebagai petugas baru</button></div>' +
+    "</div>" +
+    '<div class="note">Akun terhubung ke <b>1 HP</b>. Selalu buka DEBY dari <b>Chrome</b>, lalu pilih menu &#8942; &rarr; <b>Tambahkan ke layar utama</b>. Membuka dari browser lain (misalnya langsung dari WhatsApp) dianggap HP berbeda.</div>' +
+    '<div style="text-align:center;"><button style="background:none;border:none;color:var(--ink-faint);font-size:12px;cursor:pointer;" data-do="ke" data-v="admLogin">Masuk sebagai Super Admin</button></div>' +
+    "</div></div>";
+}
+
+/* ============ daftar (petugas baru) ============ */
 function vDaftar() {
   const d = S.daftar;
-  const uidVal = normUserId(d.userId), kodeVal = normKode(d.kode);
-  const uidErr = d.userId && !USERID_RE.test(uidVal);
-  const kodeErr = d.kode && !KODE_RE.test(kodeVal);
+  const uidErr = d.userId && !USERID_RE.test(normUserId(d.userId));
+  const kodeErr = d.kode && !KODE_RE.test(normKode(d.kode));
   function sel(nama, label, opsi, aktif) {
     const kosong = aktif ? "Pilih " + label : (nama === "area" ? (C.wilayahLoaded ? "Master wilayah belum tersedia" : "Memuat…") : "Pilih induk dulu");
     return '<div class="field"><label class="req">' + label + '</label><select data-in="daftar.' + nama + '" ' + (aktif ? "" : "disabled") + ">" +
       '<option value="">' + kosong + "</option>" +
-      opsi.map((o) => '<option value="' + esc(o) + '" ' + (d[nama] === o ? "selected" : "") + ">" + esc(o) + "</option>").join("") +
-      "</select></div>";
+      opsi.map((o) => '<option value="' + esc(o) + '" ' + (d[nama] === o ? "selected" : "") + ">" + esc(o) + "</option>").join("") + "</select></div>";
   }
   const areas = opsiWilayah("area", d);
   return '<div class="wrap-plain">' +
-    '<div class="hero" style="border-radius:0 0 18px 18px;"><div class="eyebrow">S-01 &middot; Registrasi</div><h1>Registrasi Mandiri</h1>' +
-    "<p>Data identitas &amp; wilayah dikunci setelah submit</p></div>" +
+    '<div class="hero" style="border-radius:0 0 18px 18px;"><div class="eyebrow">S-01 &middot; Petugas Baru</div><h1>Registrasi Mandiri</h1>' +
+    "<p>Untuk petugas yang ID-nya belum terdaftar &middot; perlu verifikasi Admin</p></div>" +
     '<div class="pad stack">' +
+    kotakInfo("Sudah pernah terdaftar lewat data Admin? Tidak perlu daftar di sini &mdash; kembali ke layar Masuk dan pakai ID &amp; Username Digipos.", "info") +
     '<div class="card">' +
       '<div class="field"><label class="req">01 &nbsp;Nama Lengkap</label><input type="text" value="' + esc(d.nama) + '" data-in="daftar.nama" placeholder="cth. Reza Afrizal"></div>' +
       '<div class="field"><label class="req">02 &nbsp;Group</label><div class="seg">' +
-        GROUPS.map((g) => '<button class="' + (d.group === g ? "on" : "") + '" data-do="setGroup" data-v="' + esc(g) + '">' + esc(g) + "</button>").join("") +
-      "</div></div>" +
-      '<div class="field"><label class="req">03 &nbsp;User ID Digipos</label><input type="text" inputmode="numeric" class="mono" value="' + esc(d.userId) + '" data-in="daftar.userId" data-live="1" placeholder="10 digit angka, cth. 5571191005">' +
+        GROUPS.map((g) => '<button class="' + (d.group === g ? "on" : "") + '" data-do="setGroup" data-v="' + esc(g) + '">' + esc(g) + "</button>").join("") + "</div></div>" +
+      '<div class="field"><label class="req">03 &nbsp;ID Digipos</label><input type="text" inputmode="numeric" class="mono" value="' + esc(d.userId) + '" data-in="daftar.userId" data-live="1" placeholder="10 digit angka">' +
         '<div class="hint" data-hint="userId" style="' + (uidErr ? "color:var(--bad);" : "") + '">' + (uidErr ? "Harus tepat 10 digit angka." : "10 digit angka, sesuai data Digipos.") + "</div></div>" +
-      '<div class="field"><label class="req">04 &nbsp;Kode Digipos</label><input type="text" class="mono" value="' + esc(d.kode) + '" data-in="daftar.kode" data-live="1" placeholder="cth. AHA1927381_DS" style="text-transform:uppercase;">' +
-        '<div class="hint" data-hint="kode" style="' + (kodeErr ? "color:var(--bad);" : "") + '">' + (kodeErr ? "Format: huruf/angka lalu garis bawah, cth. AHA1927381_DS." : "Huruf/angka + sufiks, cth. AHA1927381_DS.") + "</div></div>" +
+      '<div class="field"><label class="req">04 &nbsp;Username Digipos</label><input type="text" class="mono" value="' + esc(d.kode) + '" data-in="daftar.kode" data-live="1" placeholder="cth. MAR9789836_DS" style="text-transform:uppercase;">' +
+        '<div class="hint" data-hint="kode" style="' + (kodeErr ? "color:var(--bad);" : "") + '">' + (kodeErr ? "Hanya huruf, angka, titik, dan garis bawah." : "Persis seperti di Digipos.") + "</div></div>" +
       '<div class="field"><label class="req">05 &nbsp;Nomor Aktif</label><input type="tel" class="mono" value="' + esc(d.nomor) + '" data-in="daftar.nomor" placeholder="0812..."></div>' +
-      '<div class="note" style="margin-top:12px;">User ID &amp; Kode Digipos jadi kunci penggabungan dengan data sales. Pastikan persis sama &mdash; tidak bisa diubah sendiri setelah daftar.</div>' +
     "</div>" +
     '<div class="card"><div class="card-title">06&ndash;09 &nbsp;Hierarki Wilayah</div>' +
       (C.wilayahLoaded && !C.wilayah.length ? '<div class="note">Master wilayah belum diisi Admin. Hubungi Super Admin sebelum mendaftar.</div>' : "") +
@@ -958,14 +1163,33 @@ function vDaftar() {
       sel("cluster", "Nama Cluster", d.branch ? opsiWilayah("cluster", d) : [], !!d.branch) +
     "</div>" +
     '<div class="card"><div class="card-title">10 &nbsp;Foto Petugas</div>' + fotoInput("daftar", d.foto, "Ambil foto referensi") +
-      '<div class="note" style="margin-top:10px;">Kamera depan &middot; baseline 1x seumur akun.</div></div>' +
-    '<div class="card"><div class="card-title">Keamanan Akun</div><div class="field-2">' +
-      '<div class="field" style="margin:0;"><label class="req">PIN</label><input type="password" inputmode="numeric" value="' + esc(d.pin) + '" data-in="daftar.pin" placeholder="min. 4 digit"></div>' +
-      '<div class="field" style="margin:0;"><label class="req">Ulangi PIN</label><input type="password" inputmode="numeric" value="' + esc(d.pin2) + '" data-in="daftar.pin2"></div>' +
-    "</div></div>" +
-    (d.err ? '<div class="err">' + esc(d.err) + "</div>" : "") +
-    '<button class="btn btn-primary btn-block" data-do="daftar" ' + (d.busy ? "disabled" : "") + ">" + (d.busy ? "Mendaftarkan…" : "Daftar Akun") + "</button>" +
+      '<div class="note" style="margin-top:10px;">Kamera depan &middot; foto baseline untuk verifikasi berikutnya.</div></div>' +
+    (d.err ? '<div class="err">' + d.err + "</div>" : "") +
+    '<button class="btn btn-primary btn-block" data-do="daftar" ' + (d.busy ? "disabled" : "") + ">" + (d.busy ? "Mendaftarkan…" : "Daftar & Hubungkan HP Ini") + "</button>" +
     '<button class="btn btn-ghost btn-block" data-do="ke" data-v="masuk">Kembali ke Masuk</button>' +
+    "</div></div>";
+}
+
+/* ============ lengkapi profil (petugas hasil import, pertama kali masuk) ============ */
+function vLengkapi() {
+  const p = S.profilSaya, l = S.lengkapi;
+  const kunci = (label, val, mono) => '<div class="field"><label>' + label + '</label><input type="text" ' + (mono ? 'class="mono" ' : "") + 'value="' + esc(val || "-") + '" disabled></div>';
+  return '<div class="wrap-plain">' +
+    '<div class="hero" style="border-radius:0 0 18px 18px;"><div class="eyebrow">Selamat datang di DEBY</div><h1>Lengkapi Profil</h1>' +
+    "<p>Sekali saja &middot; setelah ini kamu bisa mulai mengumpulkan poin</p></div>" +
+    '<div class="pad stack">' +
+    '<div class="card"><div class="card-title">Data dari Digipos &mdash; sudah terisi</div>' +
+      kunci("ID Digipos", p.id, true) + kunci("Username Digipos", p.kode, true) + kunci("Group", p.group) +
+      kunci("Area", p.area) + kunci("Regional", p.regional) + kunci("Branch", p.branch) + kunci("Cluster", p.cluster) +
+      '<div class="note" style="margin-top:12px;">Ada yang keliru? Tetap lanjutkan, lalu hubungi Admin untuk koreksi.</div></div>' +
+    '<div class="card"><div class="card-title">Isi Data Diri</div>' +
+      '<div class="field"><label class="req">Nama Lengkap</label><input type="text" value="' + esc(l.nama) + '" data-in="lengkapi.nama" placeholder="Nama sesuai KTP"></div>' +
+      '<div class="field"><label class="req">Nomor Aktif</label><input type="tel" class="mono" value="' + esc(l.nomor) + '" data-in="lengkapi.nomor" placeholder="0812..."></div></div>' +
+    '<div class="card"><div class="card-title">Foto Petugas</div>' + fotoInput("lengkapi", l.foto, "Ambil foto referensi") +
+      '<div class="note" style="margin-top:10px;">Kamera depan &middot; foto baseline untuk verifikasi berikutnya.</div></div>' +
+    (l.err ? '<div class="err">' + esc(l.err) + "</div>" : "") +
+    '<button class="btn btn-primary btn-block" data-do="lengkapi" ' + (l.busy ? "disabled" : "") + ">" + (l.busy ? "Menyimpan…" : "Simpan &amp; Mulai") + "</button>" +
+    '<button class="btn btn-ghost btn-block" data-do="keluar">Keluar</button>' +
     "</div></div>";
 }
 
@@ -976,8 +1200,7 @@ const GATE = {
   redeem: { sub: "Verifikasi akhir sebelum poin ditukar jadi hadiah.", lanjut: "Kirim Permintaan Tukar" }
 };
 function vGate() {
-  const g = S.gate, p = S.profilSaya;
-  const t = GATE[g.tujuan];
+  const g = S.gate, p = S.profilSaya, t = GATE[g.tujuan];
   return '<div class="pad"><div class="gate-dark">' +
     '<div class="lbl" style="color:rgba(255,255,255,.55);">S-02 &middot; Photo Check</div>' +
     "<h2>Verifikasi Wajah</h2><p>" + esc(t.sub) + "</p>" +
@@ -1001,11 +1224,19 @@ function kartuTugas(tipe, d, hasil) {
   }
   const n = isKu ? (d.pertanyaan || []).length : (d.soal || []).length;
   const poin = isKu ? POIN_KUESIONER : n * POIN_PER_BENAR;
-  const sub = isKu ? n + " pertanyaan &middot; tanpa benar/salah" : n + " soal &middot; " + POIN_PER_BENAR + " poin per jawaban benar";
+  const jadwal = d.selesai ? " &middot; sampai " + esc(d.selesai) : "";
+  const sub = (isKu ? n + " pertanyaan &middot; tanpa benar/salah" : n + " soal &middot; " + POIN_PER_BENAR + " poin per jawaban benar") + jadwal;
+  const aksi = !bolehBeraktivitas() ? '<div class="note">Bisa dikerjakan setelah akun diverifikasi Admin.</div>'
+    : n ? '<button class="btn btn-primary btn-sm btn-block" data-do="mulai" data-t="' + tipe + '" data-v="' + d.id + '">Mulai &middot; Photo Check</button>'
+      : '<div class="note">Modul ini belum berisi pertanyaan.</div>';
   return '<div class="task"><div class="t-top"><span class="pill pill-neutral">' + nama + '</span><span class="pill pill-red">' + (isKu ? "+" : "maks +") + poin + " poin</span></div>" +
-    '<div class="t-name">' + esc(d.judul) + '</div><div class="t-sub">' + sub + "</div>" +
-    (n ? '<button class="btn btn-primary btn-sm btn-block" data-do="mulai" data-t="' + tipe + '" data-v="' + d.id + '">Mulai &middot; Photo Check</button>'
-      : '<div class="note">Modul ini belum berisi pertanyaan.</div>') + "</div>";
+    '<div class="t-name">' + esc(d.judul) + '</div><div class="t-sub">' + sub + "</div>" + aksi + "</div>";
+}
+
+function bannerStatus() {
+  const p = S.profilSaya;
+  if (p.status === "review") return kotakInfo("Akunmu sedang menunggu verifikasi Admin. Sementara ini kamu belum bisa mengerjakan tugas atau menukar hadiah.", "warn");
+  return "";
 }
 
 function vHome() {
@@ -1017,24 +1248,26 @@ function vHome() {
   const r = C.rank;
   const menu = [["KS", "Kuesioner", "tugas"], ["PT", "Post Test", "tugas"], ["LB", "Leaderboard", "leaderboard"], ["KN", "Knowledge", "knowledge"],
     ["HD", "Hadiah", "hadiah"], ["PN", "Poin Saya", "poin"], ["PF", "Profil", "profil"], ["BT", "Bantuan", "bantuan"]];
-  return '<div class="hero"><div class="eyebrow">' + esc(p.group) + " &middot; Cluster " + esc(p.cluster || "-") + "</div>" +
-    "<h1>Halo, " + esc((p.nama || "").split(" ")[0]) + "</h1></div>" +
+  const top5 = C.lb && C.lb.semua ? C.lb.semua.slice(0, 5) : null;
+  return '<div class="hero"><div class="eyebrow">' + esc(p.group) + " &middot; " + esc(p.cluster || "-") + "</div>" +
+    "<h1>Halo, " + esc(namaTampil(p).split(" ")[0]) + "</h1></div>" +
     '<div class="pad stack" style="margin-top:-14px;">' +
+    bannerStatus() +
     '<div class="stat-duo">' +
       '<div class="stat lift"><div class="lbl">Total Poin</div><div class="n red mono">' + fmtNum(poinPeringkatSaya()) + '</div><div class="k lbl" style="color:var(--ink-dim);">Saldo tukar ' + fmtNum(tersediaSaya()) + "</div></div>" +
       '<div class="stat lift"><div class="lbl">Peringkat</div><div class="n mono">' + (r ? "#" + fmtNum(r.global) : "&hellip;") + "</div>" +
         '<div class="k lbl" style="color:var(--ink-dim);">' + (r ? "dari " + fmtNum(r.total) + " &middot; #" + fmtNum(r.grup) + " di " + esc(p.group) : "menghitung") + "</div></div>" +
     "</div>" +
-    '<div class="sec-head"><h2>Tugas Aktif</h2><button class="link" data-do="tab" data-v="tugas">Lihat semua</button></div>' +
-    (!C.katalogLoaded || !C.mine.loaded ? '<div class="skel">Memuat tugas&hellip;</div>'
+    '<div class="sec-head"><h2>Tugas Aktif</h2><button class="link" data-do="muatUlang">Muat ulang</button></div>' +
+    (!C.katalog.loaded || !C.mine.loaded ? '<div class="skel">Memuat tugas&hellip;</div>'
       : aktif.length ? aktif.slice(0, 3).map((x) => kartuTugas(x[0], x[1], null)).join("")
         : '<div class="card"><div class="empty" style="padding:18px;">Tidak ada tugas yang menunggu.</div></div>') +
+    (aktif.length > 3 ? '<button class="btn btn-ghost btn-sm btn-block" data-do="tab" data-v="tugas">Lihat semua tugas (' + aktif.length + ")</button>" : "") +
     (selesai.length ? '<div class="sec-head"><h2>Sudah Selesai</h2></div>' + selesai.slice(0, 2).map((x) => kartuTugas(x[0], x[1], x[2])).join("") : "") +
     '<div class="sec-head"><h2>Menu</h2></div><div class="mgrid">' +
-      menu.map((m) => '<button data-do="tab" data-v="' + m[2] + '"><span class="mi">' + m[0] + '</span><span class="mt">' + m[1] + "</span></button>").join("") +
-    "</div>" +
+      menu.map((m) => '<button data-do="tab" data-v="' + m[2] + '"><span class="mi">' + m[0] + '</span><span class="mt">' + m[1] + "</span></button>").join("") + "</div>" +
     '<div class="sec-head"><h2>Top 5 Leaderboard</h2><button class="link" data-do="tab" data-v="leaderboard">Semua</button></div>' +
-    '<div class="card">' + (C.lb.filter === "semua" && !C.lb.loading ? barisLb(C.lb.rows.slice(0, 5), p.id) : '<div class="skel">Memuat&hellip;</div>') + "</div>" +
+    '<div class="card">' + (top5 ? barisLb(top5, p.id) : '<div class="skel">Memuat&hellip;</div>') + "</div>" +
     "</div>";
 }
 
@@ -1042,14 +1275,14 @@ function vHome() {
 function vTugas() {
   const p = S.profilSaya;
   const { ku, pt } = tugasSaya();
-  let body = "";
-  if (!C.katalogLoaded || !C.mine.loaded) body = '<div class="skel">Memuat&hellip;</div>';
-  else if (!ku.length && !pt.length) body = '<div class="card"><div class="empty">Belum ada Kuesioner atau Post Test aktif untuk ' + esc(p.group) + ".</div></div>";
+  let body = bannerStatus();
+  if (!C.katalog.loaded || !C.mine.loaded) body += '<div class="skel">Memuat&hellip;</div>';
+  else if (!ku.length && !pt.length) body += '<div class="card"><div class="empty">Belum ada Kuesioner atau Post Test untuk wilayahmu saat ini.</div></div>';
   else {
     if (ku.length) body += '<div class="sec-head"><h2>Kuesioner</h2></div>' + ku.map((k) => kartuTugas("kuesioner", k, sudahKuesioner(k.id))).join("");
     if (pt.length) body += '<div class="sec-head"><h2>Post Test</h2></div>' + pt.map((t) => kartuTugas("posttest", t, hasilPosttest(t.id))).join("");
   }
-  return hero("DEBY", "Tugas", "Kuesioner &amp; Post Test untuk " + esc(p.group)) + '<div class="pad">' + body + "</div>";
+  return hero("DEBY", "Tugas", "Kuesioner &amp; Post Test untuk " + esc(p.regional || p.group)) + '<div class="pad stack">' + body + "</div>";
 }
 
 function vRun() {
@@ -1067,7 +1300,7 @@ function vRun() {
     "</div>" +
     '<div class="row" style="margin-top:16px;"><button class="btn btn-ghost grow" data-do="runBack">' + (r.idx === 0 ? "Batal" : "Kembali") + "</button>" +
       '<button class="btn btn-primary grow" ' + (terisi && !r.busy ? "" : "disabled") + ' data-do="runNext">' + (r.busy ? "Mengirim…" : r.idx === items.length - 1 ? "Submit" : "Lanjut") + "</button></div>" +
-    '<div class="note" style="margin-top:14px;">' + (isKu ? "Rangkaian lengkap = " + POIN_KUESIONER + " poin. Poin masuk ledger setelah submit berhasil." : POIN_PER_BENAR + " poin per jawaban benar. Nilai keluar langsung setelah submit.") + "</div></div>";
+    '<div class="note" style="margin-top:14px;">' + (isKu ? "Rangkaian lengkap = " + POIN_KUESIONER + " poin." : POIN_PER_BENAR + " poin per jawaban benar. Jawaban dikunci saat submit.") + "</div></div>";
 }
 
 function vHasil() {
@@ -1094,29 +1327,31 @@ function vHasil() {
 function vLeaderboard() {
   const p = S.profilSaya;
   const chips = [["semua", "Semua"]].concat(GROUPS.map((g) => [g, g]));
-  const ada = C.lb.rows.some((x) => x.id === p.id);
+  const data = C.lb ? (C.lb[S.lbFilter] || []) : null;
+  const ada = data && data.some((x) => x.id === p.id);
   const r = C.rank;
   let pin = "";
-  if (!C.lb.loading && !ada && r && (S.lbFilter === "semua" || S.lbFilter === p.group)) {
+  if (data && !ada && r && (S.lbFilter === "semua" || S.lbFilter === p.group)) {
     const pos = S.lbFilter === "semua" ? r.global : r.grup;
     const poin = S.lbFilter === "semua" ? poinPeringkatSaya() : (p[GRP_FIELD[p.group]] || 0);
     pin = '<div class="card" style="margin-top:12px;background:var(--red-soft);border-color:var(--red-line);"><div class="lb-row" style="border:none;">' +
-      '<div class="lb-rank">#' + fmtNum(pos) + '</div><div class="grow"><div class="lb-name">' + esc(p.nama) + ' (Anda)</div><div class="lb-sub">' + esc(p.group) + "</div></div>" +
+      '<div class="lb-rank">#' + fmtNum(pos) + '</div><div class="grow"><div class="lb-name">' + esc(namaTampil(p)) + ' (Anda)</div><div class="lb-sub">' + esc(p.group) + "</div></div>" +
       '<div class="lb-pts">' + fmtNum(poin) + "</div></div></div>";
   }
-  return hero("S-06 &middot; Leaderboard", "Peringkat Poin", "Top 20 &middot; akumulasi poin diperoleh") +
+  return hero("S-06 &middot; Leaderboard", "Peringkat Poin", "Top 20 &middot; " + (C.lb && C.lb.diperbarui ? "diperbarui " + fmtWaktu(C.lb.diperbarui) : "belum diperbarui")) +
     '<div class="pad"><div class="chips" style="margin-bottom:14px;">' +
     chips.map((c) => '<button class="chip ' + (S.lbFilter === c[0] ? "on" : "") + '" data-do="lbFilter" data-v="' + esc(c[0]) + '">' + esc(c[1]) + "</button>").join("") + "</div>" +
-    '<div class="card">' + (C.lb.loading ? '<div class="skel">Memuat&hellip;</div>' : barisLb(C.lb.rows, p.id)) + "</div>" + pin + "</div>";
+    '<div class="card">' + (C.lbLoading || !data ? '<div class="skel">Memuat&hellip;</div>' : barisLb(data, p.id)) + "</div>" + pin +
+    '<div class="note" style="margin-top:12px;">Leaderboard diperbarui berkala oleh sistem, bukan detik per detik. Poinmu sendiri di Beranda selalu terbaru.</div></div>';
 }
 
 function vKnowledge() {
   const p = S.profilSaya;
-  const arr = listOf(C.knowledge).filter((k) => k.aktif !== false && untukGroup(k, p.group));
+  const arr = C.katalog.knowledge.filter((k) => { const t = k.target || {}; return (!t.group || t.group === "semua" || t.group === p.group) && (!t.area || t.area === p.area) && (!t.regional || t.regional === p.regional); });
   return hero("S-07 &middot; Knowledge", "Materi &amp; Key Visual", "Direktori tautan &middot; dibuka di browser") +
-    '<div class="pad">' + (!arr.length ? '<div class="card"><div class="empty">Belum ada materi untuk ' + esc(p.group) + ".</div></div>" :
+    '<div class="pad">' + (!arr.length ? '<div class="card"><div class="empty">Belum ada materi untuk wilayahmu.</div></div>' :
       arr.map((k) => '<a class="kn" href="' + esc(k.url) + '" target="_blank" rel="noopener noreferrer"><span class="kt">' + esc(k.tipe || "DOC") + "</span>" +
-        '<span class="grow"><span class="kn-n" style="display:block;">' + esc(k.judul) + '</span><span class="kn-s">' + esc(k.tipe || "DOC") + " &middot; " + (k.target === "semua" ? "Semua group" : esc(k.target)) + "</span></span>" +
+        '<span class="grow"><span class="kn-n" style="display:block;">' + esc(k.judul) + '</span><span class="kn-s">' + esc(k.tipe || "DOC") + "</span></span>" +
         '<span class="ka">&#8599;</span></a>').join("")) +
     '<div class="note" style="margin-top:14px;">Tautan terbuka di tab baru supaya aplikasi tetap ringan.</div></div>';
 }
@@ -1124,19 +1359,20 @@ function vKnowledge() {
 function vHadiah() {
   const saldo = tersediaSaya();
   const kuotaTerpakai = redeemBulanIniSaya().length >= 1;
-  const arr = listOf(C.hadiah).filter((h) => h.aktif !== false);
+  const bisa = bolehBeraktivitas();
+  const arr = listOf(C.hadiah).filter((h) => h.aktif !== false).sort((a, b) => a.poin - b.poin);
   const riwayat = C.mine.redeem.slice().reverse();
   return hero("S-08 &middot; Redeem", "Tukar Hadiah", "Maksimal 1x penukaran per bulan") +
-    '<div class="pad stack"><div class="stat-duo">' +
+    '<div class="pad stack">' + bannerStatus() + '<div class="stat-duo">' +
       '<div class="stat lift"><div class="lbl">Saldo Poin</div><div class="n red mono">' + fmtNum(saldo) + "</div>" +
         (ditahanSaya() ? '<div class="k lbl" style="color:var(--warn);">' + fmtNum(ditahanSaya()) + " poin ditahan</div>" : "") + "</div>" +
       '<div class="stat lift"><div class="lbl">Kuota Bulan Ini</div><div class="n mono">' + (kuotaTerpakai ? "0" : "1") + 'x</div><div class="k lbl" style="color:var(--ink-dim);">' + (kuotaTerpakai ? "sudah dipakai" : "tersisa") + "</div></div>" +
     "</div>" +
-    '<div class="sec-head"><h2>Katalog Hadiah</h2></div>' +
-    (!arr.length ? '<div class="card"><div class="empty">Belum ada hadiah tersedia.</div></div>' : arr.map((h) => {
+    '<div class="sec-head"><h2>Katalog Hadiah</h2><button class="link" data-do="muatHadiah">Muat ulang</button></div>' +
+    (!C.hadiahLoaded ? '<div class="skel">Memuat&hellip;</div>' : !arr.length ? '<div class="card"><div class="empty">Belum ada hadiah tersedia.</div></div>' : arr.map((h) => {
       const habis = h.stok !== -1 && h.stok <= 0, kurang = saldo < h.poin;
-      const blok = habis || kurang || kuotaTerpakai;
-      const label = habis ? "Habis" : kuotaTerpakai ? "Kuota habis" : kurang ? "Poin kurang" : "Tukar";
+      const blok = habis || kurang || kuotaTerpakai || !bisa;
+      const label = !bisa ? "Menunggu verifikasi" : habis ? "Habis" : kuotaTerpakai ? "Kuota habis" : kurang ? "Poin kurang" : "Tukar";
       return '<div class="rw"><div class="grow"><div class="rw-n">' + esc(h.nama) + '</div><div class="rw-s">' + (h.stok === -1 ? "Stok tidak terbatas" : habis ? "Stok habis" : "Stok " + h.stok) + "</div></div>" +
         '<div style="text-align:right;"><div class="rw-p">' + fmtNum(h.poin) + " poin</div>" +
         '<button class="btn ' + (blok ? "btn-ghost" : "btn-primary") + ' btn-sm" style="margin-top:6px;" ' + (blok ? "disabled" : "") + ' data-do="mulaiRedeem" data-v="' + h.id + '">' + label + "</button></div></div>";
@@ -1144,10 +1380,10 @@ function vHadiah() {
     '<div class="sec-head"><h2>Riwayat Penukaran</h2></div>' +
     (!riwayat.length ? '<div class="card"><div class="empty">Belum ada penukaran.</div></div>' : '<div class="card">' + riwayat.map((r) => {
       const pil = r.status === "selesai" ? "pill-good" : r.status === "ditolak" ? "pill-bad" : "pill-warn";
-      return '<div class="led"><div class="grow"><div style="font-weight:700;font-size:13.5px;">' + esc(r.hadiahNama) + '</div><div class="lbl" style="color:var(--ink-dim);">' + fmtTgl(r.waktu) + " &middot; " + fmtNum(r.poin) + " poin</div></div>" +
+      return '<div class="led"><div class="grow"><div style="font-weight:700;font-size:13.5px;">' + esc(r.hadiahNama) + '</div><div class="lbl" style="color:var(--ink-dim);">' + fmtTgl(r.waktu) + " &middot; " + fmtNum(r.poin) + " poin" + (r.alasan ? " &middot; " + esc(r.alasan) : "") + "</div></div>" +
         '<span class="pill ' + pil + '">' + esc(r.status) + "</span></div>";
     }).join("") + "</div>") +
-    '<div class="note">Photo Check wajib lolos sebelum permintaan dikirim. Poin ditahan sampai Admin menyetujui; kalau ditolak, poin dan kuota bulanan dikembalikan.</div></div>';
+    '<div class="note">Photo Check wajib sebelum permintaan dikirim. Poin ditahan sampai Admin menyetujui; kalau ditolak, poin dan kuota bulanan dikembalikan.</div></div>';
 }
 
 function vPoin() {
@@ -1171,31 +1407,31 @@ function vProfil() {
   const kunci = (label, val, mono) => '<div class="field"><label>' + label + '</label><input type="text" ' + (mono ? 'class="mono" ' : "") + 'value="' + esc(val || "-") + '" disabled></div>';
   return hero("S-09 &middot; Profil", "Edit Profil", "Sebagian data dikunci demi integritas data") +
     '<div class="pad stack"><div class="card"><div class="row" style="gap:14px;">' +
-      '<div style="width:56px;height:56px;border-radius:12px;background:var(--red-soft);color:var(--red);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:20px;">' + esc((p.nama || "?").charAt(0)) + "</div>" +
-      '<div class="grow"><div style="font-weight:800;font-size:16px;">' + esc(p.nama) + '</div><div class="lbl" style="color:var(--ink-dim);">' + esc(p.kode || p.id) + " &middot; " + esc(p.group) + "</div></div></div>" +
+      '<div style="width:56px;height:56px;border-radius:12px;background:var(--red-soft);color:var(--red);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:20px;">' + esc(namaTampil(p).charAt(0)) + "</div>" +
+      '<div class="grow"><div style="font-weight:800;font-size:16px;">' + esc(namaTampil(p)) + '</div><div class="lbl" style="color:var(--ink-dim);">' + esc(p.kode) + " &middot; " + esc(p.group) + "</div></div></div>" +
       '<div class="note" style="margin-top:12px;">Foto dan nomor aktif hanya dapat dilihat Admin. Kamu tetap bisa menggantinya di bawah.</div>' +
       '<div style="margin-top:12px;">' + fotoInput("profil", f.foto, "Ganti foto referensi") + "</div>" +
       (f.foto ? '<button class="btn btn-ghost btn-sm btn-block" style="margin-top:9px;" data-do="ajukanFoto">Ajukan Perubahan Foto</button>' : "") +
     "</div>" +
     '<div class="card"><div class="card-title">Dapat Diubah</div>' +
       '<div class="field"><label>Nomor Aktif Baru</label><input type="tel" class="mono" value="' + esc(f.nomor) + '" data-in="profil.nomor" placeholder="kosongkan bila tidak ganti"></div>' +
-      '<div class="field-2" style="margin-top:13px;"><div class="field" style="margin:0;"><label>PIN Baru</label><input type="password" inputmode="numeric" value="' + esc(f.pin) + '" data-in="profil.pin" placeholder="opsional"></div>' +
-      '<div class="field" style="margin:0;"><label>Ulangi PIN</label><input type="password" inputmode="numeric" value="' + esc(f.pin2) + '" data-in="profil.pin2"></div></div>' +
-      '<button class="btn btn-primary btn-block" style="margin-top:14px;" data-do="simpanProfil">Simpan Perubahan</button></div>' +
+      '<button class="btn btn-primary btn-block" style="margin-top:14px;" data-do="simpanProfil">Simpan Nomor</button></div>' +
     '<div class="card"><div class="card-title">Dikunci &mdash; Hanya Admin</div>' +
-      kunci("Nama Lengkap", p.nama) + kunci("Group", p.group) + kunci("User ID Digipos", p.id, true) + kunci("Kode Digipos", p.kode, true) +
-      kunci("Nama Area", p.area) + kunci("Nama Regional", p.regional) + kunci("Nama Branch", p.branch) + kunci("Nama Cluster", p.cluster) +
+      kunci("Nama Lengkap", p.nama) + kunci("Group", p.group) + kunci("ID Digipos", p.id, true) + kunci("Username Digipos", p.kode, true) +
+      kunci("Area", p.area) + kunci("Regional", p.regional) + kunci("Branch", p.branch) + kunci("Cluster", p.cluster) +
       '<div class="note" style="margin-top:12px;">Dikunci untuk menjaga integritas penggabungan dengan data sales.</div></div>' +
-    '<button class="btn btn-ghost btn-block" data-do="keluar">Keluar dari Akun</button></div>';
+    '<button class="btn btn-ghost btn-block" data-do="keluar">Keluar</button>' +
+    '<div class="note">Keluar tidak melepas HP ini dari akunmu. Mau pindah HP? Minta Admin menekan <b>Reset HP</b>.</div></div>';
 }
 
 function vBantuan() {
   const faq = [
+    ["Kenapa akun saya terkunci ke 1 HP?", "Supaya akun tidak bisa dipakai orang lain yang tahu ID dan Username Digipos-mu. Ganti HP, pindah browser, atau hapus data browser? Minta Admin menekan Reset HP, lalu masuk lagi."],
     ["Kenapa harus ambil foto tiap mau mulai?", "Foto jadi gerbang identitas supaya poin benar-benar dikumpulkan oleh petugas yang bersangkutan. Ini bukan absensi harian."],
-    ["Kenapa data identitas & wilayah tidak bisa diubah?", "User ID, Kode Digipos, dan wilayah dikunci supaya data tetap bersih saat digabung dengan data sales. Hubungi Admin bila ada koreksi."],
+    ["Kenapa data identitas & wilayah tidak bisa diubah?", "ID, Username Digipos, dan wilayah dikunci supaya data tetap bersih saat digabung dengan data sales. Hubungi Admin bila ada koreksi."],
     ["Berapa poin yang saya dapat?", "Kuesioner lengkap = " + POIN_KUESIONER + " poin. Post Test = " + POIN_PER_BENAR + " poin untuk tiap jawaban benar. Setiap modul hanya bisa dikerjakan sekali."],
     ["Kenapa penukaran saya masih pending?", "Permintaan menunggu persetujuan Admin. Selama pending, poin ditahan. Kalau ditolak, poin dan kuota bulanan kembali."],
-    ["Saya lupa PIN.", "Hubungi Super Admin untuk reset PIN."]
+    ["Kenapa leaderboard tidak langsung berubah?", "Leaderboard diperbarui berkala supaya aplikasi tetap gratis. Poinmu sendiri di Beranda selalu terbaru."]
   ];
   return hero("DEBY", "Bantuan", "Pertanyaan yang sering muncul") +
     '<div class="pad stack">' + faq.map((x) => '<div class="card"><div style="font-weight:700;font-size:14.5px;margin-bottom:5px;">' + esc(x[0]) + '</div><div style="font-size:13.5px;color:var(--ink-dim);">' + esc(x[1]) + "</div></div>").join("") + "</div>";
@@ -1218,20 +1454,21 @@ const ADM_MENU = [
   ["dashboard", "Dashboard"], ["petugas", "Data Petugas"], ["kuesioner", "Kuesioner"], ["posttest", "Post Test"],
   ["knowledge", "Knowledge"], ["poin", "Poin & Leaderboard"], ["redeem", "Hadiah & Redeem"], ["pengaturan", "Pengaturan"]
 ];
+const STATUS_LABEL = { belum_lengkap: "belum lengkap", review: "menunggu verifikasi", aktif: "aktif", nonaktif: "nonaktif" };
+const STATUS_PILL = { belum_lengkap: "pill-neutral", review: "pill-warn", aktif: "pill-good", nonaktif: "pill-bad" };
+function pillStatus(s) { s = s || "aktif"; return '<span class="pill ' + (STATUS_PILL[s] || "pill-neutral") + '">' + esc(STATUS_LABEL[s] || s) + "</span>"; }
 
 function vAdmin() {
   const st = C.adm.stats;
   const cnt = {
-    petugas: st ? st.total : null,
-    kuesioner: Object.keys(C.kuesioner).length, posttest: Object.keys(C.posttest).length,
-    knowledge: Object.keys(C.knowledge).length, redeem: st ? st.pending : null
+    petugas: st ? st.review : null, kuesioner: Object.keys(C.adm.kuesioner).length, posttest: Object.keys(C.adm.posttest).length,
+    knowledge: Object.keys(C.adm.knowledge).length, redeem: st ? st.pending : null
   };
-  const body = ({ dashboard: aDashboard, petugas: aPetugas, kuesioner: aKuesioner, posttest: aPosttest, knowledge: aKnowledge, poin: aPoin, redeem: aRedeem, pengaturan: aPengaturan }[S.adminMenu] || aDashboard)();
+  const body = ({ dashboard: aDashboard, petugas: aPetugas, kuesioner: () => aModul("kuesioner"), posttest: () => aModul("posttest"), knowledge: aKnowledge, poin: aPoin, redeem: aRedeem, pengaturan: aPengaturan }[S.adminMenu] || aDashboard)();
   return '<div class="adm"><aside class="adm-side"><div class="a-brand"><b>DEBY</b><span>Super Admin</span></div><div class="a-nav">' +
     ADM_MENU.map((m) => '<button class="' + (S.adminMenu === m[0] ? "on" : "") + '" data-do="admMenu" data-v="' + m[0] + '"><span>' + m[1] + "</span>" +
-      (cnt[m[0]] ? '<span class="cnt">' + fmtNum(cnt[m[0]]) + "</span>" : "") + "</button>").join("") +
-    "</div>" +
-    '<div style="margin-top:20px;padding:12px;border-radius:10px;background:rgba(255,255,255,.06);font-size:11.5px;color:rgba(255,255,255,.6);line-height:1.5;">Export CSV untuk join data sales: MVP 2.0. Struktur data sudah siap (User ID, Kode, wilayah per aktivitas).</div>' +
+      (cnt[m[0]] ? '<span class="cnt">' + fmtNum(cnt[m[0]]) + "</span>" : "") + "</button>").join("") + "</div>" +
+    '<div style="margin-top:20px;padding:12px;border-radius:10px;background:rgba(255,255,255,.06);font-size:11.5px;color:rgba(255,255,255,.6);line-height:1.5;">Export CSV untuk join data sales: MVP 2.0. Struktur data sudah siap (ID, Username, wilayah per aktivitas).</div>' +
     '<button style="margin-top:16px;" data-do="admKeluar"><span>Keluar</span></button></aside>' +
     '<main class="adm-main">' + body + "</main></div>";
 }
@@ -1239,6 +1476,10 @@ function vAdmin() {
 function head(judul, sub, aksi) {
   return '<div class="adm-head"><div><h1>' + judul + '</h1><div class="sub">' + sub + "</div></div>" + (aksi || "") + "</div>";
 }
+function aq(tag, warn, judul, sub, aksi) {
+  return '<div class="aq"><span class="pill ' + (warn ? "pill-warn" : "pill-neutral") + '">' + tag + '</span><div class="grow"><div class="aq-n">' + judul + '</div><div class="aq-s">' + sub + "</div></div>" + (aksi || "") + "</div>";
+}
+function tombolMenu(menu, label) { return '<button class="btn btn-ghost btn-sm" data-do="admMenu" data-v="' + menu + '">' + (label || "Buka") + "</button>"; }
 
 function aDashboard() {
   const s = C.adm.stats;
@@ -1246,78 +1487,88 @@ function aDashboard() {
   if (!s) return head("Dashboard", "Menghitung di server&hellip;", refresh) + '<div class="skel">Memuat statistik&hellip;</div>';
   const bulan = new Date().toLocaleDateString("id-ID", { month: "long", year: "numeric" });
   const rata = s.rataBenar == null ? "-" : s.rataBenar.toFixed(1).replace(".", ",");
+  const lbUmur = C.lb && C.lb.diperbarui ? "diperbarui " + fmtWaktu(C.lb.diperbarui) : "belum pernah diperbarui";
   return head("Dashboard", "Periode " + bulan + " &middot; seluruh area", refresh) +
     '<div class="stat-grid">' +
-      '<div class="stat"><div class="lbl">Total Petugas Aktif</div><div class="n mono">' + fmtNum(s.aktif) + '</div><div class="k lbl" style="color:var(--ink-dim);">+' + fmtNum(s.baru) + " registrasi 7 hari</div></div>" +
+      '<div class="stat"><div class="lbl">Petugas Aktif</div><div class="n mono">' + fmtNum(s.aktif) + '</div><div class="k lbl" style="color:var(--ink-dim);">dari ' + fmtNum(s.total) + " akun</div></div>" +
+      '<div class="stat"><div class="lbl">Belum Lengkapi Profil</div><div class="n mono">' + fmtNum(s.belum) + '</div><div class="k lbl" style="color:var(--ink-dim);">hasil import, belum pernah masuk</div></div>' +
       '<div class="stat"><div class="lbl">Completion Kuesioner</div><div class="n mono">' + s.completion + '%</div><div class="k lbl" style="color:var(--ink-dim);">' + fmtNum(s.respPer) + " respons bulan ini</div></div>" +
-      '<div class="stat"><div class="lbl">Post Test &mdash; Rata Benar</div><div class="n mono">' + rata + '</div><div class="k lbl" style="color:var(--ink-dim);">dari ' + (s.rataSoal == null ? "-" : Math.round(s.rataSoal)) + " soal</div></div>" +
       '<div class="stat"><div class="lbl">Redeem Pending</div><div class="n red mono">' + fmtNum(s.pending) + '</div><div class="k lbl" style="color:var(--ink-dim);">poin ditahan &middot; perlu review</div></div>' +
     "</div>" +
-    '<div class="sec-head"><h2>Action Queue &amp; Alerts</h2><span class="lbl">4 kategori</span></div>' +
-    aq("Monitor", false, "Kuesioner", fmtNum(s.respPer) + " respons &middot; completion " + s.completion + "% dari target aktif", "kuesioner") +
-    aq("Analyze", !!s.topSalah, "Post Test", s.topSalah ? esc(s.topSalah.teks) + " &mdash; " + s.topSalah.n + "x salah" : "Belum ada pola kesalahan", "posttest") +
-    aq("Investigate", s.review > 0, "Photo Escalation", fmtNum(s.review) + " akun berstatus review &middot; foto dibuka hanya saat eskalasi", "petugas") +
-    aq("Review", s.pending > 0, "Redeem Queue", fmtNum(s.pending) + " permintaan pending &middot; cek ketersediaan stok", "redeem") +
+    '<div class="sec-head"><h2>Verifikasi Petugas Baru</h2><span class="lbl">' + fmtNum(s.review) + " menunggu</span></div>" +
+    (!C.adm.reviewList.length ? '<div class="card"><div class="empty" style="padding:16px;">Tidak ada petugas baru yang menunggu verifikasi.</div></div>' :
+      C.adm.reviewList.map((p) => '<div class="aq"><div class="grow"><div class="aq-n">' + esc(namaTampil(p)) + " &middot; " + grpTag(p.group) + "</div>" +
+        '<div class="aq-s"><span class="mono">' + esc(p.id) + " / " + esc(p.kode) + "</span> &middot; " + esc(p.regional) + " / " + esc(p.cluster) + " &middot; daftar " + fmtTgl(p.createdAt) + "</div></div>" +
+        '<button class="btn btn-ghost btn-sm" data-do="detailPetugas" data-v="' + esc(p.id) + '">Lihat foto</button>' +
+        '<button class="btn btn-ok btn-sm" data-do="setujuiPetugas" data-v="' + esc(p.id) + '">Setujui</button></div>').join("")) +
+    '<div class="sec-head"><h2>Action Queue</h2></div>' +
+    aq("Monitor", false, "Kuesioner", fmtNum(s.respPer) + " respons &middot; completion " + s.completion + "% dari target aktif", tombolMenu("kuesioner")) +
+    aq("Analyze", !!s.topSalah, "Post Test — rata benar " + rata + " dari " + (s.rataSoal == null ? "-" : Math.round(s.rataSoal)) + " soal", s.topSalah ? esc(s.topSalah.teks) + " &mdash; " + s.topSalah.n + " dari " + s.topSalah.dari + " peserta salah" : "Belum ada pola kesalahan", tombolMenu("posttest")) +
+    aq("Review", s.pending > 0, "Redeem Queue", fmtNum(s.pending) + " permintaan pending &middot; cek foto & stok", tombolMenu("redeem")) +
+    aq("Sistem", false, "Leaderboard petugas", lbUmur + " &middot; otomatis diperbarui saat Dashboard dibuka bila lebih dari " + LB_BASI_JAM + " jam", '<button class="btn btn-ghost btn-sm" data-do="perbaruiLb">Perbarui sekarang</button>') +
+    aq("Sistem", false, "Pembersihan foto", C.adm.fotoBersih ? fmtNum(C.adm.fotoBersih.total) + " foto kedaluwarsa dihapus " + fmtWaktu(C.adm.fotoBersih.waktu) : "Berjalan otomatis saat Dashboard dibuka", tombolMenu("pengaturan", "Pengaturan")) +
     '<div class="sec-head"><h2>Completion Rate per Group</h2><span class="lbl">bulan ini</span></div><div class="card">' +
     s.perGroup.map((x) => '<div style="padding:10px 0;border-bottom:1px solid var(--border);"><div class="row"><span class="grow" style="font-weight:700;font-size:14px;">' + esc(x.g) +
       '</span><span class="mono" style="font-size:13px;color:var(--ink-dim);">' + fmtNum(x.isi) + " / " + fmtNum(x.target) + " &middot; " + x.pct + "%</span></div>" +
-      '<div class="prog"><i style="width:' + Math.min(100, x.pct) + '%"></i></div></div>').join("") + "</div>" +
-    (s.topSalah ? '<div class="card" style="margin-top:14px;background:var(--warn-soft);border-color:#EBD5B4;"><div class="card-title" style="color:var(--warn);">Soal paling banyak salah</div>' +
-      '<div style="font-weight:700;font-size:14.5px;">' + esc(s.topSalah.teks) + "</div>" +
-      '<div style="font-size:13px;color:var(--ink-dim);margin-top:3px;">' + s.topSalah.n + " dari " + s.topSalah.dari + " peserta " + esc(s.topSalah.judul) + " menjawab salah &middot; rekomendasi refresh materi</div></div>" : "");
-}
-function aq(tag, warn, judul, sub, menu) {
-  return '<div class="aq"><span class="pill ' + (warn ? "pill-warn" : "pill-neutral") + '">' + tag + '</span><div class="grow"><div class="aq-n">' + judul + '</div><div class="aq-s">' + sub + "</div></div>" +
-    '<button class="btn btn-ghost btn-sm" data-do="admMenu" data-v="' + menu + '">Buka</button></div>';
+      '<div class="prog"><i style="width:' + Math.min(100, x.pct) + '%"></i></div></div>').join("") + "</div>";
 }
 
 function aPetugas() {
   const f = S.fPetugas, P = C.adm.petugas;
-  const opt = (arr, val, semua) => '<option value="">' + semua + "</option>" + arr.map((x) => '<option value="' + esc(x) + '" ' + (val === x ? "selected" : "") + ">" + esc(x) + "</option>").join("");
-  return head("Data Petugas", (C.adm.stats ? fmtNum(C.adm.stats.total) + " record &middot; " : "") + "dimuat per " + HALAMAN + " baris") +
+  const opt = (arr, val, semua, label) => '<option value="">' + semua + "</option>" + arr.map((x) => '<option value="' + esc(x) + '" ' + (val === x ? "selected" : "") + ">" + esc(label ? label(x) : x) + "</option>").join("");
+  return head("Data Petugas", (C.adm.stats ? fmtNum(C.adm.stats.total) + " akun &middot; " : "") + "dimuat per " + HALAMAN + " baris") +
     '<div class="filters" style="margin-bottom:14px;">' +
-      '<input type="text" class="mono" placeholder="Cari User ID / Kode (persis)" value="' + esc(f.q) + '" data-in="fPetugas.q" style="min-width:230px;">' +
+      '<input type="text" class="mono" placeholder="Cari ID / Username (persis)" value="' + esc(f.q) + '" data-in="fPetugas.q" style="min-width:230px;">' +
       '<button class="btn btn-ghost btn-sm" data-do="cariPetugas">Cari</button>' +
       '<select data-in="fPetugas.group">' + opt(GROUPS, f.group, "Semua Group") + "</select>" +
-      '<select data-in="fPetugas.status">' + opt(["aktif", "review", "nonaktif"], f.status, "Semua Status") + "</select>" +
+      '<select data-in="fPetugas.status">' + opt(["review", "belum_lengkap", "aktif", "nonaktif"], f.status, "Semua Status", (x) => STATUS_LABEL[x]) + "</select>" +
     "</div>" +
-    '<div class="tbl-wrap"><table><thead><tr><th>User ID</th><th>Kode</th><th>Nama Lengkap</th><th>Group</th><th>Hierarki Wilayah</th><th>Poin</th><th>Saldo</th><th>Status</th><th></th></tr></thead><tbody>' +
+    '<div class="tbl-wrap"><table><thead><tr><th>ID Digipos</th><th>Username</th><th>Nama</th><th>Group</th><th>Regional / Cluster</th><th>Poin</th><th>Saldo</th><th>Status</th><th></th></tr></thead><tbody>' +
     (!P.rows.length ? '<tr><td colspan="9"><div class="empty">' + (P.loading ? "Memuat&hellip;" : "Tidak ada petugas yang cocok.") + "</div></td></tr>" :
-      P.rows.map((p) => {
-        const st = p.status || "aktif";
-        const pil = st === "aktif" ? "pill-good" : st === "review" ? "pill-warn" : "pill-neutral";
-        return "<tr><td class=\"mono\">" + esc(p.id) + '</td><td class="mono">' + esc(p.kode || "-") + '</td><td style="font-weight:600;">' + esc(p.nama) + "</td><td>" + grpTag(p.group) + "</td>" +
-          '<td style="font-size:12px;color:var(--ink-dim);">' + [p.area, p.regional, p.branch, p.cluster].map((x) => esc(x || "-")).join(" / ") + "</td>" +
-          '<td class="mono">' + fmtNum(p.poinPeringkat) + '</td><td class="mono">' + fmtNum(p.saldo) + '</td><td><span class="pill ' + pil + '">' + st + "</span></td>" +
-          '<td><button class="btn btn-ghost btn-sm" data-do="detailPetugas" data-v="' + esc(p.id) + '">Detail</button></td></tr>';
-      }).join("")) +
+      P.rows.map((p) => '<tr><td class="mono">' + esc(p.id) + '</td><td class="mono">' + esc(p.kode || "-") + '</td><td style="font-weight:600;">' + esc(p.nama || "—") + "</td><td>" + grpTag(p.group) + "</td>" +
+        '<td style="font-size:12px;color:var(--ink-dim);">' + esc(p.regional || "-") + " / " + esc(p.cluster || "-") + "</td>" +
+        '<td class="mono">' + fmtNum(p.poinPeringkat) + '</td><td class="mono">' + fmtNum(p.saldo) + "</td><td>" + pillStatus(p.status) + "</td>" +
+        '<td><button class="btn btn-ghost btn-sm" data-do="detailPetugas" data-v="' + esc(p.id) + '">Detail</button></td></tr>').join("")) +
     "</tbody></table></div>" +
     '<div class="pager"><span>' + fmtNum(P.rows.length) + " baris dimuat</span>" +
     (!P.habis ? '<button class="btn btn-ghost btn-sm" data-do="petugasLagi" ' + (P.loading ? "disabled" : "") + ">" + (P.loading ? "Memuat…" : "Muat " + HALAMAN + " lagi") + "</button>" : "<span>Semua sudah dimuat</span>") + "</div>";
 }
 
-function targetSelect(path, val) {
-  return '<select data-in="' + path + '"><option value="semua">Semua Group</option>' + GROUPS.map((g) => '<option ' + (val === g ? "selected" : "") + ">" + esc(g) + "</option>").join("") + "</select>";
+/* ---------- target & jadwal ---------- */
+function pilihTarget(prefix, t) {
+  const areas = C.wilayah.map((w) => w.area).filter((v, i, a) => a.indexOf(v) === i).sort();
+  const regs = C.wilayah.filter((w) => !t.area || w.area === t.area).map((w) => w.regional).filter((v, i, a) => a.indexOf(v) === i).sort();
+  return '<select data-in="' + prefix + '.group"><option value="semua">Semua Group</option>' + GROUPS.map((g) => "<option " + (t.group === g ? "selected" : "") + ">" + esc(g) + "</option>").join("") + "</select>" +
+    '<select data-in="' + prefix + '.area"><option value="">Semua Area</option>' + areas.map((a) => '<option value="' + esc(a) + '" ' + (t.area === a ? "selected" : "") + ">" + esc(a) + "</option>").join("") + "</select>" +
+    '<select data-in="' + prefix + '.regional"><option value="">Semua Regional</option>' + regs.map((r) => '<option value="' + esc(r) + '" ' + (t.regional === r ? "selected" : "") + ">" + esc(r) + "</option>").join("") + "</select>";
 }
-function aKuesioner() {
-  const d = S.draftKu;
-  const arr = listOf(C.kuesioner).sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
-  return head("Kuesioner", "Market survey &middot; tanpa benar/salah &middot; lengkap = " + POIN_KUESIONER + " poin") +
-    '<div class="card" style="margin-bottom:18px;"><div class="card-title">Buat Kuesioner</div><div class="filters">' +
-      '<input type="text" placeholder="Judul, cth. Market Pulse — September" value="' + esc(d.judul) + '" data-in="draftKu.judul" style="flex:1;min-width:220px;">' +
-      targetSelect("draftKu.target", d.target) + '<button class="btn btn-primary btn-sm" data-do="buatModul" data-t="kuesioner">Buat</button></div></div>' +
-    (!arr.length ? '<div class="card"><div class="empty">Belum ada kuesioner.</div></div>' : arr.map((k) => kartuModul(k, "kuesioner")).join(""));
+function ringkasTarget(x) {
+  const t = x.target || {};
+  const bag = [(!t.group || t.group === "semua") ? "semua group" : t.group];
+  if (t.area) bag.push(t.area);
+  if (t.regional) bag.push(t.regional);
+  return bag.map(esc).join(" &middot; ");
 }
-function aPosttest() {
-  const d = S.draftPt;
-  const arr = listOf(C.posttest).sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
-  return head("Post Test", "Standardisasi knowledge &middot; auto scoring " + POIN_PER_BENAR + " poin per jawaban benar") +
-    '<div class="card" style="margin-bottom:18px;"><div class="card-title">Buat Post Test</div><div class="filters">' +
-      '<input type="text" placeholder="Judul, cth. Basic Selling Skill" value="' + esc(d.judul) + '" data-in="draftPt.judul" style="flex:1;min-width:220px;">' +
-      targetSelect("draftPt.target", d.target) + '<button class="btn btn-primary btn-sm" data-do="buatModul" data-t="posttest">Buat</button></div></div>' +
-    '<div class="note" style="margin-bottom:14px;">Soal yang sudah dikerjakan petugas sebaiknya tidak diubah &mdash; buat modul baru untuk materi baru. Jawaban lama tetap tersimpan lengkap dengan teks soalnya.</div>' +
-    (!arr.length ? '<div class="card"><div class="empty">Belum ada post test.</div></div>' : arr.map((t) => kartuModul(t, "posttest")).join(""));
+function ringkasJadwal(x) {
+  if (!x.mulai && !x.selesai) return "tanpa batas waktu";
+  return (x.mulai ? esc(x.mulai) : "sekarang") + " s/d " + (x.selesai ? esc(x.selesai) : "seterusnya");
 }
+
+function aModul(tipe) {
+  const isKu = tipe === "kuesioner";
+  const d = S.draftModul[tipe];
+  const arr = listOf(C.adm[tipe]).sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+  return head(isKu ? "Kuesioner" : "Post Test", isKu ? "Market survey &middot; tanpa benar/salah &middot; lengkap = " + POIN_KUESIONER + " poin" : "Standardisasi knowledge &middot; " + POIN_PER_BENAR + " poin per jawaban benar &middot; maks " + MAKS_SOAL + " soal") +
+    '<div class="card" style="margin-bottom:18px;"><div class="card-title">Buat ' + (isKu ? "Kuesioner" : "Post Test") + "</div>" +
+      '<div class="filters"><input type="text" placeholder="Judul" value="' + esc(d.judul) + '" data-in="draftModul.' + tipe + '.judul" style="flex:1;min-width:240px;"></div>' +
+      '<div class="filters" style="margin-top:10px;">' + pilihTarget("draftModul." + tipe, d) + "</div>" +
+      '<div class="filters" style="margin-top:10px;"><label class="lbl">Mulai</label><input type="date" value="' + esc(d.mulai) + '" data-in="draftModul.' + tipe + '.mulai">' +
+        '<label class="lbl">Selesai</label><input type="date" value="' + esc(d.selesai) + '" data-in="draftModul.' + tipe + '.selesai">' +
+        '<button class="btn btn-primary btn-sm" data-do="buatModul" data-t="' + tipe + '">Buat</button></div>' +
+      '<div class="note" style="margin-top:10px;">Hemat kuota: buka bergilir per Regional (sekitar 150 petugas per hari), jangan semua petugas di hari yang sama.</div></div>' +
+    (!C.adm.katalogLoaded ? '<div class="skel">Memuat&hellip;</div>' : !arr.length ? '<div class="card"><div class="empty">Belum ada modul.</div></div>' : arr.map((m) => kartuModul(m, tipe)).join(""));
+}
+
 function kartuModul(m, tipe) {
   const isKu = tipe === "kuesioner";
   const items = isKu ? (m.pertanyaan || []) : (m.soal || []);
@@ -1325,43 +1576,46 @@ function kartuModul(m, tipe) {
   const d = S.draftSoal;
   const terkunci = !isKu && (C.adm.peserta[m.id] || 0) > 0;
   let html = '<div class="card" style="margin-bottom:14px;"><div class="row" style="flex-wrap:wrap;">' +
-    '<div class="grow"><div style="font-weight:800;font-size:16px;">' + esc(m.judul) + '</div><div class="lbl" style="color:var(--ink-dim);">' + items.length + " " + (isKu ? "pertanyaan" : "soal") + " &middot; " + (m.target === "semua" ? "semua group" : esc(m.target)) + "</div></div>" +
+    '<div class="grow"><div style="font-weight:800;font-size:16px;">' + esc(m.judul) + "</div>" +
+    '<div class="lbl" style="color:var(--ink-dim);">' + items.length + " " + (isKu ? "pertanyaan" : "soal") + " &middot; " + ringkasTarget(m) + " &middot; " + ringkasJadwal(m) + "</div></div>" +
     '<span class="pill ' + (m.aktif ? "pill-good" : "pill-neutral") + '" style="cursor:pointer;" data-do="toggleAktif" data-t="' + tipe + '" data-v="' + m.id + '">' + (m.aktif ? "Aktif" : "Nonaktif") + "</span>" +
     '<button class="btn btn-ghost btn-sm" data-do="bukaSoal" data-t="' + tipe + '" data-v="' + m.id + '">' + (buka ? "Tutup" : "Kelola " + (isKu ? "Pertanyaan" : "Soal")) + "</button>" +
     '<button class="btn btn-danger btn-sm" data-do="hapusModul" data-t="' + tipe + '" data-v="' + m.id + '">Hapus</button></div>';
   if (buka) {
+    const kunci = C.adm.kunci[m.id] || [];
     html += '<div style="margin-top:16px;border-top:1px solid var(--border);padding-top:14px;">' +
       (!items.length ? '<div class="empty" style="padding:14px;">Belum ada ' + (isKu ? "pertanyaan" : "soal") + ".</div>" : items.map((q, i) =>
         '<div class="card" style="background:var(--surface-2);margin-bottom:10px;"><div class="row"><div class="grow" style="font-weight:700;font-size:14px;">' + (i + 1) + ". " + esc(q.teks) + "</div>" +
         (terkunci ? "" : '<button class="btn btn-danger btn-sm" data-do="hapusSoal" data-t="' + tipe + '" data-m="' + m.id + '" data-v="' + q.id + '">Hapus</button>') + "</div>" +
         '<ul style="margin:8px 0 0;padding-left:18px;font-size:13px;color:var(--ink-dim);">' +
-        (q.opsi || []).map((o, oi) => { const k = !isKu && (C.adm.kunci[m.id] || [])[i] === oi; return "<li" + (k ? ' style="color:var(--good);font-weight:700;"' : "") + ">" + esc(o) + (k ? " &mdash; kunci" : "") + "</li>"; }).join("") + "</ul></div>").join("")) +
+        (q.opsi || []).map((o, oi) => { const k = !isKu && kunci[i] === oi; return "<li" + (k ? ' style="color:var(--good);font-weight:700;"' : "") + ">" + esc(o) + (k ? " &mdash; kunci" : "") + "</li>"; }).join("") + "</ul></div>").join("")) +
       (terkunci ? '<div class="note">Sudah ada ' + fmtNum(C.adm.peserta[m.id]) + " peserta &mdash; soal dikunci supaya penilaian tetap konsisten. Buat post test baru untuk materi baru.</div>" :
-      '<div class="card" style="background:var(--surface-2);"><div class="card-title">Tambah ' + (isKu ? "Pertanyaan" : "Soal") + (isKu ? "" : " (maks " + MAKS_SOAL + ")") + "</div>" +
-      '<div class="field"><label>Pertanyaan</label><input type="text" value="' + esc(d.teks) + '" data-in="draftSoal.teks"></div>' +
-      [0, 1, 2, 3].map((i) => '<div class="field" style="margin-top:9px;"><label>Opsi ' + (i + 1) + (!isKu && d.kunci === i ? " (kunci)" : "") + '</label><div class="row">' +
-        (isKu ? "" : '<input type="radio" name="kunci" ' + (d.kunci === i ? "checked" : "") + ' data-do="setKunci" data-v="' + i + '" style="width:auto;flex:none;">') +
-        '<input type="text" class="grow" value="' + esc(d.opsi[i]) + '" data-in="draftSoal.opsi.' + i + '"></div></div>').join("") +
-      '<button class="btn btn-primary btn-sm" style="margin-top:12px;" data-do="tambahSoal" data-t="' + tipe + '" data-v="' + m.id + '">Tambah</button>' +
-      (isKu ? "" : '<div class="note" style="margin-top:10px;">Pilih radio di sebelah opsi untuk menandai kunci jawaban. Kunci disimpan terpisah dan tidak bisa dibaca petugas sebelum menjawab.</div>') + "</div>") + "</div>";
+        '<div class="card" style="background:var(--surface-2);"><div class="card-title">Tambah ' + (isKu ? "Pertanyaan" : "Soal (maks " + MAKS_SOAL + ")") + "</div>" +
+        '<div class="field"><label>Pertanyaan</label><input type="text" value="' + esc(d.teks) + '" data-in="draftSoal.teks"></div>' +
+        [0, 1, 2, 3].map((i) => '<div class="field" style="margin-top:9px;"><label>Opsi ' + (i + 1) + (!isKu && d.kunci === i ? " (kunci)" : "") + '</label><div class="row">' +
+          (isKu ? "" : '<input type="radio" name="kunci" ' + (d.kunci === i ? "checked" : "") + ' data-do="setKunci" data-v="' + i + '" style="width:auto;flex:none;">') +
+          '<input type="text" class="grow" value="' + esc(d.opsi[i]) + '" data-in="draftSoal.opsi.' + i + '"></div></div>').join("") +
+        '<button class="btn btn-primary btn-sm" style="margin-top:12px;" data-do="tambahSoal" data-t="' + tipe + '" data-v="' + m.id + '">Tambah</button>' +
+        (isKu ? "" : '<div class="note" style="margin-top:10px;">Pilih radio di sebelah opsi untuk menandai kunci. Kunci disimpan terpisah dan tidak bisa dibaca petugas sebelum menjawab.</div>') + "</div>") +
+      "</div>";
   }
   return html + "</div>";
 }
 
 function aKnowledge() {
   const d = S.draftKn;
-  const arr = listOf(C.knowledge);
-  return head("Knowledge", "Direktori tautan materi eksternal &middot; bisa ditargetkan per group") +
+  const arr = listOf(C.adm.knowledge);
+  return head("Knowledge", "Direktori tautan materi eksternal &middot; bisa ditargetkan per group / area / regional") +
     '<div class="card" style="margin-bottom:18px;"><div class="card-title">Tambah Materi</div><div class="filters">' +
       '<input type="text" placeholder="Judul materi" value="' + esc(d.judul) + '" data-in="draftKn.judul" style="flex:1;min-width:200px;">' +
       '<select data-in="draftKn.tipe">' + ["KV", "PDF", "VID", "DOC", "FAQ"].map((t) => "<option " + (d.tipe === t ? "selected" : "") + ">" + t + "</option>").join("") + "</select>" +
-      '<input type="text" placeholder="https://..." value="' + esc(d.url) + '" data-in="draftKn.url" style="flex:1;min-width:220px;">' +
-      targetSelect("draftKn.target", d.target) + '<button class="btn btn-primary btn-sm" data-do="tambahKnowledge">Tambah</button></div></div>' +
+      '<input type="text" placeholder="https://..." value="' + esc(d.url) + '" data-in="draftKn.url" style="flex:1;min-width:220px;"></div>' +
+      '<div class="filters" style="margin-top:10px;">' + pilihTarget("draftKn", d) + '<button class="btn btn-primary btn-sm" data-do="tambahKnowledge">Tambah</button></div></div>' +
     (!arr.length ? '<div class="card"><div class="empty">Belum ada materi.</div></div>' :
       '<div class="tbl-wrap"><table><thead><tr><th>Tipe</th><th>Judul</th><th>URL</th><th>Target</th><th>Status</th><th></th></tr></thead><tbody>' +
       arr.map((k) => '<tr><td><span class="pill pill-neutral">' + esc(k.tipe) + '</span></td><td style="font-weight:600;">' + esc(k.judul) + "</td>" +
-        '<td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><a href="' + esc(k.url) + '" target="_blank" rel="noopener noreferrer">' + esc(k.url) + "</a></td>" +
-        "<td>" + (k.target === "semua" ? "Semua" : grpTag(k.target)) + "</td>" +
+        '<td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><a href="' + esc(k.url) + '" target="_blank" rel="noopener noreferrer">' + esc(k.url) + "</a></td>" +
+        '<td style="font-size:12px;">' + ringkasTarget(k) + "</td>" +
         '<td><span class="pill ' + (k.aktif !== false ? "pill-good" : "pill-neutral") + '" style="cursor:pointer;" data-do="toggleKnowledge" data-v="' + k.id + '">' + (k.aktif !== false ? "Aktif" : "Nonaktif") + "</span></td>" +
         '<td><button class="btn btn-danger btn-sm" data-do="hapusKnowledge" data-v="' + k.id + '">Hapus</button></td></tr>').join("") + "</tbody></table></div>");
 }
@@ -1369,20 +1623,22 @@ function aKnowledge() {
 function aPoin() {
   const d = S.draftAdj;
   const chips = [["semua", "Semua"]].concat(GROUPS.map((g) => [g, g]));
+  const data = C.lb ? (C.lb[S.lbFilter] || []) : null;
   return head("Poin &amp; Leaderboard", "Point ledger &middot; semua perubahan poin tercatat untuk audit") +
     '<div class="card" style="margin-bottom:18px;"><div class="card-title">Manual Adjustment</div><div class="filters">' +
-      '<input type="text" class="mono" placeholder="User ID / Kode" value="' + esc(d.id) + '" data-in="draftAdj.id" style="min-width:170px;">' +
+      '<input type="text" class="mono" placeholder="ID / Username" value="' + esc(d.id) + '" data-in="draftAdj.id" style="min-width:170px;">' +
       '<input type="number" placeholder="Poin (+/-)" value="' + esc(d.poin) + '" data-in="draftAdj.poin" style="min-width:120px;">' +
       '<input type="text" placeholder="Alasan (wajib)" value="' + esc(d.alasan) + '" data-in="draftAdj.alasan" style="flex:1;min-width:220px;">' +
       '<button class="btn btn-primary btn-sm" data-do="manualAdj">Catat</button></div>' +
       '<div class="note" style="margin-top:10px;">Wajib mencatat alasan; admin pelaksana tercatat otomatis. Mempengaruhi saldo dan leaderboard.</div></div>' +
-    '<div class="sec-head"><h2>Leaderboard &mdash; Top 20</h2></div><div class="chips" style="margin-bottom:12px;">' +
-      chips.map((c) => '<button class="chip ' + (S.lbFilter === c[0] ? "on" : "") + '" data-do="lbFilter" data-v="' + esc(c[0]) + '">' + esc(c[1]) + "</button>").join("") + "</div>" +
-    '<div class="card" style="margin-bottom:18px;">' + (C.lb.loading ? '<div class="skel">Memuat&hellip;</div>' : barisLb(C.lb.rows, null)) + "</div>" +
+    '<div class="sec-head"><h2>Leaderboard &mdash; Top 20</h2><button class="btn btn-ghost btn-sm" data-do="perbaruiLb">Perbarui sekarang</button></div>' +
+    '<div class="lbl" style="margin-bottom:10px;">' + (C.lb && C.lb.diperbarui ? "Diperbarui " + fmtWaktu(C.lb.diperbarui) : "Belum pernah diperbarui") + "</div>" +
+    '<div class="chips" style="margin-bottom:12px;">' + chips.map((c) => '<button class="chip ' + (S.lbFilter === c[0] ? "on" : "") + '" data-do="lbFilter" data-v="' + esc(c[0]) + '">' + esc(c[1]) + "</button>").join("") + "</div>" +
+    '<div class="card" style="margin-bottom:18px;">' + (C.lbLoading || !data ? '<div class="skel">Memuat&hellip;</div>' : barisLb(data, null)) + "</div>" +
     '<div class="sec-head"><h2>Point Ledger &mdash; 50 Terbaru</h2><button class="btn btn-ghost btn-sm" data-do="refreshLedger">Muat ulang</button></div>' +
-    '<div class="tbl-wrap"><table><thead><tr><th>Waktu</th><th>User ID</th><th>Nama</th><th>Aktivitas</th><th>In/Out</th><th>Oleh</th></tr></thead><tbody>' +
+    '<div class="tbl-wrap"><table><thead><tr><th>Waktu</th><th>ID</th><th>Nama</th><th>Aktivitas</th><th>In/Out</th><th>Oleh</th></tr></thead><tbody>' +
     (!C.adm.ledgerLoaded ? '<tr><td colspan="6"><div class="skel">Memuat&hellip;</div></td></tr>' : !C.adm.ledger.length ? '<tr><td colspan="6"><div class="empty">Belum ada transaksi.</div></td></tr>' :
-      C.adm.ledger.map((l) => '<tr><td class="mono" style="font-size:12px;">' + fmtWaktu(l.waktu) + '</td><td class="mono">' + esc(l.userId) + "</td><td>" + esc(l.nama) + "</td><td>" + esc(l.aktivitas) + "</td>" +
+      C.adm.ledger.map((l) => '<tr><td class="mono" style="font-size:12px;">' + fmtWaktu(l.waktu) + '</td><td class="mono">' + esc(l.userId) + "</td><td>" + esc(l.nama || l.kode) + "</td><td>" + esc(l.aktivitas) + "</td>" +
         '<td class="mono" style="font-weight:700;color:' + (l.delta >= 0 ? "var(--good)" : "var(--bad)") + ';">' + (l.delta >= 0 ? "+" : "") + l.delta + '</td><td style="font-size:12px;color:var(--ink-dim);">' + esc(l.oleh || "sistem") + "</td></tr>").join("")) +
     "</tbody></table></div>";
 }
@@ -1406,29 +1662,46 @@ function aRedeem() {
     (!C.adm.redeemLoaded ? '<div class="skel">Memuat&hellip;</div>' : !C.adm.redeem.length ? '<div class="card"><div class="empty">Tidak ada permintaan pada filter ini.</div></div>' :
       C.adm.redeem.map((r) => {
         const pil = r.status === "selesai" ? "pill-good" : r.status === "ditolak" ? "pill-bad" : "pill-warn";
-        return '<div class="aq"><div class="grow"><div class="aq-n">' + esc(r.hadiahNama) + '</div><div class="aq-s"><span class="mono">' + esc(r.userId) + "</span> &middot; " + esc(r.nama) +
+        return '<div class="aq"><div class="grow"><div class="aq-n">' + esc(r.hadiahNama) + '</div><div class="aq-s"><span class="mono">' + esc(r.userId) + "</span> &middot; " + esc(r.nama || r.kode) +
           " &middot; " + fmtNum(r.poin) + " poin &middot; " + fmtWaktu(r.waktu) + (r.alasan ? " &middot; alasan: " + esc(r.alasan) : "") + "</div></div>" +
           '<span class="pill ' + pil + '">' + esc(r.status) + "</span>" +
           (r.fotoId ? '<button class="btn btn-ghost btn-sm" data-do="lihatFotoRedeem" data-v="' + r.id + '">Lihat Foto</button>' : "") +
           (r.status === "pending" ? '<button class="btn btn-ok btn-sm" data-do="setujuiRedeem" data-v="' + r.id + '">Setujui</button><button class="btn btn-danger btn-sm" data-do="tolakRedeem" data-v="' + r.id + '">Tolak</button>' : "") +
           "</div>";
       }).join("")) +
-    '<div class="note" style="margin-top:14px;">Poin berstatus ditahan selama pending. Penolakan mengembalikan poin dan membuka lagi kuota 1x/bulan petugas.</div>';
+    '<div class="note" style="margin-top:14px;">Poin berstatus ditahan selama pending. Penolakan mengembalikan poin dan membuka lagi kuota 1x/bulan petugas. Proses dalam 120 hari &mdash; setelah itu foto redeem terhapus otomatis.</div>';
 }
 
 function aPengaturan() {
-  return head("Pengaturan", "Master wilayah &amp; parameter program") +
+  const im = S.imp;
+  const hasil = im.hasil;
+  return head("Pengaturan", "Import petugas, master wilayah, dan penghematan storage") +
+    '<div class="card" style="margin-bottom:18px;"><div class="card-title">Import Petugas dari Excel</div>' +
+      '<div style="font-size:13px;color:var(--ink-dim);margin-bottom:12px;">Kolom yang dibaca: <span class="mono">user_id, username_digipos, cluster_name, branch, regional, area_name</span> (opsional: <span class="mono">nama, group</span>). Akun yang sudah ada dilewati, jadi aman diulang untuk data bulan berikutnya. Data hanya dikirim dari laptop ini ke Firebase.</div>' +
+      '<div class="filters"><label class="btn btn-ghost btn-sm" style="cursor:pointer;">Pilih file Excel<input type="file" accept=".xlsx,.xls,.csv" data-import="1" hidden></label>' +
+        '<span class="lbl">' + (im.namaFile ? esc(im.namaFile) + (im.sheet ? " &middot; sheet " + esc(im.sheet) : "") : "belum ada file") + "</span>" +
+        '<label class="lbl">Group bila tidak ada di file</label><select data-in="imp.group">' + GROUPS.map((g) => "<option " + (im.group === g ? "selected" : "") + ">" + esc(g) + "</option>").join("") + "</select></div>" +
+      (im.namaFile && !im.busy && !hasil ? '<div class="stat-grid" style="margin-top:14px;">' +
+          '<div class="stat"><div class="lbl">Baris siap import</div><div class="n mono">' + fmtNum(im.valid.length) + "</div></div>" +
+          '<div class="stat"><div class="lbl">Baris ditolak</div><div class="n mono" style="color:' + (im.salah.length ? "var(--bad)" : "inherit") + ';">' + fmtNum(im.salah.length) + "</div></div>" +
+          '<div class="stat"><div class="lbl">Cluster di file</div><div class="n mono">' + fmtNum(new Set(im.valid.map((r) => r.cluster + "|" + r.branch)).size) + "</div></div></div>" +
+        (im.salah.length ? '<div class="note" style="margin-top:12px;">' + im.salah.slice(0, 10).map((s) => "Baris " + s.baris + " (" + esc(s.userId || "-") + "): " + esc(s.alasan)).join("<br>") + (im.salah.length > 10 ? "<br>…dan " + (im.salah.length - 10) + " lainnya" : "") + "</div>" : "") +
+        '<button class="btn btn-primary btn-sm" style="margin-top:14px;" data-do="mulaiImport" ' + (im.valid.length ? "" : "disabled") + ">Import " + fmtNum(im.valid.length) + " petugas</button>" : "") +
+      (im.log.length ? '<div class="note mono" style="margin-top:12px;white-space:pre-wrap;">' + im.log.map(esc).join("\n") + "</div>" : "") +
+      (hasil ? '<div class="card" style="margin-top:12px;background:var(--good-soft);border-color:#BFE3CC;"><b style="color:var(--good);">Import selesai.</b> ' + fmtNum(hasil.dibuat) + " akun dibuat, " + fmtNum(hasil.dilewati) + " dilewati karena sudah ada, master wilayah " + fmtNum(hasil.wilayah) + " cluster.</div>" : "") +
+    "</div>" +
     '<div class="card" style="margin-bottom:18px;"><div class="card-title">Master Wilayah</div>' +
-      '<div style="font-size:13px;color:var(--ink-dim);margin-bottom:10px;">Tempel satu baris per cluster: <span class="mono">Area, Regional, Branch, Cluster</span> (koma atau tab). Data lama diganti. Petugas yang sudah terdaftar tidak terpengaruh.</div>' +
-      '<div class="field"><textarea rows="8" data-in="bulkWilayah" placeholder="Area 2, Jabar, Bandung, Bandung Kota">' + esc(S.bulkWilayah) + "</textarea></div>" +
-      '<div class="row" style="margin-top:12px;"><button class="btn btn-primary btn-sm" data-do="simpanWilayah">Simpan Master Wilayah</button>' +
-      '<button class="btn btn-ghost btn-sm" data-do="muatContohWilayah">Muat Contoh</button>' +
-      '<span class="lbl" style="margin-left:auto;">' + fmtNum(C.wilayah.length) + " cluster tersimpan</span></div></div>" +
-    '<div class="card"><div class="card-title">Parameter Poin</div><div class="stat-grid">' +
+      '<div class="row"><span class="grow" style="font-size:13px;color:var(--ink-dim);">Terbentuk otomatis dari import. Tambahan manual: satu baris per cluster <span class="mono">Area, Regional, Branch, Cluster</span>.</span><span class="lbl">' + fmtNum(C.wilayah.length) + " cluster</span></div>" +
+      '<div class="field" style="margin-top:10px;"><textarea rows="4" data-in="bulkWilayah" placeholder="JABOTABEK &amp; JABAR, JABAR, BANDUNG, BANDUNG KOTA">' + esc(S.bulkWilayah) + "</textarea></div>" +
+      '<button class="btn btn-ghost btn-sm" style="margin-top:10px;" data-do="tambahWilayah">Tambahkan ke Master Wilayah</button></div>' +
+    '<div class="card" style="margin-bottom:18px;"><div class="card-title">Penghematan Storage</div>' +
+      '<div style="font-size:13px;color:var(--ink-dim);margin-bottom:10px;">Storage gratis 1 GB tidak pernah reset. Foto kuesioner &amp; post test dihapus otomatis setelah ' + HAPUS_FOTO_HARI.kuesioner + " hari, foto redeem setelah " + HAPUS_FOTO_HARI.redeem + " hari. Foto baseline petugas disimpan. Pembersihan berjalan saat Dashboard dibuka.</div>" +
+      '<div class="row"><button class="btn btn-ghost btn-sm" data-do="bersihkanFoto">Bersihkan sekarang</button><span class="lbl">' + (C.adm.fotoBersih ? "Terakhir: " + fmtNum(C.adm.fotoBersih.total) + " foto, " + fmtWaktu(C.adm.fotoBersih.waktu) : "") + "</span></div></div>" +
+    '<div class="card"><div class="card-title">Parameter Program</div><div class="stat-grid">' +
       '<div class="stat"><div class="lbl">Kuesioner Lengkap</div><div class="n mono">' + POIN_KUESIONER + '</div><div class="k lbl" style="color:var(--ink-dim);">poin</div></div>' +
       '<div class="stat"><div class="lbl">Per Jawaban Benar</div><div class="n mono">' + POIN_PER_BENAR + '</div><div class="k lbl" style="color:var(--ink-dim);">poin &middot; post test</div></div>' +
       '<div class="stat"><div class="lbl">Batas Redeem</div><div class="n mono">1x</div><div class="k lbl" style="color:var(--ink-dim);">per petugas per bulan</div></div>' +
-    '</div><div class="note" style="margin-top:14px;">Nilai mengikuti framework MVP dan juga dikunci di aturan keamanan server.</div></div>';
+    "</div></div>";
 }
 
 /* ---------- modal ---------- */
@@ -1439,22 +1712,24 @@ function modalDetail(d) {
   const p = d.pub, v = p.id, priv = d.priv;
   const foto0 = d.fotos[0];
   return '<div class="modal-bd" data-do="tutupModal"><div class="modal" data-stop="1">' +
-    '<div class="card-title">Detail Petugas</div><h2 style="font-size:20px;">' + esc(p.nama) + "</h2>" +
-    '<div class="lbl" style="color:var(--ink-dim);margin-bottom:14px;">' + esc(v) + " &middot; " + esc(p.kode || "-") + " &middot; " + esc(p.group) + "</div>" +
+    '<div class="card-title">Detail Petugas</div><h2 style="font-size:20px;">' + esc(namaTampil(p)) + "</h2>" +
+    '<div class="row" style="margin:6px 0 14px;gap:8px;flex-wrap:wrap;"><span class="lbl" style="color:var(--ink-dim);">' + esc(v) + " &middot; " + esc(p.kode || "-") + "</span>" + grpTag(p.group) + pillStatus(p.status) + "</div>" +
+    (p.status === "review" ? '<div class="note" style="margin-bottom:12px;">Petugas baru (daftar mandiri). Periksa foto &amp; data, lalu setujui. <button class="btn btn-ok btn-sm" data-do="setujuiPetugas" data-v="' + esc(v) + '">Setujui</button></div>' : "") +
     '<div class="cmp" style="margin-bottom:14px;">' + kotakFoto(priv.foto, "Baseline") + kotakFoto(foto0 && foto0.foto, foto0 ? esc(foto0.tipe) + " &middot; " + fmtTgl(foto0.waktu) : "belum ada aktivitas") + "</div>" +
-    (priv.fotoPending ? '<div class="note" style="margin-bottom:12px;"><div style="margin-bottom:8px;">Ada pengajuan ganti foto baseline:</div><img src="' + priv.fotoPending + '" style="width:120px;border-radius:8px;display:block;margin-bottom:8px;">' +
+    (priv.fotoPending ? '<div class="note" style="margin-bottom:12px;"><div style="margin-bottom:8px;">Pengajuan ganti foto baseline:</div><img src="' + priv.fotoPending + '" style="width:120px;border-radius:8px;display:block;margin-bottom:8px;">' +
       '<button class="btn btn-ok btn-sm" data-do="setujuiFoto" data-v="' + esc(v) + '">Setujui</button> <button class="btn btn-danger btn-sm" data-do="tolakFoto" data-v="' + esc(v) + '">Tolak</button></div>' : "") +
     '<div class="card" style="background:var(--surface-2);margin-bottom:12px;">' +
       '<div class="lbl">Wilayah</div><div style="font-size:13.5px;">' + [p.area, p.regional, p.branch, p.cluster].map((x) => esc(x || "-")).join(" / ") + "</div>" +
       '<div class="lbl" style="margin-top:10px;">Nomor Aktif</div><div class="mono" style="font-size:13.5px;">' + esc(priv.nomor || "-") + "</div>" +
+      '<div class="lbl" style="margin-top:10px;">HP Terhubung</div><div style="font-size:13.5px;">' + (d.hp ? "Ya, sejak " + fmtWaktu(d.hp.waktu) : "Belum ada HP terhubung") + "</div>" +
       '<div class="lbl" style="margin-top:10px;">Poin Peringkat / Saldo</div><div class="mono" style="font-size:13.5px;">' + fmtNum(p.poinPeringkat) + " / " + fmtNum(p.saldo) + "</div></div>" +
     '<div class="card-title">Point Ledger</div>' +
     (!d.ledger.length ? '<div class="empty" style="padding:14px;">Belum ada transaksi.</div>' : d.ledger.slice(0, 15).map((l) =>
       '<div class="led"><span class="ld">' + fmtTgl(l.waktu) + '</span><span class="grow" style="font-size:12.5px;">' + esc(l.aktivitas) + '</span><span class="lv ' + (l.delta >= 0 ? "pos" : "neg") + '">' + (l.delta >= 0 ? "+" : "") + l.delta + "</span></div>").join("")) +
     '<div class="row" style="margin-top:16px;flex-wrap:wrap;">' +
       '<select data-status="' + esc(v) + '" class="grow" style="padding:9px;border-radius:9px;border:1px solid var(--border-strong);">' +
-        ["aktif", "review", "nonaktif"].map((s) => '<option value="' + s + '" ' + ((p.status || "aktif") === s ? "selected" : "") + ">" + s + "</option>").join("") + "</select>" +
-      '<button class="btn btn-ghost btn-sm" data-do="resetPin" data-v="' + esc(v) + '">Reset PIN</button>' +
+        ["belum_lengkap", "review", "aktif", "nonaktif"].map((s) => '<option value="' + s + '" ' + ((p.status || "aktif") === s ? "selected" : "") + ">" + STATUS_LABEL[s] + "</option>").join("") + "</select>" +
+      (d.hp ? '<button class="btn btn-ghost btn-sm" data-do="resetHp" data-v="' + esc(v) + '">Reset HP</button>' : "") +
       '<button class="btn btn-ghost btn-sm" data-do="tutupModal">Tutup</button></div></div></div>';
 }
 function modalFotoRedeem(base, foto) {
@@ -1469,18 +1744,18 @@ function vAdmBelum() {
   const u = S.adminUser;
   return '<div class="center-narrow"><div class="card lift"><div class="card-title">Akses Admin Belum Aktif</div>' +
     '<p style="font-size:14px;margin:0 0 12px;">Login berhasil, tetapi akun <b>' + esc(u.email) + "</b> belum terdaftar sebagai Super Admin.</p>" +
-    '<div class="note">Di Firebase Console &rarr; Firestore Database &rarr; buat koleksi <span class="mono">admins</span> dengan Document ID berikut:</div>' +
+    '<div class="note">Di Firebase Console &rarr; Firestore Database &rarr; koleksi <span class="mono">admins</span>, buat dokumen dengan Document ID berikut:</div>' +
     '<div class="mono" style="margin:10px 0;padding:10px;border:1px solid var(--border);border-radius:9px;word-break:break-all;background:var(--surface-2);">' + esc(u.uid) + "</div>" +
     '<button class="btn btn-ghost btn-block" data-do="admCekUlang">Saya sudah menambahkannya — cek ulang</button>' +
     '<button class="btn btn-ghost btn-block" style="margin-top:9px;" data-do="admKeluar">Keluar</button></div></div>';
 }
+function layarMuat(teks) { return '<div class="wrap-plain"><div class="pad"><div class="empty">' + teks + "</div></div></div>"; }
 
 function vShell(inner) {
-  const p = S.profilSaya;
   const nav = [["home", "HM", "Home"], ["tugas", "TG", "Tugas"], ["hadiah", "HD", "Hadiah"], ["profil", "PF", "Profil"]];
   const inFlow = S.view !== "app";
   return '<div class="wrap-mobile"><div class="topbar"><div class="brand"><b>DEBY</b><span>DS Database</span></div>' +
-    '<button class="tb-act" data-do="tab" data-v="profil">' + esc((p.nama || "").split(" ")[0]) + "</button></div>" + inner +
+    '<button class="tb-act" data-do="tab" data-v="profil">' + esc(namaTampil(S.profilSaya).split(" ")[0]) + "</button></div>" + inner +
     '<nav class="bnav">' + nav.map((n) => '<button class="' + (!inFlow && S.tab === n[0] ? "on" : "") + '" data-do="tab" data-v="' + n[0] + '"><span class="bi">' + n[1] + '</span><span class="bt">' + n[2] + "</span></button>").join("") +
     "</nav></div>";
 }
@@ -1489,11 +1764,13 @@ function render() {
   const root = document.getElementById("app");
   let html;
   if (S.mode === "admin") {
-    html = !S.adminUser ? vAdmLogin() : !S.adminCek ? '<div class="empty">Memeriksa akses admin&hellip;</div>' : S.adminOk ? vAdmin() : vAdmBelum();
-  } else if (S.view === "daftar") html = vDaftar();
+    html = !S.adminUser ? vAdmLogin() : !S.adminCek ? layarMuat("Memeriksa akses admin&hellip;") : S.adminOk ? vAdmin() : vAdmBelum();
+  } else if (S.view === "boot") html = layarMuat("Membuka DEBY&hellip;");
+  else if (S.view === "daftar") html = vDaftar();
   else if (S.view === "admLogin") html = vAdmLogin();
   else if (!S.me || S.view === "masuk") html = vMasuk();
-  else if (!S.profilSaya) html = '<div class="wrap-plain"><div class="pad"><div class="empty">Memuat akun&hellip;</div></div></div>';
+  else if (!S.profilSaya) html = layarMuat("Memuat akun&hellip;");
+  else if (S.profilSaya.status === "belum_lengkap") html = vLengkapi();
   else if (S.view === "gate" && S.gate) html = vShell(vGate());
   else if (S.view === "run" && S.run) html = vShell(vRun());
   else if (S.view === "hasil" && S.hasil) html = vShell(vHasil());
@@ -1504,7 +1781,7 @@ function render() {
   if (S.toast) html += '<div class="toast ' + (S.toast.kind === "ok" ? "ok" : S.toast.kind === "no" ? "no" : "") + '">' + esc(S.toast.msg) + "</div>";
   if (S.modal) html += S.modal;
 
-  /* pertahankan fokus & posisi kursor saat data realtime memicu render ulang */
+  /* pertahankan fokus & posisi kursor saat render ulang */
   const a = document.activeElement;
   const keep = a && a.getAttribute && a.getAttribute("data-in");
   const selStart = keep && typeof a.selectionStart === "number" ? a.selectionStart : null;
@@ -1517,27 +1794,31 @@ function render() {
 
 /* ============ navigasi ============ */
 function onTab(v) {
-  if (v === "home") { if (C.lb.filter !== "semua" || !C.lb.rows.length) loadLeaderboard("semua"); loadRank(); }
-  if (v === "leaderboard") { loadLeaderboard(S.lbFilter); loadRank(); }
+  if (v === "home") { loadKatalog(); loadLeaderboard(); loadRank(); }
+  if (v === "tugas" || v === "knowledge") loadKatalog();
+  if (v === "leaderboard") { loadLeaderboard(); loadRank(); }
+  if (v === "hadiah") loadHadiah();
 }
 function onAdmMenu(v) {
   if (v === "dashboard" && !C.adm.stats) loadAdminStats();
   if (v === "petugas" && !C.adm.petugas.rows.length) loadPetugasPage(true);
-  if (v === "poin") { loadLeaderboard(S.lbFilter); loadLedgerTerbaru(); }
-  if (v === "redeem") subscribeAdminRedeem();
+  if ((v === "kuesioner" || v === "posttest" || v === "knowledge" || v === "pengaturan") && !C.wilayahLoaded) loadWilayah();
   if (v === "posttest") loadKunciAdmin();
-  if (v === "pengaturan" && !C.wilayahLoaded) loadWilayah();
+  if (v === "poin") { loadLeaderboard(); loadLedgerTerbaru(); }
+  if (v === "redeem") subscribeAdminRedeem();
+}
+function mulaiSesi(userId) {
+  S.me = userId; S.view = "app"; S.tab = "home"; S.profilSaya = null;
+  render();
+  loadSaya(userId).then((ok) => {
+    if (!ok || !S.profilSaya) return;
+    if (S.profilSaya.status === "belum_lengkap") { S.lengkapi.nama = S.profilSaya.nama || ""; render(); }
+    else onTab("home");
+  });
 }
 function pesanGagal(e, fallback) {
-  if (e && e.code === "permission-denied") return "Sesi berakhir atau aksi tidak diizinkan. Keluar lalu masuk lagi.";
+  if (e && e.code === "permission-denied") return "Aksi ditolak server. Pastikan kamu membuka DEBY dari HP yang terhubung ke akunmu, lalu coba lagi.";
   return (fallback || "Gagal") + ": " + (e && e.message ? e.message : e);
-}
-function mulaiSesiLokal(userId) {
-  localStorage.setItem(LS, userId);
-  localStorage.setItem(LS + "_exp", String(Date.now() + SESI_JAM * 3600 * 1000 - 5 * 60000));
-  S.me = userId; S.view = "app"; S.tab = "home";
-  subscribeSaya(userId);
-  onTab("home");
 }
 function setPath(path, val) {
   const parts = path.split(".");
@@ -1546,76 +1827,113 @@ function setPath(path, val) {
   const last = parts[parts.length - 1];
   if (Array.isArray(o)) o[parseInt(last, 10)] = val; else o[last] = val;
 }
-const modulCol = (t) => (t === "kuesioner" ? "kuesioner" : "posttest");
 const modulField = (t) => (t === "kuesioner" ? "pertanyaan" : "soal");
+
+const PESAN_MASUK = {
+  "format-id": "ID Digipos harus tepat 10 digit angka.",
+  "username-kosong": "Username Digipos wajib diisi.",
+  "tidak-terdaftar": "ID Digipos belum terdaftar. Kalau kamu petugas baru, pilih <b>Daftar sebagai petugas baru</b> di bawah.",
+  "username-salah": "Username Digipos tidak cocok dengan ID tersebut.",
+  "nonaktif": "Akun dinonaktifkan. Hubungi Admin.",
+  "hp-akun-lain": "HP/browser ini sudah terhubung ke akun lain. Satu HP hanya untuk satu akun.",
+  "terikat-hp-lain": "Akun ini sudah terhubung ke HP atau browser lain. Kalau biasanya membuka dari Chrome, pastikan sekarang juga dari Chrome. Kalau memang ganti HP, minta Admin menekan <b>Reset HP</b>.",
+  "sudah-terdaftar": "ID ini sudah terdaftar. Kembali ke layar Masuk dan pakai ID &amp; Username Digipos.",
+  "username-dipakai": "Username Digipos ini sudah dipakai akun lain. Periksa kembali, atau hubungi Admin."
+};
+function pesanMasuk(e) {
+  if (e && PESAN_MASUK[e.kode]) return PESAN_MASUK[e.kode];
+  if (e && String(e.code || "").indexOf("auth/") === 0) return "Login perangkat belum aktif di sistem. Hubungi Admin.";
+  if (e && e.code === "permission-denied") return "Data ditolak server. Periksa kembali isianmu.";
+  return "Gagal: " + esc(e && e.message ? e.message : e);
+}
 
 /* ============ aksi ============ */
 const DO = {
   ke(v) { S.view = v; S.masuk.err = ""; S.daftar.err = ""; S.admLogin.err = ""; render(); },
-  keDaftar() { S.view = "daftar"; if (!C.wilayahLoaded) loadWilayah(); render(); },
+  keDaftar() { S.view = "daftar"; S.daftar.err = ""; if (!C.wilayahLoaded) loadWilayah(); render(); },
   tab(v) { S.view = "app"; S.tab = v; S.gate = null; S.run = null; render(); onTab(v); },
   setGroup(v) { S.daftar.group = v; render(); },
-  lbFilter(v) { S.lbFilter = v; loadLeaderboard(v); },
+  lbFilter(v) { S.lbFilter = v; render(); },
+  muatUlang() { if (!S.me) return; loadSaya(S.me); loadKatalog(true); loadLeaderboard(true); loadRank(true); toast("ok", "Data dimuat ulang."); },
+  muatHadiah() { loadHadiah(true); },
 
   async masuk() {
     const m = S.masuk;
-    if (!m.id.trim() || !m.pin) { m.err = "User ID / Kode dan PIN wajib diisi."; return render(); }
+    if (m.busy) return;
+    m.err = ""; m.info = ""; m.busy = true; render();
     try {
-      const userId = await cariUserId(m.id);
-      if (!userId) { m.err = "User ID atau Kode Digipos tidak ditemukan."; return render(); }
-      const d = await getDoc(doc(db, "petugas", userId));
-      if (!d.exists()) { m.err = "Akun tidak ditemukan."; return render(); }
-      if ((d.data().status || "aktif") === "nonaktif") { m.err = "Akun nonaktif. Hubungi Admin."; return render(); }
-      try { await buatSesi(userId, m.pin); }
-      catch (err) {
-        m.err = err.code === "permission-denied" ? "PIN salah."
-          : String(err.code || "").indexOf("auth/") === 0 ? "Login perangkat belum aktif. Admin perlu mengaktifkan Anonymous sign-in di Firebase."
-          : "Gagal masuk: " + err.message;
-        return render();
-      }
-      S.masuk = { id: "", pin: "", err: "" };
-      mulaiSesiLokal(userId);
-    } catch (e) { m.err = "Gagal masuk: " + e.message; render(); }
+      const userId = await masukPetugas(m.id, m.username);
+      S.masuk = { id: "", username: "", err: "", info: "", busy: false };
+      mulaiSesi(userId);
+    } catch (e) {
+      m.busy = false;
+      m.err = pesanMasuk(e);
+      if (e.kode === "tidak-terdaftar") { S.daftar.userId = normUserId(m.id); S.daftar.kode = normKode(m.username); }
+      render();
+    }
   },
 
   async daftar() {
     const d = S.daftar;
     const err = (t) => { d.err = t; render(); };
-    if (!d.nama.trim()) return err("Nama lengkap wajib diisi.");
+    if (d.busy) return;
+    if (d.nama.trim().length < 2) return err("Nama lengkap wajib diisi.");
     if (!d.group) return err("Pilih group.");
-    if (!USERID_RE.test(normUserId(d.userId))) return err("User ID Digipos harus tepat 10 digit angka.");
-    if (!KODE_RE.test(normKode(d.kode))) return err("Format Kode Digipos tidak sesuai, contoh AHA1927381_DS.");
+    if (!USERID_RE.test(normUserId(d.userId))) return err("ID Digipos harus tepat 10 digit angka.");
+    if (!KODE_RE.test(normKode(d.kode))) return err("Format Username Digipos tidak sesuai.");
     if (!d.nomor.trim()) return err("Nomor aktif wajib diisi.");
     if (!d.area || !d.regional || !d.branch || !d.cluster) return err("Lengkapi 4 data wilayah.");
     if (!d.foto) return err("Foto petugas wajib diambil.");
-    if (!d.pin || d.pin.length < 4) return err("PIN minimal 4 digit.");
-    if (d.pin !== d.pin2) return err("PIN dan ulangi PIN tidak sama.");
     d.busy = true; d.err = ""; render();
     try {
-      const userId = await daftarPetugas(d);
-      S.daftar = { nama: "", group: "", userId: "", kode: "", nomor: "", area: "", regional: "", branch: "", cluster: "", pin: "", pin2: "", foto: null, err: "", busy: false };
-      mulaiSesiLokal(userId);
-      toast("ok", "Registrasi berhasil. Selamat datang!");
-    } catch (e) { d.busy = false; err(e.code === "permission-denied" ? "Data ditolak server. Periksa format User ID dan Kode." : e.message); }
+      const userId = await daftarBaru(d);
+      S.daftar = { nama: "", group: "", userId: "", kode: "", nomor: "", area: "", regional: "", branch: "", cluster: "", foto: null, err: "", busy: false };
+      mulaiSesi(userId);
+      toast("ok", "Terdaftar. Akunmu menunggu verifikasi Admin.");
+    } catch (e) { d.busy = false; err(pesanMasuk(e)); }
+  },
+
+  async lengkapi() {
+    const l = S.lengkapi;
+    const err = (t) => { l.err = t; render(); };
+    if (l.busy) return;
+    if (l.nama.trim().length < 2) return err("Nama lengkap wajib diisi.");
+    if (!l.nomor.trim()) return err("Nomor aktif wajib diisi.");
+    if (!l.foto) return err("Foto petugas wajib diambil.");
+    l.busy = true; l.err = ""; render();
+    try {
+      await lengkapiProfil(S.profilSaya, l);
+      S.lengkapi = { nama: "", nomor: "", foto: null, err: "", busy: false };
+      await loadSaya(S.me);
+      onTab("home");
+      toast("ok", "Profil lengkap. Selamat datang di DEBY!");
+    } catch (e) { l.busy = false; err(pesanGagal(e, "Gagal menyimpan")); }
   },
 
   keluar() { keluarPetugas(); },
 
   async mulai(v, el) {
     const t = el.getAttribute("data-t");
+    if (!bolehBeraktivitas()) return toast("no", "Akun belum diverifikasi Admin.");
     if (t === "kuesioner" && sudahKuesioner(v)) return toast("no", "Kuesioner ini sudah kamu isi.");
     if (t === "posttest" && hasilPosttest(v)) return toast("no", "Post test ini sudah kamu kerjakan.");
+    const modul = C.katalog[t].find((x) => x.id === v);
+    if (!modul) return toast("no", "Modul tidak ditemukan. Tekan Muat ulang.");
     if (t === "posttest" && (await jawabanTerkunci(v, S.me))) {
       /* jawaban sudah terkunci tapi nilai belum tersimpan — lanjutkan penilaian, tidak mengulang */
       try {
-        const h = await submitPosttest(S.profilSaya, Object.assign({ id: v }, C.posttest[v]), null, null);
-        S.hasil = Object.assign({ tipe: "posttest" }, h); S.view = "hasil"; render(); loadRank();
+        const h = await submitPosttest(S.profilSaya, modul, null, null);
+        S.hasil = Object.assign({ tipe: "posttest" }, h); S.view = "hasil"; render();
+        loadSaya(S.me); loadRank(true);
       } catch (e) { toast("no", pesanGagal(e, "Gagal melanjutkan penilaian")); }
       return;
     }
     S.gate = { tujuan: t, refId: v, foto: null, busy: false }; S.view = "gate"; render();
   },
-  mulaiRedeem(v) { S.gate = { tujuan: "redeem", refId: v, foto: null, busy: false }; S.view = "gate"; render(); },
+  mulaiRedeem(v) {
+    if (!bolehBeraktivitas()) return toast("no", "Akun belum diverifikasi Admin.");
+    S.gate = { tujuan: "redeem", refId: v, foto: null, busy: false }; S.view = "gate"; render();
+  },
   gateBatal() { S.gate = null; S.view = "app"; render(); },
 
   async gateLanjut() {
@@ -1623,20 +1941,22 @@ const DO = {
     if (!g || !g.foto || g.busy) return;
     g.busy = true; render();
     try {
-      const fotoId = await simpanFotoAktivitas(p, g.tujuan, g.foto);
       if (g.tujuan === "redeem") {
         const h = C.hadiah[g.refId];
         if (!h) throw new Error("Hadiah tidak ditemukan.");
         if (redeemBulanIniSaya().length) throw new Error("Kuota penukaran bulan ini sudah dipakai.");
         if (tersediaSaya() < h.poin) throw new Error("Poin tidak cukup.");
         if (h.stok !== -1 && h.stok <= 0) throw new Error("Stok habis.");
+        const fotoId = await simpanFotoAktivitas(p, "redeem", g.foto);
         await ajukanRedeem(p, g.refId, h, fotoId);
         S.gate = null; S.view = "app"; S.tab = "hadiah";
+        loadSaya(S.me); loadHadiah(true);
         return toast("ok", "Permintaan terkirim. Poin ditahan sampai Admin menyetujui.");
       }
-      const src = g.tujuan === "kuesioner" ? C.kuesioner : C.posttest;
-      if (!src[g.refId]) throw new Error("Modul tidak ditemukan.");
-      S.run = { tipe: g.tujuan, doc: Object.assign({ id: g.refId }, src[g.refId]), idx: 0, jawaban: {}, fotoId, busy: false };
+      const modul = C.katalog[g.tujuan].find((x) => x.id === g.refId);
+      if (!modul) throw new Error("Modul tidak ditemukan.");
+      const fotoId = await simpanFotoAktivitas(p, g.tujuan, g.foto);
+      S.run = { tipe: g.tujuan, doc: modul, idx: 0, jawaban: {}, fotoId, busy: false };
       S.gate = null; S.view = "run"; render();
     } catch (e) { if (S.gate) S.gate.busy = false; toast("no", pesanGagal(e, "Gagal")); }
   },
@@ -1651,42 +1971,31 @@ const DO = {
     try {
       if (r.tipe === "kuesioner") { await submitKuesioner(S.profilSaya, r.doc, r.jawaban, r.fotoId); S.hasil = { tipe: "kuesioner" }; }
       else { const h = await submitPosttest(S.profilSaya, r.doc, r.jawaban, r.fotoId); S.hasil = Object.assign({ tipe: "posttest" }, h); }
-      S.run = null; S.view = "hasil"; render(); loadRank();
+      S.run = null; S.view = "hasil"; render();
+      loadSaya(S.me); loadRank(true);
     } catch (e) { r.busy = false; toast("no", pesanGagal(e, "Gagal mengirim")); }
   },
 
   async simpanProfil() {
-    const p = S.profilSaya, f = S.profil, upd = {};
-    if (f.nomor.trim()) upd.nomor = f.nomor.trim();
-    if (f.pin) {
-      if (f.pin.length < 4) return toast("no", "PIN minimal 4 digit.");
-      if (f.pin !== f.pin2) return toast("no", "PIN tidak sama.");
-      upd.pinHash = await hashPin(f.pin);
-    }
-    if (!Object.keys(upd).length) return toast("no", "Tidak ada perubahan.");
-    try {
-      await setDoc(doc(db, "petugas_cek", p.id), upd, { merge: true });
-      if (upd.pinHash) await buatSesi(p.id, f.pin);
-      S.profil = { nomor: "", pin: "", pin2: "", foto: null };
-      toast("ok", "Perubahan tersimpan.");
-    } catch (e) { toast("no", pesanGagal(e, "Gagal menyimpan")); }
+    const nomor = S.profil.nomor.trim();
+    if (!nomor) return toast("no", "Isi nomor aktif yang baru.");
+    try { await setDoc(doc(db, "petugas_cek", S.me), { nomor }, { merge: true }); S.profil.nomor = ""; toast("ok", "Nomor aktif diperbarui."); }
+    catch (e) { toast("no", pesanGagal(e, "Gagal menyimpan")); }
   },
   async ajukanFoto() {
     if (!S.profil.foto) return;
-    try {
-      await setDoc(doc(db, "petugas_cek", S.profilSaya.id), { fotoPending: S.profil.foto }, { merge: true });
-      S.profil.foto = null; toast("ok", "Perubahan foto menunggu persetujuan Admin.");
-    } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
+    try { await setDoc(doc(db, "petugas_cek", S.me), { fotoPending: S.profil.foto }, { merge: true }); S.profil.foto = null; toast("ok", "Perubahan foto menunggu persetujuan Admin."); }
+    catch (e) { toast("no", pesanGagal(e, "Gagal")); }
   },
 
   /* ---- admin ---- */
   async admMasuk() {
     const a = S.admLogin;
     if (!a.email || !a.pass) { a.err = "Isi email dan kata sandi."; return render(); }
-    try { await signInWithEmailAndPassword(auth, a.email, a.pass); S.admLogin = { email: "", pass: "", err: "" }; S.mode = "admin"; render(); }
+    try { await signInWithEmailAndPassword(auth, a.email, a.pass); S.admLogin = { email: "", pass: "", err: "" }; }
     catch (e) { a.err = "Email atau kata sandi salah."; render(); }
   },
-  async admKeluar() { stop("admin"); await signOut(auth); S.mode = "petugas"; S.view = S.me ? "app" : "masuk"; render(); },
+  async admKeluar() { stop("admin"); stop("redeem"); await signOut(auth); },
   admCekUlang() { cekAdmin(S.adminUser); },
   admMenu(v) { S.adminMenu = v; S.openQ = null; render(); onAdmMenu(v); },
   refreshStats() { C.adm.stats = null; render(); loadAdminStats(); },
@@ -1694,6 +2003,11 @@ const DO = {
   cariPetugas() { loadPetugasPage(true); },
   petugasLagi() { loadPetugasPage(false); },
   fRedeem(v) { S.fRedeem = v; subscribeAdminRedeem(); render(); },
+  async perbaruiLb() {
+    try { toast("", "Memperbarui leaderboard…"); await rebuildLeaderboard(); toast("ok", "Leaderboard diperbarui."); }
+    catch (e) { toast("no", pesanGagal(e, "Gagal memperbarui leaderboard")); }
+  },
+  bersihkanFoto() { bersihkanFoto(true); },
 
   async detailPetugas(v) {
     S.modal = '<div class="modal-bd" data-do="tutupModal"><div class="modal" data-stop="1"><div class="empty">Memuat detail&hellip;</div></div></div>';
@@ -1706,7 +2020,6 @@ const DO = {
     } catch (e) { S.modal = null; toast("no", pesanGagal(e, "Gagal memuat detail")); }
   },
   tutupModal() { S.modal = null; render(); },
-
   async lihatFotoRedeem(v) {
     const r = C.adm.redeem.find((x) => x.id === v);
     if (!r) return;
@@ -1718,7 +2031,6 @@ const DO = {
       render();
     } catch (e) { S.modal = null; toast("no", pesanGagal(e, "Gagal memuat foto")); }
   },
-
   async setujuiFoto(v) {
     try {
       const cek = await getDoc(doc(db, "petugas_cek", v));
@@ -1732,42 +2044,51 @@ const DO = {
     try { await setDoc(doc(db, "petugas_cek", v), { fotoPending: deleteField() }, { merge: true }); toast("ok", "Pengajuan foto ditolak."); DO.detailPetugas(v); }
     catch (e) { toast("no", pesanGagal(e, "Gagal")); }
   },
-  async resetPin(v) {
-    const baru = prompt("PIN baru untuk " + v + " (minimal 4 digit):");
-    if (!baru) return;
-    if (baru.length < 4) return toast("no", "PIN minimal 4 digit.");
+  async setujuiPetugas(v) {
     try {
-      await setDoc(doc(db, "petugas_cek", v), { pinHash: await hashPin(baru) }, { merge: true });
-      await deleteDoc(doc(db, "sesi", v)).catch(() => {});
-      toast("ok", "PIN direset. Sampaikan PIN baru ke petugas.");
-    } catch (e) { toast("no", pesanGagal(e, "Gagal reset PIN")); }
+      await setujuiPetugas(v);
+      C.adm.reviewList = C.adm.reviewList.filter((p) => p.id !== v);
+      if (C.adm.stats) C.adm.stats.review = Math.max(0, C.adm.stats.review - 1);
+      toast("ok", "Petugas disetujui dan sekarang aktif.");
+      if (S.modal) DO.detailPetugas(v); else render();
+    } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
+  },
+  async resetHp(v) {
+    if (!confirm("Lepaskan HP dari akun " + v + "? Petugas bisa masuk lagi dari HP/browser baru.")) return;
+    try {
+      const ok = await resetHp(v);
+      toast("ok", ok ? "HP dilepas. Petugas sekarang bisa masuk dari HP baru." : "Akun ini belum terhubung ke HP mana pun.");
+      DO.detailPetugas(v);
+    } catch (e) { toast("no", pesanGagal(e, "Gagal reset HP")); }
   },
 
   async buatModul(_, el) {
     const t = el.getAttribute("data-t");
-    const d = t === "kuesioner" ? S.draftKu : S.draftPt;
+    const d = S.draftModul[t];
     if (!d.judul.trim()) return toast("no", "Judul wajib diisi.");
-    const data = { judul: d.judul.trim(), target: d.target, aktif: false, createdAt: nowIso() };
+    if (d.mulai && d.selesai && d.mulai > d.selesai) return toast("no", "Tanggal selesai harus setelah tanggal mulai.");
+    const data = { judul: d.judul.trim(), target: { group: d.group || "semua", area: d.area || "", regional: d.regional || "" }, mulai: d.mulai || "", selesai: d.selesai || "", aktif: false, createdAt: nowIso() };
     data[modulField(t)] = [];
     try {
-      const ref = doc(collection(db, modulCol(t)));
+      const ref = doc(collection(db, t));
       const b = writeBatch(db);
       b.set(ref, data);
       if (t === "posttest") b.set(doc(db, "posttest_kunci", ref.id), { kunci: [] });
       await b.commit();
       if (t === "posttest") { C.adm.kunci[ref.id] = []; C.adm.peserta[ref.id] = 0; }
-      if (t === "kuesioner") S.draftKu = { judul: "", target: "semua" }; else S.draftPt = { judul: "", target: "semua" };
+      S.draftModul[t] = kosongModul();
       S.openQ = t + ":" + ref.id; S.draftSoal = { teks: "", opsi: ["", "", "", ""], kunci: 0 };
       toast("ok", "Dibuat (nonaktif). Tambahkan pertanyaan, lalu aktifkan.");
     } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
   },
   async toggleAktif(v, el) {
     const t = el.getAttribute("data-t");
-    const cur = (t === "kuesioner" ? C.kuesioner : C.posttest)[v];
+    const cur = C.adm[t][v];
     if (!cur) return;
     if (!cur.aktif && !(cur[modulField(t)] || []).length) return toast("no", "Tambahkan minimal 1 pertanyaan sebelum mengaktifkan.");
     if (!cur.aktif && t === "posttest" && (C.adm.kunci[v] || []).length !== (cur.soal || []).length) return toast("no", "Jumlah kunci jawaban tidak sama dengan jumlah soal. Buka Kelola Soal lalu periksa.");
-    try { await updateDoc(doc(db, modulCol(t), v), { aktif: !cur.aktif }); } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
+    try { await updateDoc(doc(db, t, v), { aktif: !cur.aktif }); jadwalkanRebuildKatalog(); }
+    catch (e) { toast("no", pesanGagal(e, "Gagal")); }
   },
   async bukaSoal(v, el) {
     const t = el.getAttribute("data-t"), k = t + ":" + v;
@@ -1775,10 +2096,7 @@ const DO = {
     S.draftSoal = { teks: "", opsi: ["", "", "", ""], kunci: 0 };
     render();
     if (t === "posttest" && S.openQ === k) {
-      try {
-        C.adm.peserta[v] = (await getCountFromServer(query(collection(db, "jawaban"), where("testId", "==", v)))).data().count;
-        render();
-      } catch (e) {}
+      try { C.adm.peserta[v] = (await getCountFromServer(query(collection(db, "jawaban"), where("testId", "==", v)))).data().count; render(); } catch (e) {}
     }
   },
   setKunci(v) { S.draftSoal.kunci = parseInt(v, 10); render(); },
@@ -1788,30 +2106,31 @@ const DO = {
     const idx = [0, 1, 2, 3].filter((i) => d.opsi[i].trim());
     if (idx.length < 2) return toast("no", "Minimal 2 opsi.");
     const item = { id: uid(), teks: d.teks.trim(), opsi: idx.map((i) => d.opsi[i].trim()) };
-    const cur = (t === "kuesioner" ? C.kuesioner : C.posttest)[v];
-    const daftar = (cur[modulField(t)] || []).concat([item]);
+    const cur = C.adm[t][v];
+    const daftarItem = (cur[modulField(t)] || []).concat([item]);
     try {
       if (t === "posttest") {
         const k = idx.indexOf(d.kunci);
         if (k < 0) return toast("no", "Kunci jawaban harus opsi yang terisi.");
-        if (daftar.length > MAKS_SOAL) return toast("no", "Maksimal " + MAKS_SOAL + " soal per post test.");
+        if (daftarItem.length > MAKS_SOAL) return toast("no", "Maksimal " + MAKS_SOAL + " soal per post test.");
         if ((C.adm.peserta[v] || 0) > 0) return toast("no", "Sudah ada peserta, soal tidak bisa diubah.");
         const kunci = (C.adm.kunci[v] || []).concat([k]);
         const b = writeBatch(db);
-        b.update(doc(db, "posttest", v), { soal: daftar });
+        b.update(doc(db, "posttest", v), { soal: daftarItem });
         b.set(doc(db, "posttest_kunci", v), { kunci });
         await b.commit();
         C.adm.kunci[v] = kunci;
       } else {
-        await updateDoc(doc(db, "kuesioner", v), { pertanyaan: daftar });
+        await updateDoc(doc(db, "kuesioner", v), { pertanyaan: daftarItem });
       }
+      if (cur.aktif) jadwalkanRebuildKatalog();
       S.draftSoal = { teks: "", opsi: ["", "", "", ""], kunci: 0 };
       toast("ok", "Ditambahkan.");
     } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
   },
   async hapusSoal(v, el) {
     const t = el.getAttribute("data-t"), mid = el.getAttribute("data-m");
-    const cur = (t === "kuesioner" ? C.kuesioner : C.posttest)[mid];
+    const cur = C.adm[t][mid];
     const lama = cur[modulField(t)] || [];
     const pos = lama.findIndex((q) => q.id === v);
     if (pos < 0) return;
@@ -1827,6 +2146,7 @@ const DO = {
       } else {
         await updateDoc(doc(db, "kuesioner", mid), { pertanyaan: lama.filter((_, i) => i !== pos) });
       }
+      if (cur.aktif) jadwalkanRebuildKatalog();
     } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
   },
   async hapusModul(v, el) {
@@ -1834,9 +2154,10 @@ const DO = {
     const t = el.getAttribute("data-t");
     try {
       const b = writeBatch(db);
-      b.delete(doc(db, modulCol(t), v));
+      b.delete(doc(db, t, v));
       if (t === "posttest") b.delete(doc(db, "posttest_kunci", v));
       await b.commit();
+      jadwalkanRebuildKatalog();
     } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
   },
 
@@ -1844,18 +2165,31 @@ const DO = {
     const d = S.draftKn;
     if (!d.judul.trim() || !d.url.trim()) return toast("no", "Judul dan URL wajib diisi.");
     if (!/^https?:\/\//i.test(d.url.trim())) return toast("no", "URL harus diawali http:// atau https://");
-    try { await addDoc(collection(db, "knowledge"), { judul: d.judul.trim(), tipe: d.tipe, url: d.url.trim(), target: d.target, aktif: true, createdAt: nowIso() }); S.draftKn = { judul: "", tipe: "PDF", url: "", target: "semua" }; toast("ok", "Materi ditambahkan."); }
+    try {
+      await addDoc(collection(db, "knowledge"), { judul: d.judul.trim(), tipe: d.tipe, url: d.url.trim(), target: { group: d.group || "semua", area: d.area || "", regional: d.regional || "" }, aktif: true, createdAt: nowIso() });
+      S.draftKn = Object.assign({ judul: "", tipe: "PDF", url: "" }, kosongTarget());
+      jadwalkanRebuildKatalog();
+      toast("ok", "Materi ditambahkan.");
+    } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
+  },
+  async toggleKnowledge(v) {
+    try { await updateDoc(doc(db, "knowledge", v), { aktif: C.adm.knowledge[v].aktif === false }); jadwalkanRebuildKatalog(); }
     catch (e) { toast("no", pesanGagal(e, "Gagal")); }
   },
-  async toggleKnowledge(v) { try { await updateDoc(doc(db, "knowledge", v), { aktif: C.knowledge[v].aktif === false }); } catch (e) { toast("no", pesanGagal(e, "Gagal")); } },
-  async hapusKnowledge(v) { if (!confirm("Hapus materi ini?")) return; try { await deleteDoc(doc(db, "knowledge", v)); } catch (e) { toast("no", pesanGagal(e, "Gagal")); } },
+  async hapusKnowledge(v) {
+    if (!confirm("Hapus materi ini?")) return;
+    try { await deleteDoc(doc(db, "knowledge", v)); jadwalkanRebuildKatalog(); } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
+  },
 
   async tambahHadiah() {
     const d = S.draftHd;
     const poin = parseInt(d.poin, 10);
     if (!d.nama.trim() || !(poin > 0)) return toast("no", "Nama dan poin (lebih dari 0) wajib diisi.");
-    try { await addDoc(collection(db, "hadiah"), { nama: d.nama.trim(), poin, stok: d.stok === "" ? -1 : Math.max(0, parseInt(d.stok, 10) || 0), aktif: true, createdAt: nowIso() }); S.draftHd = { nama: "", poin: "", stok: "" }; toast("ok", "Hadiah ditambahkan."); }
-    catch (e) { toast("no", pesanGagal(e, "Gagal")); }
+    try {
+      await addDoc(collection(db, "hadiah"), { nama: d.nama.trim(), poin, stok: d.stok === "" ? -1 : Math.max(0, parseInt(d.stok, 10) || 0), aktif: true, createdAt: nowIso() });
+      S.draftHd = { nama: "", poin: "", stok: "" };
+      toast("ok", "Hadiah ditambahkan.");
+    } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
   },
   async toggleHadiah(v) { try { await updateDoc(doc(db, "hadiah", v), { aktif: C.hadiah[v].aktif === false }); } catch (e) { toast("no", pesanGagal(e, "Gagal")); } },
   async hapusHadiah(v) { if (!confirm("Hapus hadiah ini?")) return; try { await deleteDoc(doc(db, "hadiah", v)); } catch (e) { toast("no", pesanGagal(e, "Gagal")); } },
@@ -1863,7 +2197,7 @@ const DO = {
   async setujuiRedeem(v) {
     const r = C.adm.redeem.find((x) => x.id === v);
     if (!r || r.status !== "pending") return;
-    if (!confirm("Setujui penukaran " + r.hadiahNama + " untuk " + r.nama + "? Poin dipotong permanen.")) return;
+    if (!confirm("Setujui penukaran " + r.hadiahNama + " untuk " + (r.nama || r.kode) + "? Poin dipotong permanen.")) return;
     try { await setujuiRedeem(r); toast("ok", "Disetujui. Poin dipotong permanen."); if (C.adm.stats) C.adm.stats.pending = Math.max(0, C.adm.stats.pending - 1); }
     catch (e) { toast("no", pesanGagal(e, "Gagal")); }
   },
@@ -1883,27 +2217,39 @@ const DO = {
     if (!d.alasan.trim()) return toast("no", "Alasan wajib diisi.");
     try {
       const userId = await cariUserId(d.id);
-      if (!userId) return toast("no", "User ID / Kode tidak ditemukan.");
+      if (!userId) return toast("no", "ID / Username tidak ditemukan.");
       await catatAdjustment(userId, delta, d.alasan.trim());
       S.draftAdj = { id: "", poin: "", alasan: "" };
       toast("ok", "Adjustment tercatat di ledger."); loadLedgerTerbaru();
     } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
   },
 
-  async simpanWilayah() {
-    const rowsIn = S.bulkWilayah.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map((l) => {
+  async tambahWilayah() {
+    const baru = S.bulkWilayah.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map((l) => {
       const p = l.split(l.indexOf("\t") >= 0 ? "\t" : ",").map((x) => x.trim());
       return { area: p[0] || "", regional: p[1] || "", branch: p[2] || "", cluster: p[3] || "" };
     }).filter((r) => r.area && r.regional && r.branch && r.cluster);
-    if (!rowsIn.length) return toast("no", "Tidak ada baris valid. Format: Area, Regional, Branch, Cluster");
-    try { await setDoc(doc(db, "master", "wilayah"), { rows: rowsIn, updatedAt: nowIso() }); toast("ok", rowsIn.length + " cluster tersimpan."); loadWilayah(); }
+    if (!baru.length) return toast("no", "Tidak ada baris valid. Format: Area, Regional, Branch, Cluster");
+    const k = (w) => [w.area, w.regional, w.branch, w.cluster].join("|");
+    const peta = new Map();
+    C.wilayah.concat(baru).forEach((w) => peta.set(k(w), w));
+    const rowsW = Array.from(peta.values()).sort((a, b) => k(a).localeCompare(k(b)));
+    try { await setDoc(doc(db, "master", "wilayah"), { rows: rowsW, updatedAt: nowIso() }); C.wilayah = rowsW; S.bulkWilayah = ""; toast("ok", "Master wilayah: " + fmtNum(rowsW.length) + " cluster."); }
     catch (e) { toast("no", pesanGagal(e, "Gagal")); }
   },
-  muatContohWilayah() {
-    S.bulkWilayah = ["Area 1, Sumbagut, Medan, Medan Kota", "Area 1, Sumbagsel, Palembang, Palembang Kota", "Area 2, Jabo, Jakarta, Jakarta Selatan",
-      "Area 2, Jabar, Bandung, Bandung Kota", "Area 3, Jatim, Surabaya, Surabaya Utara", "Area 3, Bali Nusra, Denpasar, Denpasar",
-      "Area 4, Kalimantan, Balikpapan, Balikpapan Kota", "Area 4, Sulawesi, Makassar, Makassar Kota"].join("\n");
-    render();
+
+  async mulaiImport() {
+    const im = S.imp;
+    if (im.busy || !im.valid.length) return;
+    if (!confirm("Import " + fmtNum(im.valid.length) + " petugas ke database? Akun yang sudah ada akan dilewati.")) return;
+    im.busy = true; im.log = []; im.hasil = null; render();
+    const log = (t) => { im.log.push(t); render(); };
+    try {
+      im.hasil = await jalankanImport(im.valid, log);
+      C.adm.stats = null; C.adm.petugas.rows = [];
+      toast("ok", "Import selesai.");
+    } catch (e) { log("GAGAL: " + (e.message || e)); toast("no", pesanGagal(e, "Import terhenti")); }
+    im.busy = false; render();
   }
 };
 
@@ -1920,55 +2266,77 @@ root.addEventListener("input", (e) => {
   const el = e.target, path = el.getAttribute("data-in");
   if (!path || el.tagName === "SELECT") return;
   setPath(path, el.value);
-  if (el.getAttribute("data-live")) {
-    const hint = root.querySelector('[data-hint="' + path.split(".")[1] + '"]');
-    if (path === "daftar.userId" && hint) {
-      const bad = el.value && !USERID_RE.test(normUserId(el.value));
-      hint.textContent = bad ? "Harus tepat 10 digit angka." : "10 digit angka, sesuai data Digipos.";
-      hint.style.color = bad ? "var(--bad)" : "";
-    }
-    if (path === "daftar.kode" && hint) {
-      const bad = el.value && !KODE_RE.test(normKode(el.value));
-      hint.textContent = bad ? "Format: huruf/angka lalu garis bawah, cth. AHA1927381_DS." : "Huruf/angka + sufiks, cth. AHA1927381_DS.";
-      hint.style.color = bad ? "var(--bad)" : "";
-    }
+  if (!el.getAttribute("data-live")) return;
+  const hint = root.querySelector('[data-hint="' + path.split(".")[1] + '"]');
+  if (!hint) return;
+  if (path === "daftar.userId") {
+    const bad = el.value && !USERID_RE.test(normUserId(el.value));
+    hint.textContent = bad ? "Harus tepat 10 digit angka." : "10 digit angka, sesuai data Digipos.";
+    hint.style.color = bad ? "var(--bad)" : "";
+  }
+  if (path === "daftar.kode") {
+    const bad = el.value && !KODE_RE.test(normKode(el.value));
+    hint.textContent = bad ? "Hanya huruf, angka, titik, dan garis bawah." : "Persis seperti di Digipos.";
+    hint.style.color = bad ? "var(--bad)" : "";
   }
 });
 root.addEventListener("keydown", (e) => {
   if (e.key !== "Enter") return;
   const path = e.target.getAttribute && e.target.getAttribute("data-in");
-  if (path === "masuk.pin" || path === "masuk.id") DO.masuk();
+  if (path === "masuk.id" || path === "masuk.username") DO.masuk();
   if (path === "admLogin.pass") DO.admMasuk();
   if (path === "fPetugas.q") DO.cariPetugas();
 });
 root.addEventListener("change", async (e) => {
   const el = e.target;
+
   const stId = el.getAttribute("data-status");
   if (stId) {
     try { await updateDoc(doc(db, "petugas", stId), { status: el.value }); toast("ok", "Status diperbarui."); }
     catch (err) { toast("no", pesanGagal(err, "Gagal")); }
     return;
   }
+
+  if (el.getAttribute("data-import") && el.files && el.files[0]) {
+    const file = el.files[0];
+    S.imp = Object.assign(S.imp, { namaFile: file.name, sheet: "", valid: [], salah: [], log: ["Membaca file…"], hasil: null });
+    render();
+    try {
+      const { sheet, data } = await bacaFileImport(file);
+      const { valid, salah } = siapkanImport(data, S.imp.group);
+      S.imp = Object.assign(S.imp, { sheet, raw: data, valid, salah, log: [] });
+    } catch (err) { S.imp.log = ["Gagal membaca file: " + (err.message || err)]; }
+    el.value = "";
+    return render();
+  }
+
   const path = el.getAttribute("data-in");
   if (path && el.tagName === "SELECT") {
     setPath(path, el.value);
     if (path === "daftar.area") { S.daftar.regional = ""; S.daftar.branch = ""; S.daftar.cluster = ""; }
     if (path === "daftar.regional") { S.daftar.branch = ""; S.daftar.cluster = ""; }
     if (path === "daftar.branch") S.daftar.cluster = "";
+    if (/^draftModul\.\w+\.area$/.test(path)) setPath(path.replace(/area$/, "regional"), "");
+    if (path === "draftKn.area") S.draftKn.regional = "";
     if (path === "fPetugas.group" || path === "fPetugas.status") { S.fPetugas.q = ""; loadPetugasPage(true); }
+    if (path === "imp.group" && S.imp.raw) { const r = siapkanImport(S.imp.raw, S.imp.group); S.imp.valid = r.valid; S.imp.salah = r.salah; }
     return render();
   }
+
   const ft = el.getAttribute("data-foto");
   if (ft && el.files && el.files[0]) {
     try {
-      const url = await kompresFoto(el.files[0], ft === "daftar" ? 420 : 360, 0.58);
+      const ukuran = ft === "gate" ? FOTO_AKTIVITAS : FOTO_BASELINE;
+      const url = await kompresFoto(el.files[0], ukuran.dim, ukuran.q);
       if (ft === "daftar") S.daftar.foto = url;
+      else if (ft === "lengkapi") S.lengkapi.foto = url;
       else if (ft === "gate" && S.gate) S.gate.foto = url;
       else if (ft === "profil") S.profil.foto = url;
       render();
     } catch (err) { toast("no", "Gagal memproses foto."); }
     return;
   }
+
   const ans = el.getAttribute("data-ans");
   if (ans && S.run) { S.run.jawaban[ans] = parseInt(el.value, 10); render(); }
 });
@@ -1980,31 +2348,27 @@ async function cekAdmin(user) {
   catch (e) { S.adminOk = false; }
   S.adminCek = true;
   render();
-  if (S.adminOk) onAdmMenu(S.adminMenu);
+  if (S.adminOk) { subscribeAdminKatalog(); loadWilayah(); onAdmMenu(S.adminMenu); }
 }
 
 onAuthStateChanged(auth, (u) => {
   /* identitas anonim milik perangkat petugas tidak pernah dianggap calon admin */
   const user = u && !u.isAnonymous ? u : null;
-  S.adminUser = user;
-  if (user) { S.mode = "admin"; cekAdmin(user); }
-  else { S.adminOk = false; S.adminCek = false; if (S.mode === "admin") { S.mode = "petugas"; S.view = S.me ? "app" : "masuk"; } render(); }
+  if (user) { S.adminUser = user; S.mode = "admin"; cekAdmin(user); return; }
+  if (S.mode === "admin") {
+    stop("admin"); stop("redeem");
+    S.adminUser = null; S.adminOk = false; S.adminCek = false;
+    S.mode = "petugas"; S.view = S.me ? "app" : "masuk";
+    render();
+  }
 });
 
-subscribeKatalog();
-(function mulai() {
-  const saved = localStorage.getItem(LS);
-  const exp = parseInt(localStorage.getItem(LS + "_exp") || "0", 10);
-  if (saved && exp > Date.now()) {
-    S.me = saved; S.view = "app"; S.tab = "home";
-    subscribeSaya(saved);
-    onTab("home");
-  } else {
-    if (saved) S.masuk.err = "Sesi berakhir. Silakan masuk lagi.";
-    localStorage.removeItem(LS); localStorage.removeItem(LS + "_exp");
-    S.view = "masuk";
-  }
+(async function mulai() {
   render();
+  const userId = await sesiPerangkat();
+  if (S.mode === "admin") return;
+  if (userId) mulaiSesi(userId);
+  else { S.view = "masuk"; render(); }
 })();
 </script>
 </body>
