@@ -3,961 +3,2010 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Poin Juara</title>
+<title>DEBY — DS Database</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
 <style>
 :root{
-  --bg:#F3F5F9; --surface:#FFFFFF; --surface-2:#E8EBF2; --border:#D7DCE6;
-  --text:#171A24; --text-muted:#5C6474;
-  --accent:#245C4B; --accent-strong:#14332A; --accent-soft:#DCEEE8; --accent-contrast:#FFFFFF;
-  --gold:#A9782E;
-  --good:#2E7D4F; --good-soft:#E1F1E6;
-  --warn:#B7862E; --warn-soft:#F6EAD4;
-  --bad:#B23B2E; --bad-soft:#F8E3DF;
-  --team-ds:#2C6E63; --team-ds-soft:#DFEFEB;
-  --team-ypcr:#3A4E8C; --team-ypcr-soft:#E2E6F5;
-  --team-buddies:#9C4A2E; --team-buddies-soft:#F3E3DA;
-  --shadow:0 1px 2px rgba(23,26,36,.06), 0 8px 24px -12px rgba(23,26,36,.18);
+  --red:#B01021; --red-deep:#7E0B18; --red-ink:#FFFFFF; --red-soft:#FCE5E8; --red-line:#F0C9CE;
+  --bg:#F2EDEA; --surface:#FFFFFF; --surface-2:#FAF5F2; --surface-3:#F0E9E5;
+  --ink:#12100F; --ink-dim:#6B6260; --ink-faint:#9A918E;
+  --border:#E3DAD5; --border-strong:#D2C6C0;
+  --good:#1E8E5A; --good-soft:#DFF3E7;
+  --warn:#B5650A; --warn-soft:#F8EBD8;
+  --bad:#9F1239; --bad-soft:#FBE3EA;
+  --shadow:0 1px 2px rgba(18,16,15,.05), 0 10px 28px -14px rgba(18,16,15,.22);
   color-scheme:light;
 }
-@media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]){
-    --bg:#10141B; --surface:#171C26; --surface-2:#202632; --border:#2C3341;
-    --text:#EDEFF3; --text-muted:#9AA3B2;
-    --accent:#57B79E; --accent-strong:#8AD4BE; --accent-soft:#1B2E29; --accent-contrast:#0C1712;
-    --gold:#D3A24C; --good:#4FAE76; --good-soft:#1B2E22; --warn:#D3A24C; --warn-soft:#332815;
-    --bad:#E0685A; --bad-soft:#331E1B;
-    --team-ds:#4FA593; --team-ds-soft:#17302B; --team-ypcr:#7C8EE0; --team-ypcr-soft:#1E2338;
-    --team-buddies:#D98B63; --team-buddies-soft:#33221A;
-    --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 24px -12px rgba(0,0,0,.5);
-    color-scheme:dark;
-  }
-}
-:root[data-theme="dark"]{
-  --bg:#10141B; --surface:#171C26; --surface-2:#202632; --border:#2C3341;
-  --text:#EDEFF3; --text-muted:#9AA3B2;
-  --accent:#57B79E; --accent-strong:#8AD4BE; --accent-soft:#1B2E29; --accent-contrast:#0C1712;
-  --gold:#D3A24C; --good:#4FAE76; --good-soft:#1B2E22; --warn:#D3A24C; --warn-soft:#332815;
-  --bad:#E0685A; --bad-soft:#331E1B;
-  --team-ds:#4FA593; --team-ds-soft:#17302B; --team-ypcr:#7C8EE0; --team-ypcr-soft:#1E2338;
-  --team-buddies:#D98B63; --team-buddies-soft:#33221A;
-  --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 24px -12px rgba(0,0,0,.5);
-  color-scheme:dark;
-}
 *{box-sizing:border-box;}
-body{margin:0;background:var(--bg);color:var(--text);font-family:'Public Sans',system-ui,sans-serif;line-height:1.5;-webkit-font-smoothing:antialiased;}
-h1,h2,h3,.disp{font-family:'Sora',system-ui,sans-serif;text-wrap:balance;margin:0;}
-.mono{font-family:'IBM Plex Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums;}
-a{color:inherit;} button{font-family:inherit;}
-:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
-#app{max-width:1040px;margin:0 auto;padding:0 16px 64px;min-height:100vh;}
-.topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 0 14px;border-bottom:1px solid var(--border);margin-bottom:20px;flex-wrap:wrap;}
-.brand{display:flex;align-items:center;gap:10px;}
-.brand-mark{width:36px;height:36px;border-radius:10px;background:linear-gradient(155deg,var(--accent),var(--accent-strong));color:var(--accent-contrast);display:flex;align-items:center;justify-content:center;font-family:'Sora',sans-serif;font-weight:700;font-size:15px;flex:none;}
-.brand-name{font-family:'Sora',sans-serif;font-weight:700;font-size:18px;letter-spacing:-0.01em;}
-.brand-tag{font-size:12px;color:var(--text-muted);}
-.user-chip{display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:6px 8px 6px 14px;box-shadow:var(--shadow);}
-.user-chip .who{font-size:13px;font-weight:600;}
-.link-btn{background:none;border:none;color:var(--text-muted);font-size:13px;cursor:pointer;text-decoration:underline;text-underline-offset:2px;padding:4px;}
-.link-btn:hover{color:var(--text);}
-.nav-tabs{display:flex;gap:6px;overflow-x:auto;padding-bottom:2px;margin-bottom:24px;-ms-overflow-style:none;scrollbar-width:none;}
-.nav-tabs::-webkit-scrollbar{display:none;}
-.nav-tab{white-space:nowrap;padding:9px 16px;border-radius:10px;border:1px solid transparent;background:transparent;color:var(--text-muted);font-weight:600;font-size:14px;cursor:pointer;}
-.nav-tab:hover{color:var(--text);}
-.nav-tab.active{background:var(--surface);border-color:var(--border);color:var(--text);box-shadow:var(--shadow);}
-.stack{display:flex;flex-direction:column;gap:16px;}
-.grid{display:grid;gap:16px;}
-.grid.cols-3{grid-template-columns:repeat(3,1fr);}
-.grid.cols-2{grid-template-columns:repeat(2,1fr);}
-@media (max-width:720px){.grid.cols-3,.grid.cols-2{grid-template-columns:1fr;}}
-.card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:20px;box-shadow:var(--shadow);}
-.card.tight{padding:16px;}
-.section-title{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);font-weight:600;margin:0 0 12px;}
-.stat-card{display:flex;flex-direction:column;gap:6px;}
-.stat-card .label{font-size:13px;color:var(--text-muted);font-weight:500;}
-.stat-card .value{font-family:'Sora',sans-serif;font-size:30px;font-weight:700;}
-.stat-card .sub{font-size:12.5px;color:var(--text-muted);}
-.stat-card.accent{background:linear-gradient(155deg,var(--accent-soft),var(--surface));border-color:var(--accent-soft);}
-.stat-card.accent .value{color:var(--accent-strong);}
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:11px 20px;border-radius:11px;border:1px solid transparent;font-weight:600;font-size:14.5px;cursor:pointer;}
-.btn:active{transform:scale(.98);}
-.btn-primary{background:var(--accent);color:var(--accent-contrast);}
-.btn-primary:hover{background:var(--accent-strong);}
-.btn-primary:disabled{opacity:.45;cursor:not-allowed;}
-.btn-ghost{background:var(--surface);border-color:var(--border);color:var(--text);}
-.btn-ghost:hover{background:var(--surface-2);}
+html,body{margin:0;padding:0;}
+body{background:var(--bg);color:var(--ink);font-family:"Plus Jakarta Sans",system-ui,sans-serif;line-height:1.5;-webkit-font-smoothing:antialiased;}
+h1,h2,h3{margin:0;font-weight:800;letter-spacing:-.01em;text-wrap:balance;}
+button{font-family:inherit;}
+a{color:var(--red);}
+:focus-visible{outline:2px solid var(--red);outline-offset:2px;}
+.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums;}
+.lbl{font-family:"IBM Plex Mono",monospace;font-size:10.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-faint);}
+
+/* ---------- shell ---------- */
+#app{min-height:100vh;}
+.wrap-mobile{max-width:480px;margin:0 auto;background:var(--surface-2);min-height:100vh;box-shadow:var(--shadow);padding-bottom:78px;}
+.wrap-plain{max-width:480px;margin:0 auto;padding:0 0 40px;}
+.topbar{background:var(--red);color:var(--red-ink);padding:14px 18px;display:flex;align-items:center;justify-content:space-between;gap:12px;position:sticky;top:0;z-index:20;}
+.topbar .brand{display:flex;align-items:baseline;gap:8px;}
+.topbar .brand b{font-size:17px;font-weight:800;letter-spacing:-.01em;}
+.topbar .brand span{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.12em;opacity:.8;text-transform:uppercase;}
+.topbar .tb-act{background:rgba(255,255,255,.16);border:none;color:#fff;font-size:12px;font-weight:600;padding:7px 12px;border-radius:8px;cursor:pointer;}
+.topbar .tb-act:hover{background:rgba(255,255,255,.26);}
+.hero{background:var(--red);color:var(--red-ink);padding:6px 18px 26px;}
+.hero .eyebrow{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;opacity:.82;}
+.hero h1{font-size:25px;margin:6px 0 4px;}
+.hero p{margin:0;font-size:13.5px;opacity:.86;}
+.pad{padding:18px;}
+.stack{display:flex;flex-direction:column;gap:14px;}
+.row{display:flex;gap:10px;align-items:center;}
+.grow{flex:1;min-width:0;}
+
+/* ---------- cards ---------- */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px;}
+.card.flat{box-shadow:none;}
+.card.lift{box-shadow:var(--shadow);}
+.card-title{font-family:"IBM Plex Mono",monospace;font-size:10.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:10px;}
+.sec-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin:22px 0 10px;}
+.sec-head h2{font-size:17px;}
+.sec-head .link{font-size:12.5px;color:var(--red);cursor:pointer;background:none;border:none;padding:0;font-weight:600;}
+
+/* ---------- stat ---------- */
+.stat-duo{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.stat{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px 16px;}
+.stat .n{font-size:30px;font-weight:800;line-height:1.05;letter-spacing:-.02em;}
+.stat .n.red{color:var(--red);}
+.stat .k{margin-top:2px;}
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;}
+
+/* ---------- buttons ---------- */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border-radius:10px;border:1px solid transparent;font-weight:700;font-size:14.5px;padding:12px 18px;cursor:pointer;transition:filter .15s;}
+.btn:disabled{opacity:.45;cursor:not-allowed;}
+.btn:not(:disabled):hover{filter:brightness(1.06);}
+.btn-primary{background:var(--red);color:var(--red-ink);}
+.btn-ghost{background:var(--surface);border-color:var(--border-strong);color:var(--ink);}
+.btn-dark{background:var(--ink);color:#fff;}
 .btn-danger{background:var(--bad-soft);color:var(--bad);}
-.btn-sm{padding:7px 13px;font-size:13px;border-radius:9px;}
+.btn-ok{background:var(--good-soft);color:var(--good);}
 .btn-block{width:100%;}
-.badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;}
-.badge-team-ds{background:var(--team-ds-soft);color:var(--team-ds);}
-.badge-team-ypcr{background:var(--team-ypcr-soft);color:var(--team-ypcr);}
-.badge-team-buddies{background:var(--team-buddies-soft);color:var(--team-buddies);}
-.badge-good{background:var(--good-soft);color:var(--good);}
-.badge-warn{background:var(--warn-soft);color:var(--warn);}
-.badge-bad{background:var(--bad-soft);color:var(--bad);}
+.btn-sm{padding:8px 13px;font-size:13px;border-radius:9px;}
+
+/* ---------- form ---------- */
 .field{display:flex;flex-direction:column;gap:6px;}
-.field label{font-size:13px;font-weight:600;color:var(--text-muted);}
-.field input[type=text],.field input[type=tel],.field input[type=number],.field input[type=password],.field input[type=email],.field select{
-  padding:11px 13px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14.5px;font-family:inherit;width:100%;
+.field + .field{margin-top:13px;}
+.field label{font-family:"IBM Plex Mono",monospace;font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-faint);}
+.field input,.field select,.field textarea{
+  font-family:inherit;font-size:15px;padding:11px 13px;border-radius:10px;
+  border:1px solid var(--border-strong);background:var(--surface);color:var(--ink);width:100%;
 }
-.field input:focus,.field select:focus{border-color:var(--accent);}
-.field .hint{font-size:12px;color:var(--text-muted);}
-.seg{display:flex;border:1px solid var(--border);border-radius:11px;overflow:hidden;}
-.seg button{flex:1;padding:10px 8px;background:var(--surface);border:none;border-right:1px solid var(--border);color:var(--text-muted);font-weight:600;font-size:13.5px;cursor:pointer;}
-.seg button:last-child{border-right:none;}
-.seg button.active{background:var(--accent);color:var(--accent-contrast);}
-.empty-msg{color:var(--text-muted);font-size:14px;padding:20px 0;text-align:center;}
-.photo-box{display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
-.photo-preview{width:88px;height:88px;border-radius:12px;object-fit:cover;border:1px solid var(--border);background:var(--surface-2);flex:none;}
-.photo-placeholder{width:88px;height:88px;border-radius:12px;border:1.5px dashed var(--border);display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:11px;text-align:center;flex:none;background:var(--surface-2);}
-.opt{display:flex;align-items:flex-start;gap:11px;border:1.5px solid var(--border);border-radius:12px;padding:13px 14px;cursor:pointer;margin-bottom:9px;background:var(--surface);}
-.opt:has(input:checked){border-color:var(--accent);background:var(--accent-soft);}
-.opt input{margin-top:3px;accent-color:var(--accent);flex:none;}
-.opt-text{font-size:14.5px;}
-.progress-track{height:8px;border-radius:99px;background:var(--surface-2);overflow:hidden;}
-.progress-fill{height:100%;background:var(--accent);border-radius:99px;transition:width .25s ease;}
-.leader-row{display:flex;align-items:center;gap:14px;padding:12px 4px;border-bottom:1px solid var(--border);}
-.leader-row:last-child{border-bottom:none;}
-.leader-row.me{background:var(--accent-soft);border-radius:12px;padding:12px 12px;border-bottom:none;}
-.rank-chip{width:32px;height:32px;border-radius:9px;background:var(--surface-2);color:var(--text-muted);display:flex;align-items:center;justify-content:center;font-family:'Sora',sans-serif;font-weight:700;font-size:13px;flex:none;}
-.rank-chip.top1{background:var(--gold);color:#fff;}
-.rank-chip.top2{background:#9AA3B2;color:#fff;}
-.rank-chip.top3{background:#B4805A;color:#fff;}
-.leader-name{font-weight:600;font-size:14.5px;}
-.leader-points{margin-left:auto;font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:15px;}
-.prize-card{display:flex;flex-direction:column;gap:10px;}
-.prize-name{font-weight:700;font-size:15.5px;font-family:'Sora',sans-serif;}
-.prize-cost{font-family:'IBM Plex Mono',monospace;font-weight:600;color:var(--gold);font-size:15px;}
-.prize-stock{font-size:12.5px;color:var(--text-muted);}
-.table-wrap{overflow-x:auto;}
-table{width:100%;border-collapse:collapse;font-size:13.5px;}
-th{text-align:left;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:600;padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap;}
-td{padding:10px;border-bottom:1px solid var(--border);vertical-align:middle;}
+.field input:disabled,.field select:disabled{background:var(--surface-3);color:var(--ink-dim);}
+.field textarea{font-family:"IBM Plex Mono",monospace;font-size:13px;line-height:1.5;resize:vertical;}
+.field .hint{font-size:11.5px;color:var(--ink-dim);}
+.field-2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.req::after{content:" *";color:var(--red);}
+.seg{display:flex;gap:8px;flex-wrap:wrap;}
+.seg button{flex:1;min-width:92px;padding:11px 8px;border-radius:10px;border:1px solid var(--border-strong);background:var(--surface);color:var(--ink-dim);font-weight:700;font-size:13.5px;cursor:pointer;}
+.seg button.on{background:var(--red);border-color:var(--red);color:var(--red-ink);}
+.chips{display:flex;gap:7px;flex-wrap:wrap;}
+.chip{padding:7px 13px;border-radius:99px;border:1px solid var(--border-strong);background:var(--surface);color:var(--ink-dim);font-size:12.5px;font-weight:600;cursor:pointer;}
+.chip.on{background:var(--ink);border-color:var(--ink);color:#fff;}
+
+/* ---------- pills / badges ---------- */
+.pill{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:99px;font-family:"IBM Plex Mono",monospace;font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;}
+.pill-red{background:var(--red-soft);color:var(--red);}
+.pill-good{background:var(--good-soft);color:var(--good);}
+.pill-warn{background:var(--warn-soft);color:var(--warn);}
+.pill-bad{background:var(--bad-soft);color:var(--bad);}
+.pill-neutral{background:var(--surface-3);color:var(--ink-dim);}
+.grp{display:inline-block;padding:3px 9px;border-radius:6px;font-size:11.5px;font-weight:700;}
+.grp-ds{background:var(--red-soft);color:var(--red);}
+.grp-ypcr{background:#E6EAF7;color:#3A4E8C;}
+.grp-bud{background:#F6E7D6;color:#8A5418;}
+
+/* ---------- task item ---------- */
+.task{border:1px solid var(--border);border-radius:13px;padding:14px;background:var(--surface);}
+.task + .task{margin-top:10px;}
+.task .t-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px;}
+.task .t-name{font-weight:700;font-size:15px;}
+.task .t-sub{font-size:12.5px;color:var(--ink-dim);margin-bottom:12px;}
+
+/* ---------- leaderboard ---------- */
+.lb-row{display:flex;align-items:center;gap:12px;padding:11px 4px;border-bottom:1px solid var(--border);}
+.lb-row:last-child{border-bottom:none;}
+.lb-row.me{background:var(--red-soft);border-radius:11px;padding:11px 12px;border-bottom:none;}
+.lb-rank{width:32px;height:32px;border-radius:9px;background:var(--surface-3);color:var(--ink-dim);display:flex;align-items:center;justify-content:center;font-family:"IBM Plex Mono",monospace;font-weight:600;font-size:12px;flex:none;}
+.lb-rank.r1{background:var(--red);color:#fff;}
+.lb-rank.r2{background:#C4626F;color:#fff;}
+.lb-rank.r3{background:#D79AA3;color:#fff;}
+.lb-name{font-weight:700;font-size:14px;}
+.lb-sub{font-size:11.5px;color:var(--ink-dim);}
+.lb-pts{margin-left:auto;font-family:"IBM Plex Mono",monospace;font-weight:600;font-size:15px;}
+
+/* ---------- photo ---------- */
+.photo-tile{border:1.5px dashed var(--border-strong);border-radius:13px;aspect-ratio:3/4;max-height:300px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;cursor:pointer;color:var(--ink-dim);background:var(--surface-3);overflow:hidden;position:relative;}
+.photo-tile img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}
+.photo-tile .retake{position:absolute;bottom:10px;right:10px;background:rgba(18,16,15,.75);color:#fff;font-size:11.5px;font-weight:600;padding:6px 10px;border-radius:8px;}
+.photo-tile .ph-ico{font-family:"IBM Plex Mono",monospace;font-size:22px;font-weight:600;}
+.photo-tile span.cap{font-size:12.5px;font-weight:600;}
+.gate-dark{background:var(--ink);color:#fff;border-radius:16px;padding:20px;}
+.gate-dark h2{color:#fff;font-size:21px;margin-bottom:6px;}
+.gate-dark p{color:rgba(255,255,255,.72);font-size:13px;margin:0 0 16px;}
+.gate-dark .photo-tile{border-color:rgba(255,255,255,.25);background:rgba(255,255,255,.06);color:rgba(255,255,255,.7);}
+.gate-meta{display:flex;justify-content:space-between;gap:10px;margin-top:14px;font-size:12.5px;}
+.gate-meta .k{color:rgba(255,255,255,.6);}
+.gate-meta .v{font-family:"IBM Plex Mono",monospace;font-weight:600;}
+
+/* ---------- quiz ---------- */
+.q-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;}
+.q-count{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--ink-dim);}
+.bar{height:6px;border-radius:99px;background:var(--surface-3);overflow:hidden;}
+.bar > i{display:block;height:100%;background:var(--red);border-radius:99px;transition:width .25s;}
+.q-text{font-weight:700;font-size:16px;margin:14px 0 12px;}
+.opt{display:flex;align-items:flex-start;gap:11px;border:1.5px solid var(--border);border-radius:12px;padding:13px 14px;cursor:pointer;background:var(--surface);}
+.opt + .opt{margin-top:9px;}
+.opt:has(input:checked){border-color:var(--red);background:var(--red-soft);}
+.opt input{margin-top:3px;accent-color:var(--red);flex:none;}
+.opt .ot{font-size:14.5px;}
+.rev{display:flex;gap:11px;padding:12px 0;border-bottom:1px solid var(--border);}
+.rev:last-child{border-bottom:none;}
+.rev .mk{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex:none;color:#fff;}
+.rev .mk.y{background:var(--good);}
+.rev .mk.n{background:var(--bad);}
+.rev .rt{font-weight:600;font-size:13.5px;}
+.rev .rs{font-size:12px;color:var(--ink-dim);}
+.rev .rp{margin-left:auto;font-family:"IBM Plex Mono",monospace;font-weight:600;font-size:13px;}
+
+/* ---------- bottom nav ---------- */
+.bnav{position:fixed;bottom:0;left:0;right:0;max-width:480px;margin:0 auto;background:var(--surface);border-top:1px solid var(--border);display:grid;grid-template-columns:repeat(4,1fr);z-index:30;}
+.bnav button{background:none;border:none;padding:10px 4px 12px;cursor:pointer;color:var(--ink-faint);display:flex;flex-direction:column;align-items:center;gap:3px;}
+.bnav button.on{color:var(--red);}
+.bnav .bi{font-family:"IBM Plex Mono",monospace;font-size:12px;font-weight:600;letter-spacing:.06em;}
+.bnav .bt{font-size:10.5px;font-weight:600;}
+
+/* ---------- menu grid ---------- */
+.mgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;}
+.mgrid button{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 6px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:6px;}
+.mgrid .mi{width:32px;height:32px;border-radius:9px;background:var(--red-soft);color:var(--red);display:flex;align-items:center;justify-content:center;font-family:"IBM Plex Mono",monospace;font-size:11px;font-weight:600;}
+.mgrid .mt{font-size:11px;font-weight:600;color:var(--ink-dim);text-align:center;line-height:1.25;}
+
+/* ---------- knowledge ---------- */
+.kn{display:flex;align-items:center;gap:12px;padding:13px;border:1px solid var(--border);border-radius:12px;background:var(--surface);text-decoration:none;color:inherit;}
+.kn + .kn{margin-top:9px;}
+.kn .kt{width:38px;height:38px;border-radius:9px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-family:"IBM Plex Mono",monospace;font-size:10.5px;font-weight:600;flex:none;}
+.kn .kn-n{font-weight:700;font-size:14px;}
+.kn .kn-s{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-faint);}
+.kn .ka{margin-left:auto;color:var(--ink-faint);font-size:16px;}
+
+/* ---------- reward ---------- */
+.rw{display:flex;align-items:center;gap:12px;padding:13px;border:1px solid var(--border);border-radius:12px;background:var(--surface);}
+.rw + .rw{margin-top:10px;}
+.rw .rw-n{font-weight:700;font-size:14.5px;}
+.rw .rw-s{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-faint);}
+.rw .rw-p{font-family:"IBM Plex Mono",monospace;font-weight:600;font-size:14px;color:var(--red);}
+
+/* ---------- ledger ---------- */
+.led{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--border);font-size:13px;}
+.led:last-child{border-bottom:none;}
+.led .ld{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--ink-faint);width:74px;flex:none;}
+.led .lv{margin-left:auto;font-family:"IBM Plex Mono",monospace;font-weight:600;}
+.led .lv.pos{color:var(--good);}
+.led .lv.neg{color:var(--bad);}
+.led .lb2{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--ink-faint);width:48px;text-align:right;flex:none;}
+
+/* ---------- admin ---------- */
+.adm{display:grid;grid-template-columns:236px 1fr;min-height:100vh;}
+.adm-side{background:var(--ink);color:#fff;padding:20px 14px;position:sticky;top:0;height:100vh;overflow-y:auto;}
+.adm-side .a-brand{display:flex;align-items:baseline;gap:8px;padding:0 8px 18px;border-bottom:1px solid rgba(255,255,255,.12);margin-bottom:14px;}
+.adm-side .a-brand b{font-size:18px;font-weight:800;}
+.adm-side .a-brand span{font-family:"IBM Plex Mono",monospace;font-size:9.5px;letter-spacing:.12em;color:rgba(255,255,255,.55);text-transform:uppercase;}
+.adm-side button{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;background:none;border:none;color:rgba(255,255,255,.72);text-align:left;padding:10px 12px;border-radius:9px;font-size:13.5px;font-weight:600;cursor:pointer;}
+.adm-side button:hover{background:rgba(255,255,255,.07);color:#fff;}
+.adm-side button.on{background:var(--red);color:#fff;}
+.adm-side .cnt{font-family:"IBM Plex Mono",monospace;font-size:10.5px;background:rgba(255,255,255,.14);padding:2px 7px;border-radius:99px;}
+.adm-side button.on .cnt{background:rgba(0,0,0,.22);}
+.adm-main{padding:26px 30px 60px;max-width:1180px;}
+.adm-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:20px;}
+.adm-head h1{font-size:26px;}
+.adm-head .sub{font-size:13px;color:var(--ink-dim);margin-top:3px;}
+.filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+.filters select,.filters input{font-family:inherit;font-size:13px;padding:8px 11px;border-radius:9px;border:1px solid var(--border-strong);background:var(--surface);color:var(--ink);}
+.tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:13px;background:var(--surface);}
+table{width:100%;border-collapse:collapse;font-size:13px;}
+th{text-align:left;font-family:"IBM Plex Mono",monospace;font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-faint);padding:11px 13px;border-bottom:1px solid var(--border);white-space:nowrap;background:var(--surface-2);}
+td{padding:11px 13px;border-bottom:1px solid var(--border);vertical-align:middle;}
 tr:last-child td{border-bottom:none;}
-.thumb{width:38px;height:38px;border-radius:8px;object-fit:cover;border:1px solid var(--border);cursor:pointer;background:var(--surface-2);}
-.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:12px 20px;border-radius:11px;font-size:13.5px;font-weight:600;box-shadow:var(--shadow);z-index:50;max-width:90vw;}
-.toast.error{background:var(--bad);color:#fff;}
-.toast.success{background:var(--good);color:#fff;}
-.modal-backdrop{position:fixed;inset:0;background:rgba(10,12,16,.55);display:flex;align-items:center;justify-content:center;z-index:60;padding:20px;}
-.modal{background:var(--surface);border-radius:16px;padding:22px;max-width:480px;width:100%;max-height:85vh;overflow-y:auto;box-shadow:var(--shadow);}
-.modal img{width:100%;border-radius:10px;}
-hr.sep{border:none;border-top:1px solid var(--border);margin:6px 0;}
-.subhead{font-size:12.5px;color:var(--text-muted);margin-top:-6px;}
-.pill-toggle{display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:600;}
-.switch{width:36px;height:21px;border-radius:99px;background:var(--surface-2);border:1px solid var(--border);position:relative;flex:none;}
-.switch.on{background:var(--accent);}
-.switch::after{content:'';position:absolute;top:2px;left:2px;width:15px;height:15px;border-radius:50%;background:#fff;transition:transform .15s;}
-.switch.on::after{transform:translateX(15px);}
-.qcard{border:1px solid var(--border);border-radius:12px;padding:14px;background:var(--bg);}
-.footer-note{text-align:center;color:var(--text-muted);font-size:12px;margin-top:36px;}
-.compare-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
-.compare-grid img{width:100%;border-radius:10px;border:1px solid var(--border);}
-.compare-grid .lbl{font-size:12px;color:var(--text-muted);margin-top:4px;text-align:center;}
+.thumb{width:36px;height:36px;border-radius:8px;object-fit:cover;border:1px solid var(--border);cursor:pointer;background:var(--surface-3);}
+.aq{display:flex;align-items:center;gap:13px;padding:13px;border:1px solid var(--border);border-radius:12px;background:var(--surface);}
+.aq + .aq{margin-top:10px;}
+.aq .aq-n{font-weight:700;font-size:14px;}
+.aq .aq-s{font-size:12.5px;color:var(--ink-dim);}
+.prog{height:7px;border-radius:99px;background:var(--surface-3);overflow:hidden;margin-top:6px;}
+.prog > i{display:block;height:100%;background:var(--red);}
+
+/* ---------- misc ---------- */
+.empty{text-align:center;padding:34px 18px;color:var(--ink-dim);font-size:13.5px;}
+.note{font-size:12px;color:var(--ink-dim);background:var(--surface-3);border-radius:10px;padding:11px 13px;}
+.err{border:1px solid var(--bad);background:var(--bad-soft);color:var(--bad);border-radius:10px;padding:10px 13px;font-size:13px;font-weight:600;}
+.toast{position:fixed;bottom:88px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:12px 20px;border-radius:11px;font-size:13.5px;font-weight:600;box-shadow:var(--shadow);z-index:80;max-width:88vw;text-align:center;}
+.toast.ok{background:var(--good);}
+.toast.no{background:var(--bad);}
+.modal-bd{position:fixed;inset:0;background:rgba(18,16,15,.62);display:flex;align-items:center;justify-content:center;z-index:90;padding:20px;}
+.modal{background:var(--surface);border-radius:16px;padding:22px;max-width:520px;width:100%;max-height:86vh;overflow-y:auto;}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.cmp img{width:100%;border-radius:10px;border:1px solid var(--border);}
+.cmp .cl{text-align:center;font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-faint);margin-top:5px;}
+.center-narrow{max-width:400px;margin:0 auto;padding:40px 18px;}
+@media (max-width:860px){
+  .adm{grid-template-columns:1fr;}
+  .adm-side{position:static;height:auto;}
+  .adm-side .a-nav{display:grid;grid-template-columns:repeat(2,1fr);gap:6px;}
+  .adm-main{padding:20px 16px 50px;}
+}
+.pager{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;font-size:12.5px;color:var(--ink-dim);}
+.skel{color:var(--ink-faint);font-size:13px;padding:14px 0;text-align:center;}
+.rank-note{font-size:11.5px;color:var(--ink-dim);margin-top:4px;}
 </style>
 </head>
 <body>
-<div id="app"><div class="empty-msg">Memuat Poin Juara&hellip;</div></div>
+<div id="app"><div class="empty">Memuat DEBY&hellip;</div></div>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+import {
+  initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
+  collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, addDoc,
+  query, where, orderBy, limit, startAfter, onSnapshot, writeBatch,
+  increment, deleteField, Timestamp, getCountFromServer, getAggregateFromServer, sum, average
+} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { getAuth, signInWithEmailAndPassword, signInAnonymously, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 
-<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
-<script>
-(function(){
-"use strict";
-
-var firebaseConfig = {
+/* ============ firebase ============ */
+const app = initializeApp({
   apiKey: "AIzaSyD8B23YRj-O2lLk5NBrUODrpRje9p_DdGU",
   authDomain: "poin-juara.firebaseapp.com",
   projectId: "poin-juara",
   storageBucket: "poin-juara.firebasestorage.app",
   messagingSenderId: "37955518486",
   appId: "1:37955518486:web:ea63f97589c379fe217537"
-};
-firebase.initializeApp(firebaseConfig);
-var db = firebase.firestore();
-var auth = firebase.auth();
+});
+let db;
+try {
+  db = initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) });
+} catch (e) {
+  db = initializeFirestore(app, {});
+}
+const auth = getAuth(app);
 
-var TEAMS = ["Direct Sales","YPCR","Buddies"];
-function teamKey(t){ if(t==="Direct Sales") return "ds"; if(t==="YPCR") return "ypcr"; return "buddies"; }
-function esc(s){
-  return String(s==null?"":s).replace(/[&<>"']/g,function(c){
-    return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
-  });
-}
-function fmtDate(iso){
-  if(!iso) return "-";
-  try{
-    var d = new Date(iso);
-    return d.toLocaleDateString('id-ID',{day:'numeric',month:'short',year:'numeric'}) + " " + d.toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit'});
-  }catch(e){ return iso; }
-}
+/* ============ konstanta ============ */
+const GROUPS = ["Direct Sales", "YPCR", "Buddies"];
+/* Satu field poin per group supaya leaderboard per group cukup orderBy satu field
+   (dokumen tanpa field itu otomatis tidak ikut) — tanpa composite index. */
+const GRP_FIELD = { "Direct Sales": "pDS", "YPCR": "pYPCR", "Buddies": "pBUD" };
+const POIN_KUESIONER = 25;
+const POIN_PER_BENAR = 5;
+const SESI_JAM = 12;
+const HALAMAN = 50;
+/* Batas soal per post test: rules menghitung ulang nilai soal demi soal tanpa loop */
+const MAKS_SOAL = 20;
+const LS = "deby_uid";
 
-var LS_KEY = "pj_member_id";
+/* Format mengikuti data sales: user_id 10 digit angka, code alfanumerik bersufiks _XX */
+const USERID_RE = /^\d{10}$/;
+const KODE_RE = /^[A-Z0-9]+(?:_[A-Z0-9]+)+$/;
+const normUserId = (v) => String(v || "").replace(/\s+/g, "");
+const normKode = (v) => String(v || "").replace(/\s+/g, "").toUpperCase();
 
-var state = {
-  view: "loading", memberId: null, adminUser: null,
-  identifyMode: "search", identifySearch: "",
-  registerName: "", registerTeam: "", registerPhone: "", registerPhoto: null,
-  activeQuizId: null, quizStep: 1, quizPhoto: null, quizAnswers: {}, lastResult: null,
-  adminTab: "members", adminEmail: "", adminPassword: "", adminError: "",
-  adminMembersFilter: "all", leaderboardFilter: "all",
-  newQuizTitle: "", editingQuizId: null,
-  qDraft: {text:"",opts:["","","",""],correct:0,points:10},
-  newPrize: {name:"",cost:"",stock:""},
-  compareModal: null, toast: null,
-};
+/* ============ helper ============ */
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function fmtTgl(iso) {
+  if (!iso) return "-";
+  try { return new Date(iso).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "2-digit" }); }
+  catch (e) { return iso; }
+}
+function fmtWaktu(iso) {
+  if (!iso) return "-";
+  try {
+    const d = new Date(iso);
+    return d.toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" }) + " " +
+      d.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
+  } catch (e) { return iso; }
+}
+/* Periode dalam UTC agar sama persis dengan pengecekan kuota di security rules */
+function periode(iso) {
+  const d = iso ? new Date(iso) : new Date();
+  return d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0");
+}
+function nowIso() { return new Date().toISOString(); }
+function uid() { return Math.random().toString(36).slice(2, 11); }
+function grpClass(g) { return g === "Direct Sales" ? "grp-ds" : g === "YPCR" ? "grp-ypcr" : "grp-bud"; }
+function grpTag(g) { return '<span class="grp ' + grpClass(g) + '">' + esc(g) + "</span>"; }
+function fmtNum(n) { return (n == null ? 0 : n).toLocaleString("id-ID"); }
 
-var cache = {
-  members: {}, membersLoaded:false,
-  membersPrivate: {},
-  quizzes: {}, quizzesLoaded:false,
-  submissions: {}, submissionsLoaded:false,
-  submissionsPrivate: {},
-  prizes: {}, prizesLoaded:false,
-  redemptions: {}, redemptionsLoaded:false,
-};
-var unsubPrivate = [];
-
-function showToast(type,msg){
-  state.toast = {type:type,msg:msg};
-  renderApp();
-  setTimeout(function(){ state.toast=null; renderApp(); }, 2600);
+async function hashPin(pin) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("deby::" + pin));
+  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
-
-function memberList(){ return Object.keys(cache.members).map(function(id){ return Object.assign({id:id}, cache.members[id]); }); }
-function submissionList(){ return Object.keys(cache.submissions).map(function(id){ return Object.assign({id:id}, cache.submissions[id]); }); }
-function redemptionList(){ return Object.keys(cache.redemptions).map(function(id){ return Object.assign({id:id}, cache.redemptions[id]); }); }
-function pointsForMember(memberId){
-  var total = 0;
-  submissionList().forEach(function(s){ if(s.memberId===memberId) total += (s.pointsEarned||0); });
-  return total;
-}
-function spentForMember(memberId){
-  var total = 0;
-  redemptionList().forEach(function(r){ if(r.memberId===memberId && (r.status==="pending"||r.status==="fulfilled")) total += (r.pointCost||0); });
-  return total;
-}
-function balanceForMember(memberId){ return pointsForMember(memberId) - spentForMember(memberId); }
-function rankedMembers(teamFilter){
-  var list = memberList().map(function(m){ return Object.assign({}, m, {totalPoints: pointsForMember(m.id)}); });
-  if(teamFilter && teamFilter!=="all") list = list.filter(function(m){ return m.team===teamFilter; });
-  list.sort(function(a,b){ return b.totalPoints - a.totalPoints; });
-  return list;
-}
-function currentMember(){ return state.memberId ? Object.assign({id:state.memberId}, cache.members[state.memberId]) : null; }
-function memberSubmissions(memberId){ return submissionList().filter(function(s){ return s.memberId===memberId; }); }
-function memberRedemptions(memberId){ return redemptionList().filter(function(r){ return r.memberId===memberId; }).sort(function(a,b){ return (b.requestedAt||"").localeCompare(a.requestedAt||""); }); }
-function availableQuizzes(memberId){
-  var taken = {};
-  memberSubmissions(memberId).forEach(function(s){ taken[s.quizId]=true; });
-  return Object.keys(cache.quizzes).map(function(id){ return Object.assign({id:id}, cache.quizzes[id]); })
-    .filter(function(q){ return q.active; })
-    .map(function(q){ return Object.assign({}, q, {taken: !!taken[q.id]}); });
-}
-function activePrizes(){
-  return Object.keys(cache.prizes).map(function(id){ return Object.assign({id:id}, cache.prizes[id]); }).filter(function(p){ return p.active!==false; });
-}
-
-function compressPhoto(file){
-  return new Promise(function(resolve,reject){
-    var reader = new FileReader();
-    reader.onload = function(){
-      var img = new Image();
-      img.onload = function(){
-        var maxDim = 480;
-        var w = img.width, h = img.height;
-        if(w > h && w > maxDim){ h = Math.round(h*maxDim/w); w = maxDim; }
-        else if(h >= w && h > maxDim){ w = Math.round(w*maxDim/h); h = maxDim; }
-        var canvas = document.createElement("canvas");
-        canvas.width = w; canvas.height = h;
-        var ctx = canvas.getContext("2d");
-        ctx.drawImage(img,0,0,w,h);
-        resolve(canvas.toDataURL("image/jpeg",0.6));
+function kompresFoto(file, maxDim, q) {
+  return new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onerror = rej;
+    fr.onload = () => {
+      const img = new Image();
+      img.onerror = rej;
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        if (w > h && w > maxDim) { h = Math.round(h * maxDim / w); w = maxDim; }
+        else if (h >= w && h > maxDim) { w = Math.round(w * maxDim / h); h = maxDim; }
+        const c = document.createElement("canvas");
+        c.width = w; c.height = h;
+        c.getContext("2d").drawImage(img, 0, 0, w, h);
+        res(c.toDataURL("image/jpeg", q));
       };
-      img.onerror = reject;
-      img.src = reader.result;
+      img.src = fr.result;
     };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
+    fr.readAsDataURL(file);
   });
 }
 
-function teamBadge(team){ return '<span class="badge badge-team-'+teamKey(team)+'">'+esc(team)+'</span>'; }
-function photoField(dataUrl, inputName, label){
-  return '<div class="photo-box">'+
-    (dataUrl ? '<img class="photo-preview" src="'+dataUrl+'">' : '<div class="photo-placeholder">Belum ada foto</div>')+
-    '<div class="stack" style="gap:8px;">'+
-      '<label class="btn btn-ghost btn-sm" style="cursor:pointer;">'+ (dataUrl?"Ambil Ulang":"Ambil Foto") +
-        '<input type="file" accept="image/*" capture="user" data-photo-input="'+inputName+'" style="display:none;">'+
-      '</label>'+
-      '<div class="field hint">'+esc(label)+'</div>'+
-    '</div>'+
-  '</div>';
+/* ============ state ============ */
+const S = {
+  mode: "petugas",
+  view: "masuk",
+  tab: "home",
+  me: null,
+  profilSaya: null,
+  adminUser: null,
+  adminOk: false,
+  adminCek: false,
+  adminMenu: "dashboard",
+  pesanMasuk: "",
+  masuk: { id: "", pin: "", err: "" },
+  daftar: { nama: "", group: "", userId: "", kode: "", nomor: "", area: "", regional: "", branch: "", cluster: "", pin: "", pin2: "", foto: null, err: "", busy: false },
+  gate: null,
+  run: null,
+  hasil: null,
+  lbFilter: "semua",
+  profil: { nomor: "", pin: "", pin2: "", foto: null },
+  admLogin: { email: "", pass: "", err: "" },
+  fPetugas: { group: "", status: "", q: "" },
+  fRedeem: "pending",
+  draftKu: { judul: "", target: "semua" },
+  draftPt: { judul: "", target: "semua" },
+  draftSoal: { teks: "", opsi: ["", "", "", ""], kunci: 0 },
+  draftKn: { judul: "", tipe: "PDF", url: "", target: "semua" },
+  draftHd: { nama: "", poin: "", stok: "" },
+  draftAdj: { id: "", poin: "", alasan: "" },
+  bulkWilayah: "",
+  openQ: null,
+  modal: null,
+  toast: null
+};
+
+/* Cache kecil — tidak pernah memuat seluruh koleksi besar */
+const C = {
+  wilayah: [], wilayahLoaded: false,
+  kuesioner: {}, posttest: {}, knowledge: {}, hadiah: {}, katalogLoaded: false,
+  mine: { respons: [], hasil: [], redeem: [], ledger: [], loaded: false },
+  lb: { rows: [], loading: false, filter: null },
+  rank: null,
+  adm: {
+    stats: null,
+    petugas: { rows: [], cursor: null, habis: false, loading: false, key: "" },
+    priv: {},
+    redeem: [], redeemLoaded: false,
+    ledger: [], ledgerLoaded: false,
+    kunci: {}, peserta: {},
+    fotoCache: {}
+  }
+};
+
+function toast(kind, msg) {
+  S.toast = { kind, msg };
+  render();
+  setTimeout(() => { S.toast = null; render(); }, 2800);
+}
+function snap(p) {
+  /* Snapshot identitas + wilayah saat aktivitas terjadi, supaya CSV join per periode tetap benar
+     walaupun wilayah dikoreksi Admin di kemudian hari. */
+  return {
+    userId: p.id, kode: p.kode || "", nama: p.nama || "", group: p.group || "",
+    area: p.area || "", regional: p.regional || "", branch: p.branch || "", cluster: p.cluster || "",
+    periode: periode()
+  };
 }
 
-function renderTopbar(){
-  var m = currentMember();
-  var userChip = "";
-  if(state.view!=="adminLogin" && state.view!=="admin"){
-    if(m){
-      userChip = '<div class="user-chip"><span class="who">'+esc(m.name)+'</span>'+teamBadge(m.team)+
-        '<button class="btn btn-ghost btn-sm" data-action="switchAccount">Ganti akun</button></div>';
+
+/* =====================================================================
+   DATA LAYER — setiap fungsi hanya membaca yang dibutuhkan layar itu.
+   ID dokumen deterministik dipakai sebagai kunci anti-dobel di server:
+   respons/{kuesionerId}_{userId}, hasil/{testId}_{userId},
+   redeem/{userId}_{periode}, ledger/kue_..|pt_..|rdm_..|adj_..
+   ===================================================================== */
+
+const col = (n) => collection(db, n);
+const unsubs = { katalog: [], mine: [], admin: [] };
+function stop(key) { unsubs[key].forEach((f) => { try { f(); } catch (e) {} }); unsubs[key] = []; }
+function rows(qs) { const out = []; qs.forEach((d) => out.push(Object.assign({ id: d.id }, d.data()))); return out; }
+function mapOf(qs) { const m = {}; qs.forEach((d) => { m[d.id] = d.data(); }); return m; }
+
+/* ---------- master & katalog (kecil) ---------- */
+async function loadWilayah() {
+  try {
+    const d = await getDoc(doc(db, "master", "wilayah"));
+    C.wilayah = d.exists() ? (d.data().rows || []) : [];
+  } catch (e) { C.wilayah = []; }
+  C.wilayahLoaded = true;
+  render();
+}
+
+function subscribeKatalog() {
+  stop("katalog");
+  const seen = new Set();
+  ["kuesioner", "posttest", "knowledge", "hadiah"].forEach((name) => {
+    unsubs.katalog.push(onSnapshot(col(name), (qs) => {
+      C[name] = mapOf(qs);
+      seen.add(name);
+      if (seen.size === 4) C.katalogLoaded = true;
+      render();
+    }, () => { seen.add(name); if (seen.size === 4) C.katalogLoaded = true; render(); }));
+  });
+}
+
+/* ---------- sesi petugas ---------- */
+/* Tiap perangkat petugas memakai identitas anonim (gratis di paket Spark) supaya
+   rules tahu SIAPA yang membaca/menulis — bukan cuma siapa yang tahu PIN. */
+async function pastikanAnon() {
+  if (auth.authStateReady) await auth.authStateReady();
+  const u = auth.currentUser;
+  if (u && u.isAnonymous) {
+    /* Auto clean-up Firebase menghapus identitas anonim >30 hari; paksa refresh
+       supaya identitas yang sudah terhapus diganti, bukan berujung pesan "PIN salah". */
+    try { await u.getIdToken(true); return u.uid; }
+    catch (e) { await signOut(auth).catch(() => {}); }
+  } else if (u) {
+    await signOut(auth);
+  }
+  return (await signInAnonymously(auth)).user.uid;
+}
+async function buatSesi(userId, pin) {
+  const authUid = await pastikanAnon();
+  const berlaku = Timestamp.fromMillis(Date.now() + SESI_JAM * 3600 * 1000);
+  const b = writeBatch(db);
+  b.set(doc(db, "sesi", userId), { pinHash: await hashPin(pin), authUid, berlakuSampai: berlaku, waktu: nowIso() });
+  b.set(doc(db, "sesiAuth", authUid), { userId, berlakuSampai: berlaku });
+  await b.commit();
+}
+
+async function cariUserId(input) {
+  const raw = String(input || "").trim();
+  if (USERID_RE.test(normUserId(raw))) return normUserId(raw);
+  const kode = normKode(raw);
+  if (!KODE_RE.test(kode)) return null;
+  const qs = await getDocs(query(col("petugas"), where("kode", "==", kode), limit(1)));
+  return qs.empty ? null : qs.docs[0].id;
+}
+
+function subscribeSaya(userId) {
+  stop("mine");
+  C.mine = { respons: [], hasil: [], redeem: [], ledger: [], loaded: false };
+  unsubs.mine.push(onSnapshot(doc(db, "petugas", userId), (d) => {
+    S.profilSaya = d.exists() ? Object.assign({ id: d.id }, d.data()) : null;
+    if (!d.exists()) { keluarPetugas(); return; }
+    render();
+  }, () => render()));
+  const seen = new Set();
+  ["respons", "hasil", "redeem", "ledger"].forEach((name) => {
+    unsubs.mine.push(onSnapshot(query(col(name), where("userId", "==", userId)), (qs) => {
+      C.mine[name] = rows(qs).sort((a, b) => (a.waktu || "").localeCompare(b.waktu || ""));
+      seen.add(name);
+      if (seen.size === 4) C.mine.loaded = true;
+      render();
+    }, () => { seen.add(name); if (seen.size === 4) C.mine.loaded = true; render(); }));
+  });
+}
+
+function keluarPetugas() {
+  stop("mine");
+  localStorage.removeItem(LS);
+  S.me = null; S.profilSaya = null; S.view = "masuk"; S.tab = "home";
+  C.mine = { respons: [], hasil: [], redeem: [], ledger: [], loaded: false };
+  C.rank = null; C.lb = { rows: [], loading: false, filter: null };
+  render();
+}
+
+/* ---------- turunan data milik sendiri ---------- */
+function saldoSaya() { return (S.profilSaya && S.profilSaya.saldo) || 0; }
+function poinPeringkatSaya() { return (S.profilSaya && S.profilSaya.poinPeringkat) || 0; }
+function ditahanSaya() { return C.mine.redeem.filter((r) => r.status === "pending").reduce((s, r) => s + (r.poin || 0), 0); }
+function tersediaSaya() { return saldoSaya() - ditahanSaya(); }
+function redeemBulanIniSaya() { return C.mine.redeem.filter((r) => r.periode === periode() && r.status !== "ditolak"); }
+function sudahKuesioner(kid) { return C.mine.respons.some((r) => r.kuesionerId === kid); }
+function hasilPosttest(tid) { return C.mine.hasil.find((h) => h.testId === tid); }
+function untukGroup(d, g) { return !d.target || d.target === "semua" || d.target === g; }
+const listOf = (o) => Object.keys(o).map((k) => Object.assign({ id: k }, o[k]));
+
+/* ---------- leaderboard & peringkat (tanpa membaca seluruh koleksi) ---------- */
+async function loadLeaderboard(filter) {
+  const field = filter === "semua" ? "poinPeringkat" : GRP_FIELD[filter];
+  C.lb = { rows: C.lb.filter === filter ? C.lb.rows : [], loading: true, filter };
+  render();
+  try {
+    const qs = await getDocs(query(col("petugas"), orderBy(field, "desc"), limit(25)));
+    C.lb.rows = rows(qs).filter((p) => p.status !== "nonaktif").slice(0, 20)
+      .map((p) => ({ id: p.id, nama: p.nama, group: p.group, area: p.area, poin: p[field] || 0 }));
+  } catch (e) { C.lb.rows = []; }
+  C.lb.loading = false;
+  render();
+}
+
+async function loadRank() {
+  const p = S.profilSaya;
+  if (!p) return;
+  const f = GRP_FIELD[p.group];
+  try {
+    const [atasGlobal, total, atasGrup, totalGrup] = await Promise.all([
+      getCountFromServer(query(col("petugas"), where("poinPeringkat", ">", p.poinPeringkat || 0))),
+      getCountFromServer(col("petugas")),
+      getCountFromServer(query(col("petugas"), where(f, ">", p[f] || 0))),
+      getCountFromServer(query(col("petugas"), where("group", "==", p.group)))
+    ]);
+    C.rank = {
+      global: atasGlobal.data().count + 1, total: total.data().count,
+      grup: atasGrup.data().count + 1, totalGrup: totalGrup.data().count,
+      untuk: p.poinPeringkat || 0
+    };
+  } catch (e) { C.rank = null; }
+  render();
+}
+
+/* ---------- tulis: registrasi ---------- */
+async function daftarPetugas(d) {
+  const userId = normUserId(d.userId);
+  const kode = normKode(d.kode);
+  if ((await getDoc(doc(db, "petugas", userId))).exists()) throw new Error("User ID " + userId + " sudah terdaftar.");
+  const dobel = await getDocs(query(col("petugas"), where("kode", "==", kode), limit(1)));
+  if (!dobel.empty) throw new Error("Kode " + kode + " sudah dipakai akun lain.");
+  const b = writeBatch(db);
+  const pub = {
+    nama: d.nama.trim(), group: d.group, kode,
+    area: d.area, regional: d.regional, branch: d.branch, cluster: d.cluster,
+    status: "aktif", createdAt: nowIso(),
+    poinPeringkat: 0, saldo: 0, pDS: null, pYPCR: null, pBUD: null
+  };
+  delete pub.pDS; delete pub.pYPCR; delete pub.pBUD;
+  pub[GRP_FIELD[d.group]] = 0;
+  b.set(doc(db, "petugas", userId), pub);
+  b.set(doc(db, "petugas_cek", userId), { nomor: d.nomor.trim(), foto: d.foto, pinHash: await hashPin(d.pin) });
+  await b.commit();
+  await buatSesi(userId, d.pin);
+  return userId;
+}
+
+/* ---------- tulis: aktivitas ---------- */
+async function simpanFotoAktivitas(p, tujuan, foto) {
+  const ref = doc(col("foto_aktivitas"));
+  await setDoc(ref, Object.assign(snap(p), { tipe: tujuan, foto, waktu: nowIso() }));
+  return ref.id;
+}
+
+function tambahPoinKe(b, p, delta, ledgerId) {
+  const upd = { poinPeringkat: increment(delta), saldo: increment(delta), lastLedger: ledgerId };
+  upd[GRP_FIELD[p.group]] = increment(delta);
+  b.update(doc(db, "petugas", p.id), upd);
+}
+
+async function submitKuesioner(p, k, jawaban, fotoId) {
+  const w = nowIso();
+  const detail = (k.pertanyaan || []).map((q) => ({
+    pertanyaanId: q.id, pertanyaan: q.teks,
+    jawaban: (q.opsi || [])[jawaban[q.id]] != null ? q.opsi[jawaban[q.id]] : ""
+  }));
+  const s = snap(p);
+  const ledgerId = "kue_" + k.id + "_" + p.id;
+  const b = writeBatch(db);
+  b.set(doc(db, "respons", k.id + "_" + p.id), Object.assign({}, s, {
+    grupPeriode: p.group + "|" + s.periode,
+    kuesionerId: k.id, judul: k.judul, jawaban: detail, fotoId, waktu: w
+  }));
+  b.set(doc(db, "ledger", ledgerId), Object.assign({}, s, {
+    delta: POIN_KUESIONER, jenis: "kuesioner", ref: k.id,
+    aktivitas: "Kuesioner " + k.judul + " — Lengkap", waktu: w, oleh: "sistem"
+  }));
+  tambahPoinKe(b, p, POIN_KUESIONER, ledgerId);
+  await b.commit();
+}
+
+/* Anti-curang tanpa server berbayar:
+   1) jawaban dikunci permanen dulu, 2) baru kunci jawaban boleh dibaca,
+   3) rules menghitung ulang jumlah benar dari jawaban terkunci × kunci asli. */
+async function kunciJawaban(p, t, jawaban) {
+  const ref = doc(db, "jawaban", t.id + "_" + p.id);
+  const idx = (t.soal || []).map((q) => (jawaban && jawaban[q.id] != null ? jawaban[q.id] : -1));
+  try {
+    await setDoc(ref, { userId: p.id, testId: t.id, idx, waktu: nowIso() });
+    return idx;
+  } catch (e) {
+    /* sudah terkunci sebelumnya (mis. sinyal putus sebelum nilai tersimpan) — pakai yang terkunci */
+    const ada = await getDoc(ref).catch(() => null);
+    if (ada && ada.exists()) return ada.data().idx || [];
+    throw e;
+  }
+}
+async function jawabanTerkunci(tid, userId) {
+  try {
+    const d = await getDoc(doc(db, "jawaban", tid + "_" + userId));
+    return d.exists() ? (d.data().idx || []) : null;
+  } catch (e) { return null; }
+}
+async function loadKunciAdmin() {
+  try {
+    const qs = await getDocs(col("posttest_kunci"));
+    qs.forEach((d) => { C.adm.kunci[d.id] = d.data().kunci || []; });
+    render();
+  } catch (e) {}
+}
+
+async function submitPosttest(p, t, jawaban, fotoId) {
+  const w = nowIso();
+  const idx = await kunciJawaban(p, t, jawaban);
+  const kd = await getDoc(doc(db, "posttest_kunci", t.id));
+  const kunci = kd.exists() ? (kd.data().kunci || []) : [];
+  let benar = 0;
+  const detail = (t.soal || []).map((q, i) => {
+    const ok = idx[i] >= 0 && idx[i] === kunci[i];
+    if (ok) benar++;
+    return {
+      soalId: q.id, soal: q.teks,
+      jawaban: (q.opsi || [])[idx[i]] != null ? q.opsi[idx[i]] : "",
+      kunci: (q.opsi || [])[kunci[i]] || "", benar: ok
+    };
+  });
+  const total = detail.length;
+  const poin = benar * POIN_PER_BENAR;
+  const s = snap(p);
+  const ledgerId = "pt_" + t.id + "_" + p.id;
+  const b = writeBatch(db);
+  b.set(doc(db, "hasil", t.id + "_" + p.id), Object.assign({}, s, {
+    grupPeriode: p.group + "|" + s.periode,
+    testId: t.id, judul: t.judul, detail, benar, total, poin, fotoId, waktu: w
+  }));
+  b.set(doc(db, "ledger", ledgerId), Object.assign({}, s, {
+    delta: poin, jenis: "posttest", ref: t.id,
+    aktivitas: "Post Test " + t.judul + " — " + benar + " benar × " + POIN_PER_BENAR, waktu: w, oleh: "sistem"
+  }));
+  tambahPoinKe(b, p, poin, ledgerId);
+  await b.commit();
+  return { benar, total, poin, detail };
+}
+
+async function ajukanRedeem(p, hadiahId, h, fotoId) {
+  const s = snap(p);
+  const b = writeBatch(db);
+  b.set(doc(db, "redeem", p.id + "_" + s.periode), Object.assign({}, s, {
+    hadiahId, hadiahNama: h.nama, poin: h.poin, status: "pending", fotoId, waktu: nowIso()
+  }));
+  if (h.stok !== -1) b.update(doc(db, "hadiah", hadiahId), { stok: increment(-1) });
+  await b.commit();
+}
+
+/* ---------- admin: statistik via agregasi server ---------- */
+async function loadAdminStats() {
+  const per = periode();
+  const seminggu = new Date(Date.now() - 7 * 86400000).toISOString();
+  const cnt = (q) => getCountFromServer(q).then((r) => r.data().count).catch(() => 0);
+  const [total, aktif, review, baru, respPer, pending, grpTotals, grpResp, pt] = await Promise.all([
+    cnt(col("petugas")),
+    cnt(query(col("petugas"), where("status", "==", "aktif"))),
+    cnt(query(col("petugas"), where("status", "==", "review"))),
+    cnt(query(col("petugas"), where("createdAt", ">=", seminggu))),
+    cnt(query(col("respons"), where("periode", "==", per))),
+    cnt(query(col("redeem"), where("status", "==", "pending"))),
+    Promise.all(GROUPS.map((g) => cnt(query(col("petugas"), where("group", "==", g))))),
+    Promise.all(GROUPS.map((g) => cnt(query(col("respons"), where("grupPeriode", "==", g + "|" + per))))),
+    getAggregateFromServer(col("hasil"), { rata: average("benar"), soal: average("total") })
+      .then((r) => r.data()).catch(() => ({ rata: null, soal: null }))
+  ]);
+  const kuAktif = listOf(C.kuesioner).filter((k) => k.aktif);
+  const perGroup = GROUPS.map((g, i) => {
+    const target = grpTotals[i] * Math.max(1, kuAktif.filter((k) => untukGroup(k, g)).length);
+    return { g, anggota: grpTotals[i], isi: grpResp[i], target, pct: target ? Math.round(grpResp[i] / target * 100) : 0 };
+  });
+  const targetAll = perGroup.reduce((s, x) => s + x.target, 0);
+  C.adm.stats = {
+    total, aktif, review, baru, respPer, pending, perGroup,
+    completion: targetAll ? Math.round(respPer / targetAll * 100) : 0,
+    rataBenar: pt.rata, rataSoal: pt.soal, topSalah: null
+  };
+  render();
+  loadSoalPalingSalah();
+}
+
+async function loadSoalPalingSalah() {
+  const pts = listOf(C.posttest).filter((t) => t.aktif);
+  if (!pts.length || !C.adm.stats) return;
+  const t = pts[0];
+  try {
+    const qs = await getDocs(query(col("hasil"), where("testId", "==", t.id), limit(300)));
+    const salah = {};
+    let n = 0;
+    qs.forEach((d) => { n++; (d.data().detail || []).forEach((x) => { if (!x.benar) salah[x.soal] = (salah[x.soal] || 0) + 1; }); });
+    const top = Object.keys(salah).map((k) => ({ teks: k, n: salah[k] })).sort((a, b) => b.n - a.n)[0];
+    C.adm.stats.topSalah = top ? Object.assign(top, { dari: n, judul: t.judul }) : null;
+    render();
+  } catch (e) {}
+}
+
+/* ---------- admin: data petugas per halaman ---------- */
+async function loadPetugasPage(reset) {
+  const f = S.fPetugas;
+  const P = C.adm.petugas;
+  const key = f.group + "|" + f.status + "|" + f.q;
+  if (reset || P.key !== key) { P.rows = []; P.cursor = null; P.habis = false; P.key = key; }
+  if (P.habis || P.loading) return;
+  P.loading = true; render();
+  try {
+    if (f.q.trim()) {
+      const id = await cariUserId(f.q);
+      const d = id ? await getDoc(doc(db, "petugas", id)) : null;
+      P.rows = d && d.exists() ? [Object.assign({ id: d.id }, d.data())] : [];
+      P.habis = true;
     } else {
-      userChip = '<button class="link-btn" data-action="goAdminLogin">Masuk sebagai Admin</button>';
+      const cons = [];
+      if (f.group) cons.push(where("group", "==", f.group));
+      if (f.status) cons.push(where("status", "==", f.status));
+      if (P.cursor) cons.push(startAfter(P.cursor));
+      cons.push(limit(HALAMAN));
+      const qs = await getDocs(query(col("petugas"), ...cons));
+      P.rows = P.rows.concat(rows(qs));
+      P.cursor = qs.docs.length ? qs.docs[qs.docs.length - 1] : P.cursor;
+      P.habis = qs.docs.length < HALAMAN;
     }
-  } else if(state.adminUser){
-    userChip = '<button class="link-btn" data-action="exitAdmin">Keluar dari Admin</button>';
-  }
-  return '<div class="topbar">'+
-    '<div class="brand"><div class="brand-mark">PJ</div><div><div class="brand-name">Poin Juara</div><div class="brand-tag">Direct Sales &middot; YPCR &middot; Buddies</div></div></div>'+
-    userChip+
-  '</div>';
+  } catch (e) { toast("no", "Gagal memuat data petugas: " + e.message); }
+  P.loading = false; render();
 }
 
-function renderNavTabs(){
-  if(state.view==="admin"){
-    var tabs = [["members","Anggota"],["quizzes","Kuis"],["submissions","Hasil"],["prizes","Hadiah"],["redemptions","Penukaran"]];
-    return '<div class="nav-tabs">'+tabs.map(function(t){
-      return '<button class="nav-tab '+(state.adminTab===t[0]?"active":"")+'" data-action="setAdminTab" data-val="'+t[0]+'">'+t[1]+'</button>';
-    }).join("")+'</div>';
-  }
-  if(["dashboard","leaderboard","rewards","quiz","quizResult"].indexOf(state.view)>=0 && state.memberId){
-    var mtabs = [["dashboard","Beranda"],["leaderboard","Papan Peringkat"],["rewards","Tukar Hadiah"]];
-    return '<div class="nav-tabs">'+mtabs.map(function(t){
-      return '<button class="nav-tab '+(state.view===t[0]?"active":"")+'" data-action="setView" data-val="'+t[0]+'">'+t[1]+'</button>';
-    }).join("")+'</div>';
-  }
-  return "";
+async function loadDetailPetugas(userId) {
+  const [pub, priv, fotos, led] = await Promise.all([
+    getDoc(doc(db, "petugas", userId)),
+    getDoc(doc(db, "petugas_cek", userId)),
+    getDocs(query(col("foto_aktivitas"), where("userId", "==", userId), limit(20))),
+    getDocs(query(col("ledger"), where("userId", "==", userId), limit(200)))
+  ]);
+  return {
+    pub: pub.exists() ? Object.assign({ id: pub.id }, pub.data()) : null,
+    priv: priv.exists() ? priv.data() : {},
+    fotos: rows(fotos).sort((a, b) => (b.waktu || "").localeCompare(a.waktu || "")),
+    ledger: rows(led).sort((a, b) => (b.waktu || "").localeCompare(a.waktu || ""))
+  };
 }
 
-function viewHome(){
-  return '<div class="card" style="text-align:center;padding:40px 24px;">'+
-    '<h1 class="disp" style="font-size:26px;margin:0 0 8px;">Selamat datang di Poin Juara</h1>'+
-    '<p style="color:var(--text-muted);max-width:460px;margin:0 auto 24px;">Program knowledge check &amp; reward untuk tim Direct Sales, YPCR, dan Buddies. Kerjakan post test, kumpulkan poin, naik peringkat, dan tukar dengan hadiah.</p>'+
-    '<button class="btn btn-primary" data-action="setView" data-val="identify">Mulai &mdash; Cari / Daftar Akun</button>'+
-  '</div>';
+/* ---------- admin: redeem & ledger ---------- */
+function subscribeAdminRedeem() {
+  stop("admin");
+  C.adm.redeemLoaded = false;
+  const cons = S.fRedeem === "semua" ? [limit(100)] : [where("status", "==", S.fRedeem), limit(100)];
+  unsubs.admin.push(onSnapshot(query(col("redeem"), ...cons), (qs) => {
+    C.adm.redeem = rows(qs).sort((a, b) => (b.waktu || "").localeCompare(a.waktu || ""));
+    C.adm.redeemLoaded = true; render();
+  }, () => { C.adm.redeemLoaded = true; render(); }));
 }
 
-function viewIdentify(){
-  var members = memberList().sort(function(a,b){ return (a.name||"").localeCompare(b.name||""); });
-  var q = state.identifySearch.toLowerCase();
-  var filtered = members.filter(function(m){ return !q || (m.name||"").toLowerCase().indexOf(q)>=0; });
-  var html = '<div class="card">'+
-    '<div class="seg" style="margin-bottom:18px;">'+
-      '<button class="'+(state.identifyMode==="search"?"active":"")+'" data-action="setIdentifyMode" data-val="search">Sudah Terdaftar</button>'+
-      '<button class="'+(state.identifyMode==="register"?"active":"")+'" data-action="setIdentifyMode" data-val="register">Daftar Baru</button>'+
-    '</div>';
-  if(state.identifyMode==="search"){
-    html += '<div class="field" style="margin-bottom:14px;"><input type="text" placeholder="Cari nama kamu&hellip;" value="'+esc(state.identifySearch)+'" data-input="identifySearch"></div>';
-    if(!cache.membersLoaded){ html += '<div class="empty-msg">Memuat data anggota&hellip;</div>'; }
-    else if(filtered.length===0){ html += '<div class="empty-msg">Belum ada / tidak ditemukan. Coba daftar baru.</div>'; }
-    else {
-      html += '<div class="stack" style="gap:8px;max-height:360px;overflow-y:auto;">'+filtered.map(function(m){
-        return '<div class="leader-row"><div><div class="leader-name">'+esc(m.name)+'</div>'+teamBadge(m.team)+'</div>'+
-          '<button class="btn btn-primary btn-sm" style="margin-left:auto;" data-action="selectMember" data-val="'+m.id+'">Ini saya</button></div>';
-      }).join("")+'</div>';
-    }
-  } else {
-    html += '<div class="stack">'+
-      '<div class="field"><label>Nama Lengkap</label><input type="text" value="'+esc(state.registerName)+'" data-input="registerName" placeholder="cth. Siti Rahma"></div>'+
-      '<div class="field"><label>Tim</label><div class="seg">'+TEAMS.map(function(t){
-        return '<button class="'+(state.registerTeam===t?"active":"")+'" data-action="setRegisterTeam" data-val="'+esc(t)+'">'+esc(t)+'</button>';
-      }).join("")+'</div></div>'+
-      '<div class="field"><label>No. HP (opsional)</label><input type="tel" value="'+esc(state.registerPhone)+'" data-input="registerPhone" placeholder="08xx-xxxx-xxxx"></div>'+
-      '<div class="field"><label>Foto Registrasi (wajah, untuk verifikasi)</label>'+photoField(state.registerPhoto,"registerPhoto","Gunakan kamera depan HP. Foto ini jadi acuan verifikasi saat post test.")+'</div>'+
-      '<button class="btn btn-primary btn-block" data-action="submitRegister">Daftar &amp; Masuk</button>'+
-    '</div>';
-  }
-  html += '</div>';
-  return html;
+async function loadLedgerTerbaru() {
+  C.adm.ledgerLoaded = false; render();
+  try {
+    const qs = await getDocs(query(col("ledger"), orderBy("waktu", "desc"), limit(50)));
+    C.adm.ledger = rows(qs);
+  } catch (e) { C.adm.ledger = []; }
+  C.adm.ledgerLoaded = true; render();
 }
 
-function viewDashboard(){
-  var m = currentMember();
-  if(!m) return viewIdentify();
-  var pts = pointsForMember(m.id);
-  var ranked = rankedMembers("all");
-  var rankIdx = ranked.findIndex(function(x){ return x.id===m.id; });
-  var quizzes = availableQuizzes(m.id);
-  var todo = quizzes.filter(function(q){ return !q.taken; });
-  var done = quizzes.filter(function(q){ return q.taken; });
-  var html = '<div class="stack">';
-  html += '<div class="grid cols-3">'+
-    '<div class="card stat-card accent"><div class="label">Total Poin</div><div class="value mono">'+pts+'</div><div class="sub">Saldo tukar: '+balanceForMember(m.id)+' poin</div></div>'+
-    '<div class="card stat-card"><div class="label">Peringkat</div><div class="value">#'+(rankIdx>=0?rankIdx+1:"-")+'</div><div class="sub">dari '+ranked.length+' anggota</div></div>'+
-    '<div class="card stat-card"><div class="label">Post Test Selesai</div><div class="value">'+done.length+' / '+quizzes.length+'</div><div class="sub">'+todo.length+' menunggu dikerjakan</div></div>'+
-  '</div>';
-  html += '<div class="card"><div class="section-title">Post Test Tersedia</div>';
-  if(!cache.quizzesLoaded){ html += '<div class="empty-msg">Memuat kuis&hellip;</div>'; }
-  else if(quizzes.length===0){ html += '<div class="empty-msg">Belum ada post test aktif. Cek lagi nanti.</div>'; }
-  else {
-    html += '<div class="stack" style="gap:10px;">'+quizzes.map(function(q){
-      if(q.taken){
-        var sub = memberSubmissions(m.id).filter(function(s){return s.quizId===q.id;})[0];
-        return '<div class="qcard" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">'+
-          '<div style="flex:1;"><div style="font-weight:600;">'+esc(q.title)+'</div><div class="subhead">Skor '+(sub?sub.score:"?")+'/'+(sub?sub.totalQuestions:"?")+' &middot; +'+(sub?sub.pointsEarned:0)+' poin</div></div>'+
-          '<span class="badge badge-good">Selesai</span></div>';
-      }
-      return '<div class="qcard" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">'+
-        '<div style="flex:1;"><div style="font-weight:600;">'+esc(q.title)+'</div><div class="subhead">'+((q.questions||[]).length)+' soal</div></div>'+
-        '<button class="btn btn-primary btn-sm" data-action="startQuiz" data-val="'+q.id+'">Mulai</button></div>';
-    }).join("")+'</div>';
-  }
-  html += '</div>';
-  html += '<div class="card"><div class="section-title">Papan Peringkat &mdash; Top 5</div>'+leaderRowsHtml(ranked.slice(0,5), m.id)+
-    '<button class="btn btn-ghost btn-sm" style="margin-top:12px;" data-action="setView" data-val="leaderboard">Lihat semua</button></div>';
-  html += '</div>';
-  return html;
+async function fotoById(id) {
+  if (!id) return null;
+  if (C.adm.fotoCache[id] !== undefined) return C.adm.fotoCache[id];
+  const d = await getDoc(doc(db, "foto_aktivitas", id));
+  C.adm.fotoCache[id] = d.exists() ? d.data().foto : null;
+  return C.adm.fotoCache[id];
 }
 
-function leaderRowsHtml(list, meId){
-  if(list.length===0) return '<div class="empty-msg">Belum ada data.</div>';
-  return list.map(function(m,i){
-    var rankClass = i===0?"top1":i===1?"top2":i===2?"top3":"";
-    return '<div class="leader-row '+(m.id===meId?"me":"")+'">'+
-      '<div class="rank-chip '+rankClass+'">'+(i+1)+'</div>'+
-      '<div><div class="leader-name">'+esc(m.name)+'</div>'+teamBadge(m.team)+'</div>'+
-      '<div class="leader-points mono">'+m.totalPoints+'</div>'+
-    '</div>';
+async function setujuiRedeem(r) {
+  const p = (await getDoc(doc(db, "petugas", r.userId))).data();
+  const b = writeBatch(db);
+  b.set(doc(db, "ledger", "rdm_" + r.id), Object.assign({}, {
+    userId: r.userId, kode: r.kode || "", nama: r.nama || "", group: r.group || "",
+    area: r.area || "", regional: r.regional || "", branch: r.branch || "", cluster: r.cluster || "",
+    periode: periode()
+  }, {
+    delta: -r.poin, jenis: "redeem", ref: r.id, aktivitas: "Penukaran " + r.hadiahNama,
+    waktu: nowIso(), oleh: S.adminUser ? S.adminUser.email : "admin"
+  }));
+  b.update(doc(db, "petugas", r.userId), { saldo: increment(-r.poin), lastLedger: "rdm_" + r.id });
+  b.update(doc(db, "redeem", r.id), { status: "selesai", selesaiAt: nowIso(), oleh: S.adminUser ? S.adminUser.email : "admin" });
+  await b.commit();
+  return p;
+}
+
+async function tolakRedeem(r, alasan) {
+  /* Dokumen dipindah ke ID baru supaya slot {userId}_{periode} kosong lagi:
+     kuota 1x/bulan petugas kembali tersedia. */
+  const b = writeBatch(db);
+  const copy = Object.assign({}, r);
+  delete copy.id;
+  b.set(doc(db, "redeem", r.id + "_tolak_" + Date.now()), Object.assign(copy, {
+    status: "ditolak", alasan: alasan || "", selesaiAt: nowIso(), oleh: S.adminUser ? S.adminUser.email : "admin"
+  }));
+  b.delete(doc(db, "redeem", r.id));
+  const h = C.hadiah[r.hadiahId];
+  if (h && h.stok !== -1) b.update(doc(db, "hadiah", r.hadiahId), { stok: increment(1) });
+  await b.commit();
+}
+
+async function catatAdjustment(userId, delta, alasan) {
+  const pd = await getDoc(doc(db, "petugas", userId));
+  if (!pd.exists()) throw new Error("User ID tidak ditemukan.");
+  const p = Object.assign({ id: userId }, pd.data());
+  const ledgerId = "adj_" + userId + "_" + Date.now();
+  const b = writeBatch(db);
+  b.set(doc(db, "ledger", ledgerId), Object.assign(snap(p), {
+    delta, jenis: "adjustment", ref: "", aktivitas: "Manual Adj — " + alasan,
+    alasan, waktu: nowIso(), oleh: S.adminUser ? S.adminUser.email : "admin"
+  }));
+  tambahPoinKe(b, p, delta, ledgerId);
+  await b.commit();
+}
+
+
+/* ============ PETUGAS — komponen ============ */
+function fotoInput(nama, dataUrl, capMsg) {
+  return '<label class="photo-tile">' +
+    (dataUrl ? '<img src="' + dataUrl + '" alt=""><span class="retake">Ganti foto</span>'
+      : '<span class="ph-ico">[ ]</span><span class="cap">' + esc(capMsg || "Ketuk untuk ambil foto") + "</span>") +
+    '<input type="file" accept="image/*" capture="user" data-foto="' + nama + '" hidden></label>';
+}
+function hero(eyebrow, judul, sub) {
+  return '<div class="hero"><div class="eyebrow">' + eyebrow + "</div><h1>" + judul + "</h1>" + (sub ? "<p>" + sub + "</p>" : "") + "</div>";
+}
+function barisLb(arr, meId) {
+  if (!arr.length) return '<div class="empty">Belum ada poin yang tercatat.</div>';
+  return arr.map((p, i) => {
+    const cls = i === 0 ? "r1" : i === 1 ? "r2" : i === 2 ? "r3" : "";
+    return '<div class="lb-row ' + (p.id === meId ? "me" : "") + '"><div class="lb-rank ' + cls + '">#' + (i + 1) + "</div>" +
+      '<div class="grow"><div class="lb-name">' + esc(p.nama) + (p.id === meId ? " (Anda)" : "") + "</div>" +
+      '<div class="lb-sub">' + esc(p.group) + " &middot; " + esc(p.area || "-") + "</div></div>" +
+      '<div class="lb-pts">' + fmtNum(p.poin) + "</div></div>";
   }).join("");
 }
-
-function viewLeaderboard(){
-  var f = state.leaderboardFilter;
-  var ranked = rankedMembers(f);
-  var m = currentMember();
-  var chips = [["all","Semua"]].concat(TEAMS.map(function(t){return [t,t];}));
-  return '<div class="card"><div class="section-title">Papan Peringkat</div>'+
-    '<div class="seg" style="margin-bottom:16px;">'+chips.map(function(c){
-      return '<button class="'+(f===c[0]?"active":"")+'" data-action="setLeaderboardFilter" data-val="'+esc(c[0])+'">'+esc(c[1])+'</button>';
-    }).join("")+'</div>'+
-    leaderRowsHtml(ranked, m?m.id:null)+
-  '</div>';
+function tugasSaya() {
+  const p = S.profilSaya;
+  const ku = listOf(C.kuesioner).filter((k) => k.aktif && untukGroup(k, p.group));
+  const pt = listOf(C.posttest).filter((t) => t.aktif && untukGroup(t, p.group));
+  return { ku, pt };
 }
 
-function viewRewards(){
-  var m = currentMember();
-  if(!m) return viewIdentify();
-  var bal = balanceForMember(m.id);
-  var prizes = activePrizes();
-  var html = '<div class="stack">';
-  html += '<div class="card stat-card accent"><div class="label">Saldo Poin Kamu</div><div class="value mono">'+bal+'</div><div class="sub">Total didapat '+pointsForMember(m.id)+' &middot; terpakai '+spentForMember(m.id)+'</div></div>';
-  html += '<div class="card"><div class="section-title">Katalog Hadiah</div>';
-  if(!cache.prizesLoaded){ html += '<div class="empty-msg">Memuat hadiah&hellip;</div>'; }
-  else if(prizes.length===0){ html += '<div class="empty-msg">Belum ada hadiah tersedia.</div>'; }
-  else {
-    html += '<div class="grid cols-3">'+prizes.map(function(p){
-      var canAfford = bal >= p.cost;
-      var inStock = p.stock===-1 || p.stock>0;
-      var disabled = !canAfford || !inStock;
-      return '<div class="card tight prize-card">'+
-        '<div class="prize-name">'+esc(p.name)+'</div>'+
-        '<div class="prize-cost">'+p.cost+' poin</div>'+
-        '<div class="prize-stock">'+(p.stock===-1?"Stok tidak terbatas":"Stok: "+p.stock)+'</div>'+
-        '<button class="btn '+(disabled?"btn-ghost":"btn-primary")+' btn-sm" '+(disabled?"disabled":"")+' data-action="redeemPrize" data-val="'+p.id+'">'+
-          (!inStock?"Stok habis":!canAfford?"Poin kurang":"Tukar")+
-        '</button></div>';
-    }).join("")+'</div>';
-  }
-  html += '</div>';
-  var myR = memberRedemptions(m.id);
-  html += '<div class="card"><div class="section-title">Riwayat Penukaran Saya</div>';
-  if(myR.length===0){ html += '<div class="empty-msg">Belum ada penukaran.</div>'; }
-  else {
-    html += '<div class="stack" style="gap:8px;">'+myR.map(function(r){
-      var b = r.status==="fulfilled"?"badge-good":r.status==="rejected"?"badge-bad":"badge-warn";
-      var lbl = r.status==="fulfilled"?"Diberikan":r.status==="rejected"?"Ditolak":"Menunggu";
-      return '<div class="leader-row"><div><div class="leader-name">'+esc(r.prizeName)+'</div><div class="subhead">'+fmtDate(r.requestedAt)+' &middot; '+r.pointCost+' poin</div></div><span class="badge '+b+'" style="margin-left:auto;">'+lbl+'</span></div>';
-    }).join("")+'</div>';
-  }
-  html += '</div></div>';
-  return html;
+/* ============ masuk & daftar ============ */
+function vMasuk() {
+  const m = S.masuk;
+  return '<div class="wrap-plain">' +
+    '<div class="hero" style="border-radius:0 0 18px 18px;"><div class="eyebrow">Youth GTM &middot; Internal</div><h1>DEBY</h1>' +
+    "<p>Direct Sales Empowerment &amp; Benefits from Youth GTM</p></div>" +
+    '<div class="pad"><div class="card lift"><div class="card-title">Masuk Petugas</div>' +
+    '<div class="field"><label class="req">User ID atau Kode Digipos</label>' +
+    '<input type="text" class="mono" value="' + esc(m.id) + '" data-in="masuk.id" placeholder="5571191005 / AHA1927381_DS" autocomplete="username"></div>' +
+    '<div class="field"><label class="req">PIN</label>' +
+    '<input type="password" inputmode="numeric" value="' + esc(m.pin) + '" data-in="masuk.pin" placeholder="PIN" autocomplete="current-password"></div>' +
+    (m.err ? '<div class="err" style="margin-top:12px;">' + esc(m.err) + "</div>" : "") +
+    '<button class="btn btn-primary btn-block" style="margin-top:16px;" data-do="masuk">Masuk</button>' +
+    '<div style="text-align:center;margin-top:14px;font-size:13px;color:var(--ink-dim);">Belum punya akun? ' +
+    '<button style="background:none;border:none;color:var(--red);font-weight:700;cursor:pointer;padding:0;" data-do="keDaftar">Registrasi Mandiri</button></div>' +
+    "</div>" +
+    '<div style="text-align:center;margin-top:18px;"><button style="background:none;border:none;color:var(--ink-faint);font-size:12px;cursor:pointer;" data-do="ke" data-v="admLogin">Masuk sebagai Super Admin</button></div>' +
+    "</div></div>";
 }
 
-function viewQuiz(){
-  var m = currentMember();
-  var q = cache.quizzes[state.activeQuizId];
-  if(!m || !q) return viewDashboard();
-  var qObj = Object.assign({id:state.activeQuizId}, q);
-  if(state.quizStep===1){
-    return '<div class="card"><div class="section-title">Langkah 1 dari 2 &middot; Verifikasi Foto</div>'+
-      '<h2 class="disp" style="font-size:19px;margin:0 0 10px;">'+esc(qObj.title)+'</h2>'+
-      '<p style="color:var(--text-muted);font-size:14px;">Ambil foto wajah kamu sekarang (kamera depan) sebagai bukti kamu yang mengerjakan post test ini.</p>'+
-      photoField(state.quizPhoto,"quizPhoto","Wajib diambil sebelum lanjut ke soal.")+
-      '<div style="display:flex;gap:10px;margin-top:20px;">'+
-        '<button class="btn btn-ghost" data-action="setView" data-val="dashboard">Batal</button>'+
-        '<button class="btn btn-primary" '+(state.quizPhoto?"":"disabled")+' data-action="quizNextStep">Lanjut ke Soal</button>'+
-      '</div></div>';
-  }
-  var questions = qObj.questions||[];
-  var answered = Object.keys(state.quizAnswers).length;
-  var pct = questions.length? Math.round(answered/questions.length*100):0;
-  var html = '<div class="card"><div class="section-title">Langkah 2 dari 2 &middot; Soal</div>'+
-    '<h2 class="disp" style="font-size:19px;margin:0 0 10px;">'+esc(qObj.title)+'</h2>'+
-    '<div class="progress-track" style="margin-bottom:6px;"><div class="progress-fill" style="width:'+pct+'%;"></div></div>'+
-    '<div class="subhead" style="margin-bottom:16px;">'+answered+' / '+questions.length+' terjawab</div>';
-  questions.forEach(function(qq,qi){
-    html += '<div class="qcard" style="margin-bottom:14px;"><div style="font-weight:600;margin-bottom:10px;">'+(qi+1)+'. '+esc(qq.text)+'</div>';
-    (qq.options||[]).forEach(function(opt,oi){
-      var checked = state.quizAnswers[qq.id]===oi;
-      html += '<label class="opt"><input type="radio" name="q_'+qq.id+'" value="'+oi+'" data-quiz-answer="'+qq.id+'" '+(checked?"checked":"")+'><span class="opt-text">'+esc(opt)+'</span></label>';
-    });
-    html += '</div>';
+function opsiWilayah(level, d) {
+  const out = [];
+  C.wilayah.forEach((r) => {
+    if (level === "area") out.push(r.area);
+    else if (level === "regional" && r.area === d.area) out.push(r.regional);
+    else if (level === "branch" && r.area === d.area && r.regional === d.regional) out.push(r.branch);
+    else if (level === "cluster" && r.area === d.area && r.regional === d.regional && r.branch === d.branch) out.push(r.cluster);
   });
-  html += '<div style="display:flex;gap:10px;margin-top:10px;">'+
-    '<button class="btn btn-ghost" data-action="quizPrevStep">Kembali</button>'+
-    '<button class="btn btn-primary" id="quizSubmitBtn" '+(answered<questions.length?"disabled":"")+' data-action="submitQuiz">Kumpulkan Jawaban</button>'+
-  '</div></div>';
-  return html;
+  return out.filter((v, i, a) => v && a.indexOf(v) === i).sort();
 }
 
-function viewQuizResult(){
-  var r = state.lastResult;
-  if(!r) return viewDashboard();
-  return '<div class="card" style="text-align:center;padding:36px 20px;">'+
-    '<div class="section-title">Post Test Selesai</div>'+
-    '<div class="disp" style="font-size:34px;font-weight:700;margin:6px 0;">'+r.score+' / '+r.totalQuestions+'</div>'+
-    '<div style="color:var(--text-muted);margin-bottom:18px;">Jawaban benar &middot; kamu mendapat <strong class="mono" style="color:var(--gold);">+'+r.pointsEarned+' poin</strong></div>'+
-    '<button class="btn btn-primary" data-action="setView" data-val="dashboard">Kembali ke Beranda</button>'+
-  '</div>';
-}
-
-function viewAdminLogin(){
-  return '<div class="card" style="max-width:360px;margin:0 auto;">'+
-    '<div class="section-title">Masuk Admin</div>'+
-    '<div class="stack">'+
-    '<div class="field"><label>Email</label><input type="email" value="'+esc(state.adminEmail)+'" data-input="adminEmail" placeholder="admin@contoh.com"></div>'+
-    '<div class="field"><label>Kata Sandi</label><input type="password" value="'+esc(state.adminPassword)+'" data-input="adminPassword"></div>'+
-    (state.adminError ? '<div class="err" style="color:var(--bad);font-size:13px;">'+esc(state.adminError)+'</div>' : '')+
-    '<button class="btn btn-primary btn-block" data-action="submitAdminLogin">Masuk</button>'+
-    '<button class="btn btn-ghost btn-block" data-action="setView" data-val="home">Kembali</button>'+
-    '</div>'+
-    '<p class="field hint" style="margin-top:12px;">Akun admin dibuat lewat Firebase Console (Authentication &rarr; Users).</p>'+
-  '</div>';
-}
-
-function viewAdmin(){
-  if(!state.adminUser) return viewAdminLogin();
-  var fns = { members: adminMembers, quizzes: adminQuizzes, submissions: adminSubmissions, prizes: adminPrizes, redemptions: adminRedemptions };
-  return (fns[state.adminTab]||adminMembers)();
-}
-
-function adminMembers(){
-  var f = state.adminMembersFilter;
-  var list = memberList().map(function(m){ return Object.assign({},m,{totalPoints:pointsForMember(m.id)}); });
-  if(f!=="all") list = list.filter(function(m){ return m.team===f; });
-  list.sort(function(a,b){ return b.totalPoints-a.totalPoints; });
-  var chips = [["all","Semua"]].concat(TEAMS.map(function(t){return [t,t];}));
-  var html = '<div class="card"><div class="section-title">Anggota Terdaftar ('+memberList().length+')</div>'+
-    '<div class="seg" style="margin-bottom:14px;">'+chips.map(function(c){
-      return '<button class="'+(f===c[0]?"active":"")+'" data-action="setAdminMembersFilter" data-val="'+esc(c[0])+'">'+esc(c[1])+'</button>';
-    }).join("")+'</div>';
-  if(!cache.membersLoaded){ html += '<div class="empty-msg">Memuat&hellip;</div>'; }
-  else if(list.length===0){ html += '<div class="empty-msg">Belum ada anggota.</div>'; }
-  else {
-    html += '<div class="table-wrap"><table><thead><tr><th></th><th>Nama</th><th>Tim</th><th>No. HP</th><th>Poin</th><th>Post Test</th><th>Daftar</th><th></th></tr></thead><tbody>'+
-      list.map(function(m){
-        var priv = cache.membersPrivate[m.id] || {};
-        var subCount = memberSubmissions(m.id).length;
-        return '<tr><td>'+(priv.photoDataUrl?'<img class="thumb" src="'+priv.photoDataUrl+'" data-action="viewMemberCompare" data-val="'+m.id+'">':'<div class="thumb"></div>')+'</td>'+
-          '<td>'+esc(m.name)+'</td><td>'+teamBadge(m.team)+'</td><td class="mono">'+esc(priv.phone||"-")+'</td>'+
-          '<td class="mono">'+m.totalPoints+'</td><td>'+subCount+'</td><td>'+fmtDate(m.createdAt)+'</td>'+
-          '<td><button class="btn btn-danger btn-sm" data-action="deleteMember" data-val="'+m.id+'">Hapus</button></td></tr>';
-      }).join("")+'</tbody></table></div>';
+function vDaftar() {
+  const d = S.daftar;
+  const uidVal = normUserId(d.userId), kodeVal = normKode(d.kode);
+  const uidErr = d.userId && !USERID_RE.test(uidVal);
+  const kodeErr = d.kode && !KODE_RE.test(kodeVal);
+  function sel(nama, label, opsi, aktif) {
+    const kosong = aktif ? "Pilih " + label : (nama === "area" ? (C.wilayahLoaded ? "Master wilayah belum tersedia" : "Memuat…") : "Pilih induk dulu");
+    return '<div class="field"><label class="req">' + label + '</label><select data-in="daftar.' + nama + '" ' + (aktif ? "" : "disabled") + ">" +
+      '<option value="">' + kosong + "</option>" +
+      opsi.map((o) => '<option value="' + esc(o) + '" ' + (d[nama] === o ? "selected" : "") + ">" + esc(o) + "</option>").join("") +
+      "</select></div>";
   }
-  html += '</div>';
-  return html;
+  const areas = opsiWilayah("area", d);
+  return '<div class="wrap-plain">' +
+    '<div class="hero" style="border-radius:0 0 18px 18px;"><div class="eyebrow">S-01 &middot; Registrasi</div><h1>Registrasi Mandiri</h1>' +
+    "<p>Data identitas &amp; wilayah dikunci setelah submit</p></div>" +
+    '<div class="pad stack">' +
+    '<div class="card">' +
+      '<div class="field"><label class="req">01 &nbsp;Nama Lengkap</label><input type="text" value="' + esc(d.nama) + '" data-in="daftar.nama" placeholder="cth. Reza Afrizal"></div>' +
+      '<div class="field"><label class="req">02 &nbsp;Group</label><div class="seg">' +
+        GROUPS.map((g) => '<button class="' + (d.group === g ? "on" : "") + '" data-do="setGroup" data-v="' + esc(g) + '">' + esc(g) + "</button>").join("") +
+      "</div></div>" +
+      '<div class="field"><label class="req">03 &nbsp;User ID Digipos</label><input type="text" inputmode="numeric" class="mono" value="' + esc(d.userId) + '" data-in="daftar.userId" data-live="1" placeholder="10 digit angka, cth. 5571191005">' +
+        '<div class="hint" data-hint="userId" style="' + (uidErr ? "color:var(--bad);" : "") + '">' + (uidErr ? "Harus tepat 10 digit angka." : "10 digit angka, sesuai data Digipos.") + "</div></div>" +
+      '<div class="field"><label class="req">04 &nbsp;Kode Digipos</label><input type="text" class="mono" value="' + esc(d.kode) + '" data-in="daftar.kode" data-live="1" placeholder="cth. AHA1927381_DS" style="text-transform:uppercase;">' +
+        '<div class="hint" data-hint="kode" style="' + (kodeErr ? "color:var(--bad);" : "") + '">' + (kodeErr ? "Format: huruf/angka lalu garis bawah, cth. AHA1927381_DS." : "Huruf/angka + sufiks, cth. AHA1927381_DS.") + "</div></div>" +
+      '<div class="field"><label class="req">05 &nbsp;Nomor Aktif</label><input type="tel" class="mono" value="' + esc(d.nomor) + '" data-in="daftar.nomor" placeholder="0812..."></div>' +
+      '<div class="note" style="margin-top:12px;">User ID &amp; Kode Digipos jadi kunci penggabungan dengan data sales. Pastikan persis sama &mdash; tidak bisa diubah sendiri setelah daftar.</div>' +
+    "</div>" +
+    '<div class="card"><div class="card-title">06&ndash;09 &nbsp;Hierarki Wilayah</div>' +
+      (C.wilayahLoaded && !C.wilayah.length ? '<div class="note">Master wilayah belum diisi Admin. Hubungi Super Admin sebelum mendaftar.</div>' : "") +
+      sel("area", "Nama Area", areas, areas.length > 0) +
+      sel("regional", "Nama Regional", d.area ? opsiWilayah("regional", d) : [], !!d.area) +
+      sel("branch", "Nama Branch", d.regional ? opsiWilayah("branch", d) : [], !!d.regional) +
+      sel("cluster", "Nama Cluster", d.branch ? opsiWilayah("cluster", d) : [], !!d.branch) +
+    "</div>" +
+    '<div class="card"><div class="card-title">10 &nbsp;Foto Petugas</div>' + fotoInput("daftar", d.foto, "Ambil foto referensi") +
+      '<div class="note" style="margin-top:10px;">Kamera depan &middot; baseline 1x seumur akun.</div></div>' +
+    '<div class="card"><div class="card-title">Keamanan Akun</div><div class="field-2">' +
+      '<div class="field" style="margin:0;"><label class="req">PIN</label><input type="password" inputmode="numeric" value="' + esc(d.pin) + '" data-in="daftar.pin" placeholder="min. 4 digit"></div>' +
+      '<div class="field" style="margin:0;"><label class="req">Ulangi PIN</label><input type="password" inputmode="numeric" value="' + esc(d.pin2) + '" data-in="daftar.pin2"></div>' +
+    "</div></div>" +
+    (d.err ? '<div class="err">' + esc(d.err) + "</div>" : "") +
+    '<button class="btn btn-primary btn-block" data-do="daftar" ' + (d.busy ? "disabled" : "") + ">" + (d.busy ? "Mendaftarkan…" : "Daftar Akun") + "</button>" +
+    '<button class="btn btn-ghost btn-block" data-do="ke" data-v="masuk">Kembali ke Masuk</button>' +
+    "</div></div>";
 }
 
-function adminQuizzes(){
-  var quizzes = Object.keys(cache.quizzes).map(function(id){ return Object.assign({id:id}, cache.quizzes[id]); });
-  var html = '<div class="stack">';
-  html += '<div class="card"><div class="section-title">Buat Post Test Baru</div>'+
-    '<div style="display:flex;gap:10px;flex-wrap:wrap;">'+
-    '<input type="text" style="flex:1;min-width:200px;" placeholder="Judul post test" value="'+esc(state.newQuizTitle)+'" data-input="newQuizTitle">'+
-    '<button class="btn btn-primary" data-action="createQuiz">Buat</button></div></div>';
-  if(!cache.quizzesLoaded){ html += '<div class="card"><div class="empty-msg">Memuat&hellip;</div></div>'; }
-  else if(quizzes.length===0){ html += '<div class="card"><div class="empty-msg">Belum ada post test.</div></div>'; }
+/* ============ photo check gate ============ */
+const GATE = {
+  kuesioner: { sub: "Identity gate sebelum mengisi Kuesioner.", lanjut: "Lanjutkan ke Kuesioner" },
+  posttest: { sub: "Identity gate sebelum mengerjakan Post Test.", lanjut: "Lanjutkan ke Post Test" },
+  redeem: { sub: "Verifikasi akhir sebelum poin ditukar jadi hadiah.", lanjut: "Kirim Permintaan Tukar" }
+};
+function vGate() {
+  const g = S.gate, p = S.profilSaya;
+  const t = GATE[g.tujuan];
+  return '<div class="pad"><div class="gate-dark">' +
+    '<div class="lbl" style="color:rgba(255,255,255,.55);">S-02 &middot; Photo Check</div>' +
+    "<h2>Verifikasi Wajah</h2><p>" + esc(t.sub) + "</p>" +
+    fotoInput("gate", g.foto, "Ketuk untuk ambil foto") +
+    '<div class="gate-meta"><span class="k">Referensi baseline</span><span class="v">' + esc(p.id) + "</span></div>" +
+    '<div class="gate-meta"><span class="k">Status</span><span class="v" style="color:' + (g.foto ? "#7ee2ad" : "rgba(255,255,255,.6)") + ';">' + (g.foto ? "Foto terekam" : "Menunggu foto") + "</span></div>" +
+    '<button class="btn btn-primary btn-block" style="margin-top:18px;" ' + (g.foto && !g.busy ? "" : "disabled") + ' data-do="gateLanjut">' + (g.busy ? "Menyimpan…" : esc(t.lanjut)) + "</button>" +
+    '<button class="btn btn-block" style="margin-top:9px;background:rgba(255,255,255,.1);color:#fff;" data-do="gateBatal">Batal</button>' +
+    '<div style="margin-top:14px;font-size:11.5px;color:rgba(255,255,255,.5);text-align:center;">Bukan sistem absensi harian. Foto hanya dibuka Admin saat eskalasi.</div>' +
+    "</div></div>";
+}
+
+/* ============ home ============ */
+function kartuTugas(tipe, d, hasil) {
+  const isKu = tipe === "kuesioner";
+  const nama = isKu ? "Kuesioner" : "Post Test";
+  if (hasil) {
+    const sub = isKu ? "Selesai &middot; lengkap &middot; +" + POIN_KUESIONER + " poin" : "Selesai &middot; " + hasil.benar + "/" + hasil.total + " benar &middot; +" + hasil.poin + " poin";
+    return '<div class="task"><div class="t-top"><span class="pill pill-neutral">' + nama + '</span><span class="pill pill-good">Selesai</span></div>' +
+      '<div class="t-name">' + esc(d.judul) + '</div><div class="t-sub">' + sub + "</div></div>";
+  }
+  const n = isKu ? (d.pertanyaan || []).length : (d.soal || []).length;
+  const poin = isKu ? POIN_KUESIONER : n * POIN_PER_BENAR;
+  const sub = isKu ? n + " pertanyaan &middot; tanpa benar/salah" : n + " soal &middot; " + POIN_PER_BENAR + " poin per jawaban benar";
+  return '<div class="task"><div class="t-top"><span class="pill pill-neutral">' + nama + '</span><span class="pill pill-red">' + (isKu ? "+" : "maks +") + poin + " poin</span></div>" +
+    '<div class="t-name">' + esc(d.judul) + '</div><div class="t-sub">' + sub + "</div>" +
+    (n ? '<button class="btn btn-primary btn-sm btn-block" data-do="mulai" data-t="' + tipe + '" data-v="' + d.id + '">Mulai &middot; Photo Check</button>'
+      : '<div class="note">Modul ini belum berisi pertanyaan.</div>') + "</div>";
+}
+
+function vHome() {
+  const p = S.profilSaya;
+  const { ku, pt } = tugasSaya();
+  const aktif = [], selesai = [];
+  ku.forEach((k) => (sudahKuesioner(k.id) ? selesai : aktif).push(["kuesioner", k, sudahKuesioner(k.id)]));
+  pt.forEach((t) => { const h = hasilPosttest(t.id); (h ? selesai : aktif).push(["posttest", t, h]); });
+  const r = C.rank;
+  const menu = [["KS", "Kuesioner", "tugas"], ["PT", "Post Test", "tugas"], ["LB", "Leaderboard", "leaderboard"], ["KN", "Knowledge", "knowledge"],
+    ["HD", "Hadiah", "hadiah"], ["PN", "Poin Saya", "poin"], ["PF", "Profil", "profil"], ["BT", "Bantuan", "bantuan"]];
+  return '<div class="hero"><div class="eyebrow">' + esc(p.group) + " &middot; Cluster " + esc(p.cluster || "-") + "</div>" +
+    "<h1>Halo, " + esc((p.nama || "").split(" ")[0]) + "</h1></div>" +
+    '<div class="pad stack" style="margin-top:-14px;">' +
+    '<div class="stat-duo">' +
+      '<div class="stat lift"><div class="lbl">Total Poin</div><div class="n red mono">' + fmtNum(poinPeringkatSaya()) + '</div><div class="k lbl" style="color:var(--ink-dim);">Saldo tukar ' + fmtNum(tersediaSaya()) + "</div></div>" +
+      '<div class="stat lift"><div class="lbl">Peringkat</div><div class="n mono">' + (r ? "#" + fmtNum(r.global) : "&hellip;") + "</div>" +
+        '<div class="k lbl" style="color:var(--ink-dim);">' + (r ? "dari " + fmtNum(r.total) + " &middot; #" + fmtNum(r.grup) + " di " + esc(p.group) : "menghitung") + "</div></div>" +
+    "</div>" +
+    '<div class="sec-head"><h2>Tugas Aktif</h2><button class="link" data-do="tab" data-v="tugas">Lihat semua</button></div>' +
+    (!C.katalogLoaded || !C.mine.loaded ? '<div class="skel">Memuat tugas&hellip;</div>'
+      : aktif.length ? aktif.slice(0, 3).map((x) => kartuTugas(x[0], x[1], null)).join("")
+        : '<div class="card"><div class="empty" style="padding:18px;">Tidak ada tugas yang menunggu.</div></div>') +
+    (selesai.length ? '<div class="sec-head"><h2>Sudah Selesai</h2></div>' + selesai.slice(0, 2).map((x) => kartuTugas(x[0], x[1], x[2])).join("") : "") +
+    '<div class="sec-head"><h2>Menu</h2></div><div class="mgrid">' +
+      menu.map((m) => '<button data-do="tab" data-v="' + m[2] + '"><span class="mi">' + m[0] + '</span><span class="mt">' + m[1] + "</span></button>").join("") +
+    "</div>" +
+    '<div class="sec-head"><h2>Top 5 Leaderboard</h2><button class="link" data-do="tab" data-v="leaderboard">Semua</button></div>' +
+    '<div class="card">' + (C.lb.filter === "semua" && !C.lb.loading ? barisLb(C.lb.rows.slice(0, 5), p.id) : '<div class="skel">Memuat&hellip;</div>') + "</div>" +
+    "</div>";
+}
+
+/* ============ tugas / runner / hasil ============ */
+function vTugas() {
+  const p = S.profilSaya;
+  const { ku, pt } = tugasSaya();
+  let body = "";
+  if (!C.katalogLoaded || !C.mine.loaded) body = '<div class="skel">Memuat&hellip;</div>';
+  else if (!ku.length && !pt.length) body = '<div class="card"><div class="empty">Belum ada Kuesioner atau Post Test aktif untuk ' + esc(p.group) + ".</div></div>";
   else {
-    quizzes.forEach(function(q){
-      var isEditing = state.editingQuizId===q.id;
-      html += '<div class="card"><div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">'+
-          '<div style="flex:1;"><div style="font-weight:700;font-family:Sora,sans-serif;">'+esc(q.title)+'</div><div class="subhead">'+(q.questions||[]).length+' soal</div></div>'+
-          '<div class="pill-toggle" data-action="toggleQuizActive" data-val="'+q.id+'"><div class="switch '+(q.active?"on":"")+'"></div>'+(q.active?"Aktif":"Nonaktif")+'</div>'+
-          '<button class="btn btn-ghost btn-sm" data-action="toggleEditQuiz" data-val="'+q.id+'">'+(isEditing?"Tutup":"Kelola Soal")+'</button>'+
-          '<button class="btn btn-danger btn-sm" data-action="deleteQuiz" data-val="'+q.id+'">Hapus</button>'+
-        '</div>';
-      if(isEditing){
-        html += '<hr class="sep" style="margin:14px 0;">';
-        (q.questions||[]).forEach(function(qq,qi){
-          html += '<div class="qcard" style="margin-bottom:10px;"><div style="display:flex;justify-content:space-between;gap:10px;"><div style="font-weight:600;">'+(qi+1)+'. '+esc(qq.text)+'</div><button class="btn btn-danger btn-sm" data-action="deleteQuestion" data-quiz="'+q.id+'" data-val="'+qq.id+'">Hapus</button></div>'+
-            '<ul style="margin:8px 0 0;padding-left:18px;font-size:13.5px;">'+(qq.options||[]).map(function(o,oi){ return '<li style="'+(oi===qq.correctIndex?"color:var(--good);font-weight:600;":"")+'">'+esc(o)+(oi===qq.correctIndex?" (benar)":"")+'</li>'; }).join("")+'</ul>'+
-            '<div class="subhead" style="margin-top:6px;">'+qq.points+' poin</div></div>';
-        });
-        html += '<div class="qcard"><div class="section-title" style="margin-bottom:10px;">Tambah Soal</div><div class="stack" style="gap:10px;">'+
-          '<input type="text" placeholder="Pertanyaan" value="'+esc(state.qDraft.text)+'" data-input="qDraftText">'+
-          [0,1,2,3].map(function(i){
-            return '<div style="display:flex;gap:8px;align-items:center;"><input type="radio" name="qDraftCorrect" '+(state.qDraft.correct===i?"checked":"")+' data-action="setQDraftCorrect" data-val="'+i+'"><input type="text" style="flex:1;" placeholder="Opsi '+(i+1)+'" value="'+esc(state.qDraft.opts[i])+'" data-input="qDraftOpt'+i+'"></div>';
-          }).join("")+
-          '<div style="display:flex;gap:10px;align-items:center;"><label style="font-size:13px;color:var(--text-muted);">Poin</label><input type="number" style="width:90px;" value="'+state.qDraft.points+'" data-input="qDraftPoints"></div>'+
-          '<button class="btn btn-primary" data-action="addQuestion" data-val="'+q.id+'">Tambah Soal</button>'+
-          '</div></div>';
+    if (ku.length) body += '<div class="sec-head"><h2>Kuesioner</h2></div>' + ku.map((k) => kartuTugas("kuesioner", k, sudahKuesioner(k.id))).join("");
+    if (pt.length) body += '<div class="sec-head"><h2>Post Test</h2></div>' + pt.map((t) => kartuTugas("posttest", t, hasilPosttest(t.id))).join("");
+  }
+  return hero("DEBY", "Tugas", "Kuesioner &amp; Post Test untuk " + esc(p.group)) + '<div class="pad">' + body + "</div>";
+}
+
+function vRun() {
+  const r = S.run;
+  const isKu = r.tipe === "kuesioner";
+  const items = isKu ? (r.doc.pertanyaan || []) : (r.doc.soal || []);
+  const q = items[r.idx];
+  const terisi = r.jawaban[q.id] !== undefined;
+  return '<div class="topbar"><div class="brand"><b>' + (isKu ? "Kuesioner" : "Post Test") + "</b><span>" + esc(r.doc.judul) + "</span></div>" +
+    '<span class="mono" style="font-size:13px;">' + (r.idx + 1) + "/" + items.length + "</span></div>" +
+    '<div class="pad"><div class="bar" style="margin-bottom:14px;"><i style="width:' + Math.round(r.idx / items.length * 100) + '%"></i></div>' +
+    (isKu ? '<div class="note" style="margin-bottom:12px;">Tidak ada jawaban benar/salah &mdash; jawab sesuai kondisi lapangan.</div>' : "") +
+    '<div class="card"><div class="q-text">' + esc(q.teks) + "</div>" +
+      (q.opsi || []).map((o, i) => '<label class="opt"><input type="radio" name="q_' + q.id + '" value="' + i + '" data-ans="' + q.id + '" ' + (r.jawaban[q.id] === i ? "checked" : "") + '><span class="ot">' + esc(o) + "</span></label>").join("") +
+    "</div>" +
+    '<div class="row" style="margin-top:16px;"><button class="btn btn-ghost grow" data-do="runBack">' + (r.idx === 0 ? "Batal" : "Kembali") + "</button>" +
+      '<button class="btn btn-primary grow" ' + (terisi && !r.busy ? "" : "disabled") + ' data-do="runNext">' + (r.busy ? "Mengirim…" : r.idx === items.length - 1 ? "Submit" : "Lanjut") + "</button></div>" +
+    '<div class="note" style="margin-top:14px;">' + (isKu ? "Rangkaian lengkap = " + POIN_KUESIONER + " poin. Poin masuk ledger setelah submit berhasil." : POIN_PER_BENAR + " poin per jawaban benar. Nilai keluar langsung setelah submit.") + "</div></div>";
+}
+
+function vHasil() {
+  const h = S.hasil;
+  if (h.tipe === "kuesioner") {
+    return '<div class="center-narrow"><div class="card lift" style="text-align:center;"><div class="lbl">Kuesioner Terkirim</div>' +
+      '<div style="font-size:40px;font-weight:800;color:var(--red);margin:10px 0;">+' + POIN_KUESIONER + "</div>" +
+      '<div style="color:var(--ink-dim);font-size:14px;margin-bottom:18px;">poin masuk ke Point Ledger</div>' +
+      '<button class="btn btn-primary btn-block" data-do="tab" data-v="home">Kembali ke Home</button></div></div>';
+  }
+  return '<div class="pad"><div class="card lift" style="text-align:center;"><div class="lbl">Hasil Post Test</div>' +
+    '<div style="display:flex;justify-content:center;gap:34px;margin:14px 0 6px;">' +
+      '<div><div class="lbl">Benar</div><div style="font-size:34px;font-weight:800;">' + h.benar + '<span style="font-size:18px;color:var(--ink-faint);">/' + h.total + "</span></div></div>" +
+      '<div><div class="lbl">Poin</div><div style="font-size:34px;font-weight:800;color:var(--red);">+' + h.poin + "</div></div></div></div>" +
+    '<div class="sec-head"><h2>Review Jawaban</h2></div><div class="card">' +
+    h.detail.map((x) => '<div class="rev"><span class="mk ' + (x.benar ? "y" : "n") + '">' + (x.benar ? "&#10003;" : "&#10007;") + "</span>" +
+      '<div class="grow"><div class="rt">' + esc(x.soal) + '</div><div class="rs">' + (x.benar ? "Jawaban Anda benar" : "Kunci: " + esc(x.kunci)) + "</div></div>" +
+      '<span class="rp" style="color:' + (x.benar ? "var(--good)" : "var(--ink-faint)") + ';">' + (x.benar ? "+" + POIN_PER_BENAR : "0") + "</span></div>").join("") +
+    "</div>" +
+    '<button class="btn btn-primary btn-block" style="margin-top:16px;" data-do="tab" data-v="home">Kembali ke Home</button></div>';
+}
+
+/* ============ leaderboard / knowledge / hadiah / poin / profil / bantuan ============ */
+function vLeaderboard() {
+  const p = S.profilSaya;
+  const chips = [["semua", "Semua"]].concat(GROUPS.map((g) => [g, g]));
+  const ada = C.lb.rows.some((x) => x.id === p.id);
+  const r = C.rank;
+  let pin = "";
+  if (!C.lb.loading && !ada && r && (S.lbFilter === "semua" || S.lbFilter === p.group)) {
+    const pos = S.lbFilter === "semua" ? r.global : r.grup;
+    const poin = S.lbFilter === "semua" ? poinPeringkatSaya() : (p[GRP_FIELD[p.group]] || 0);
+    pin = '<div class="card" style="margin-top:12px;background:var(--red-soft);border-color:var(--red-line);"><div class="lb-row" style="border:none;">' +
+      '<div class="lb-rank">#' + fmtNum(pos) + '</div><div class="grow"><div class="lb-name">' + esc(p.nama) + ' (Anda)</div><div class="lb-sub">' + esc(p.group) + "</div></div>" +
+      '<div class="lb-pts">' + fmtNum(poin) + "</div></div></div>";
+  }
+  return hero("S-06 &middot; Leaderboard", "Peringkat Poin", "Top 20 &middot; akumulasi poin diperoleh") +
+    '<div class="pad"><div class="chips" style="margin-bottom:14px;">' +
+    chips.map((c) => '<button class="chip ' + (S.lbFilter === c[0] ? "on" : "") + '" data-do="lbFilter" data-v="' + esc(c[0]) + '">' + esc(c[1]) + "</button>").join("") + "</div>" +
+    '<div class="card">' + (C.lb.loading ? '<div class="skel">Memuat&hellip;</div>' : barisLb(C.lb.rows, p.id)) + "</div>" + pin + "</div>";
+}
+
+function vKnowledge() {
+  const p = S.profilSaya;
+  const arr = listOf(C.knowledge).filter((k) => k.aktif !== false && untukGroup(k, p.group));
+  return hero("S-07 &middot; Knowledge", "Materi &amp; Key Visual", "Direktori tautan &middot; dibuka di browser") +
+    '<div class="pad">' + (!arr.length ? '<div class="card"><div class="empty">Belum ada materi untuk ' + esc(p.group) + ".</div></div>" :
+      arr.map((k) => '<a class="kn" href="' + esc(k.url) + '" target="_blank" rel="noopener noreferrer"><span class="kt">' + esc(k.tipe || "DOC") + "</span>" +
+        '<span class="grow"><span class="kn-n" style="display:block;">' + esc(k.judul) + '</span><span class="kn-s">' + esc(k.tipe || "DOC") + " &middot; " + (k.target === "semua" ? "Semua group" : esc(k.target)) + "</span></span>" +
+        '<span class="ka">&#8599;</span></a>').join("")) +
+    '<div class="note" style="margin-top:14px;">Tautan terbuka di tab baru supaya aplikasi tetap ringan.</div></div>';
+}
+
+function vHadiah() {
+  const saldo = tersediaSaya();
+  const kuotaTerpakai = redeemBulanIniSaya().length >= 1;
+  const arr = listOf(C.hadiah).filter((h) => h.aktif !== false);
+  const riwayat = C.mine.redeem.slice().reverse();
+  return hero("S-08 &middot; Redeem", "Tukar Hadiah", "Maksimal 1x penukaran per bulan") +
+    '<div class="pad stack"><div class="stat-duo">' +
+      '<div class="stat lift"><div class="lbl">Saldo Poin</div><div class="n red mono">' + fmtNum(saldo) + "</div>" +
+        (ditahanSaya() ? '<div class="k lbl" style="color:var(--warn);">' + fmtNum(ditahanSaya()) + " poin ditahan</div>" : "") + "</div>" +
+      '<div class="stat lift"><div class="lbl">Kuota Bulan Ini</div><div class="n mono">' + (kuotaTerpakai ? "0" : "1") + 'x</div><div class="k lbl" style="color:var(--ink-dim);">' + (kuotaTerpakai ? "sudah dipakai" : "tersisa") + "</div></div>" +
+    "</div>" +
+    '<div class="sec-head"><h2>Katalog Hadiah</h2></div>' +
+    (!arr.length ? '<div class="card"><div class="empty">Belum ada hadiah tersedia.</div></div>' : arr.map((h) => {
+      const habis = h.stok !== -1 && h.stok <= 0, kurang = saldo < h.poin;
+      const blok = habis || kurang || kuotaTerpakai;
+      const label = habis ? "Habis" : kuotaTerpakai ? "Kuota habis" : kurang ? "Poin kurang" : "Tukar";
+      return '<div class="rw"><div class="grow"><div class="rw-n">' + esc(h.nama) + '</div><div class="rw-s">' + (h.stok === -1 ? "Stok tidak terbatas" : habis ? "Stok habis" : "Stok " + h.stok) + "</div></div>" +
+        '<div style="text-align:right;"><div class="rw-p">' + fmtNum(h.poin) + " poin</div>" +
+        '<button class="btn ' + (blok ? "btn-ghost" : "btn-primary") + ' btn-sm" style="margin-top:6px;" ' + (blok ? "disabled" : "") + ' data-do="mulaiRedeem" data-v="' + h.id + '">' + label + "</button></div></div>";
+    }).join("")) +
+    '<div class="sec-head"><h2>Riwayat Penukaran</h2></div>' +
+    (!riwayat.length ? '<div class="card"><div class="empty">Belum ada penukaran.</div></div>' : '<div class="card">' + riwayat.map((r) => {
+      const pil = r.status === "selesai" ? "pill-good" : r.status === "ditolak" ? "pill-bad" : "pill-warn";
+      return '<div class="led"><div class="grow"><div style="font-weight:700;font-size:13.5px;">' + esc(r.hadiahNama) + '</div><div class="lbl" style="color:var(--ink-dim);">' + fmtTgl(r.waktu) + " &middot; " + fmtNum(r.poin) + " poin</div></div>" +
+        '<span class="pill ' + pil + '">' + esc(r.status) + "</span></div>";
+    }).join("") + "</div>") +
+    '<div class="note">Photo Check wajib lolos sebelum permintaan dikirim. Poin ditahan sampai Admin menyetujui; kalau ditolak, poin dan kuota bulanan dikembalikan.</div></div>';
+}
+
+function vPoin() {
+  const led = C.mine.ledger.slice().reverse();
+  let run = saldoSaya();
+  return hero("DEBY", "Poin Saya", "Riwayat transaksi poin &middot; audit trail") +
+    '<div class="pad stack"><div class="card lift" style="text-align:center;"><div class="lbl">Saldo Poin</div>' +
+      '<div style="font-size:40px;font-weight:800;color:var(--red);" class="mono">' + fmtNum(saldoSaya()) + "</div>" +
+      '<div class="lbl" style="color:var(--ink-dim);">Tersedia untuk ditukar: ' + fmtNum(tersediaSaya()) + "</div></div>" +
+    '<div class="card"><div class="card-title">Point Ledger</div>' +
+    (!led.length ? '<div class="empty">Belum ada transaksi poin.</div>' : led.map((l) => {
+      const row = '<div class="led"><span class="ld">' + fmtTgl(l.waktu) + '</span><span class="grow" style="font-size:13px;">' + esc(l.aktivitas) + "</span>" +
+        '<span class="lv ' + (l.delta >= 0 ? "pos" : "neg") + '">' + (l.delta >= 0 ? "+" : "") + l.delta + '</span><span class="lb2">' + fmtNum(run) + "</span></div>";
+      run -= (l.delta || 0);
+      return row;
+    }).join("")) + "</div></div>";
+}
+
+function vProfil() {
+  const p = S.profilSaya, f = S.profil;
+  const kunci = (label, val, mono) => '<div class="field"><label>' + label + '</label><input type="text" ' + (mono ? 'class="mono" ' : "") + 'value="' + esc(val || "-") + '" disabled></div>';
+  return hero("S-09 &middot; Profil", "Edit Profil", "Sebagian data dikunci demi integritas data") +
+    '<div class="pad stack"><div class="card"><div class="row" style="gap:14px;">' +
+      '<div style="width:56px;height:56px;border-radius:12px;background:var(--red-soft);color:var(--red);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:20px;">' + esc((p.nama || "?").charAt(0)) + "</div>" +
+      '<div class="grow"><div style="font-weight:800;font-size:16px;">' + esc(p.nama) + '</div><div class="lbl" style="color:var(--ink-dim);">' + esc(p.kode || p.id) + " &middot; " + esc(p.group) + "</div></div></div>" +
+      '<div class="note" style="margin-top:12px;">Foto dan nomor aktif hanya dapat dilihat Admin. Kamu tetap bisa menggantinya di bawah.</div>' +
+      '<div style="margin-top:12px;">' + fotoInput("profil", f.foto, "Ganti foto referensi") + "</div>" +
+      (f.foto ? '<button class="btn btn-ghost btn-sm btn-block" style="margin-top:9px;" data-do="ajukanFoto">Ajukan Perubahan Foto</button>' : "") +
+    "</div>" +
+    '<div class="card"><div class="card-title">Dapat Diubah</div>' +
+      '<div class="field"><label>Nomor Aktif Baru</label><input type="tel" class="mono" value="' + esc(f.nomor) + '" data-in="profil.nomor" placeholder="kosongkan bila tidak ganti"></div>' +
+      '<div class="field-2" style="margin-top:13px;"><div class="field" style="margin:0;"><label>PIN Baru</label><input type="password" inputmode="numeric" value="' + esc(f.pin) + '" data-in="profil.pin" placeholder="opsional"></div>' +
+      '<div class="field" style="margin:0;"><label>Ulangi PIN</label><input type="password" inputmode="numeric" value="' + esc(f.pin2) + '" data-in="profil.pin2"></div></div>' +
+      '<button class="btn btn-primary btn-block" style="margin-top:14px;" data-do="simpanProfil">Simpan Perubahan</button></div>' +
+    '<div class="card"><div class="card-title">Dikunci &mdash; Hanya Admin</div>' +
+      kunci("Nama Lengkap", p.nama) + kunci("Group", p.group) + kunci("User ID Digipos", p.id, true) + kunci("Kode Digipos", p.kode, true) +
+      kunci("Nama Area", p.area) + kunci("Nama Regional", p.regional) + kunci("Nama Branch", p.branch) + kunci("Nama Cluster", p.cluster) +
+      '<div class="note" style="margin-top:12px;">Dikunci untuk menjaga integritas penggabungan dengan data sales.</div></div>' +
+    '<button class="btn btn-ghost btn-block" data-do="keluar">Keluar dari Akun</button></div>';
+}
+
+function vBantuan() {
+  const faq = [
+    ["Kenapa harus ambil foto tiap mau mulai?", "Foto jadi gerbang identitas supaya poin benar-benar dikumpulkan oleh petugas yang bersangkutan. Ini bukan absensi harian."],
+    ["Kenapa data identitas & wilayah tidak bisa diubah?", "User ID, Kode Digipos, dan wilayah dikunci supaya data tetap bersih saat digabung dengan data sales. Hubungi Admin bila ada koreksi."],
+    ["Berapa poin yang saya dapat?", "Kuesioner lengkap = " + POIN_KUESIONER + " poin. Post Test = " + POIN_PER_BENAR + " poin untuk tiap jawaban benar. Setiap modul hanya bisa dikerjakan sekali."],
+    ["Kenapa penukaran saya masih pending?", "Permintaan menunggu persetujuan Admin. Selama pending, poin ditahan. Kalau ditolak, poin dan kuota bulanan kembali."],
+    ["Saya lupa PIN.", "Hubungi Super Admin untuk reset PIN."]
+  ];
+  return hero("DEBY", "Bantuan", "Pertanyaan yang sering muncul") +
+    '<div class="pad stack">' + faq.map((x) => '<div class="card"><div style="font-weight:700;font-size:14.5px;margin-bottom:5px;">' + esc(x[0]) + '</div><div style="font-size:13.5px;color:var(--ink-dim);">' + esc(x[1]) + "</div></div>").join("") + "</div>";
+}
+
+
+/* ============ ADMIN ============ */
+function vAdmLogin() {
+  const a = S.admLogin;
+  return '<div class="center-narrow"><div class="card lift"><div class="card-title">Super Admin</div>' +
+    '<h2 style="font-size:20px;margin-bottom:14px;">Control Tower</h2>' +
+    '<div class="field"><label>Email</label><input type="email" value="' + esc(a.email) + '" data-in="admLogin.email"></div>' +
+    '<div class="field"><label>Kata Sandi</label><input type="password" value="' + esc(a.pass) + '" data-in="admLogin.pass"></div>' +
+    (a.err ? '<div class="err" style="margin-top:12px;">' + esc(a.err) + "</div>" : "") +
+    '<button class="btn btn-primary btn-block" style="margin-top:16px;" data-do="admMasuk">Masuk</button>' +
+    '<button class="btn btn-ghost btn-block" style="margin-top:9px;" data-do="ke" data-v="masuk">Kembali</button></div></div>';
+}
+
+const ADM_MENU = [
+  ["dashboard", "Dashboard"], ["petugas", "Data Petugas"], ["kuesioner", "Kuesioner"], ["posttest", "Post Test"],
+  ["knowledge", "Knowledge"], ["poin", "Poin & Leaderboard"], ["redeem", "Hadiah & Redeem"], ["pengaturan", "Pengaturan"]
+];
+
+function vAdmin() {
+  const st = C.adm.stats;
+  const cnt = {
+    petugas: st ? st.total : null,
+    kuesioner: Object.keys(C.kuesioner).length, posttest: Object.keys(C.posttest).length,
+    knowledge: Object.keys(C.knowledge).length, redeem: st ? st.pending : null
+  };
+  const body = ({ dashboard: aDashboard, petugas: aPetugas, kuesioner: aKuesioner, posttest: aPosttest, knowledge: aKnowledge, poin: aPoin, redeem: aRedeem, pengaturan: aPengaturan }[S.adminMenu] || aDashboard)();
+  return '<div class="adm"><aside class="adm-side"><div class="a-brand"><b>DEBY</b><span>Super Admin</span></div><div class="a-nav">' +
+    ADM_MENU.map((m) => '<button class="' + (S.adminMenu === m[0] ? "on" : "") + '" data-do="admMenu" data-v="' + m[0] + '"><span>' + m[1] + "</span>" +
+      (cnt[m[0]] ? '<span class="cnt">' + fmtNum(cnt[m[0]]) + "</span>" : "") + "</button>").join("") +
+    "</div>" +
+    '<div style="margin-top:20px;padding:12px;border-radius:10px;background:rgba(255,255,255,.06);font-size:11.5px;color:rgba(255,255,255,.6);line-height:1.5;">Export CSV untuk join data sales: MVP 2.0. Struktur data sudah siap (User ID, Kode, wilayah per aktivitas).</div>' +
+    '<button style="margin-top:16px;" data-do="admKeluar"><span>Keluar</span></button></aside>' +
+    '<main class="adm-main">' + body + "</main></div>";
+}
+
+function head(judul, sub, aksi) {
+  return '<div class="adm-head"><div><h1>' + judul + '</h1><div class="sub">' + sub + "</div></div>" + (aksi || "") + "</div>";
+}
+
+function aDashboard() {
+  const s = C.adm.stats;
+  const refresh = '<button class="btn btn-ghost btn-sm" data-do="refreshStats">Muat ulang</button>';
+  if (!s) return head("Dashboard", "Menghitung di server&hellip;", refresh) + '<div class="skel">Memuat statistik&hellip;</div>';
+  const bulan = new Date().toLocaleDateString("id-ID", { month: "long", year: "numeric" });
+  const rata = s.rataBenar == null ? "-" : s.rataBenar.toFixed(1).replace(".", ",");
+  return head("Dashboard", "Periode " + bulan + " &middot; seluruh area", refresh) +
+    '<div class="stat-grid">' +
+      '<div class="stat"><div class="lbl">Total Petugas Aktif</div><div class="n mono">' + fmtNum(s.aktif) + '</div><div class="k lbl" style="color:var(--ink-dim);">+' + fmtNum(s.baru) + " registrasi 7 hari</div></div>" +
+      '<div class="stat"><div class="lbl">Completion Kuesioner</div><div class="n mono">' + s.completion + '%</div><div class="k lbl" style="color:var(--ink-dim);">' + fmtNum(s.respPer) + " respons bulan ini</div></div>" +
+      '<div class="stat"><div class="lbl">Post Test &mdash; Rata Benar</div><div class="n mono">' + rata + '</div><div class="k lbl" style="color:var(--ink-dim);">dari ' + (s.rataSoal == null ? "-" : Math.round(s.rataSoal)) + " soal</div></div>" +
+      '<div class="stat"><div class="lbl">Redeem Pending</div><div class="n red mono">' + fmtNum(s.pending) + '</div><div class="k lbl" style="color:var(--ink-dim);">poin ditahan &middot; perlu review</div></div>' +
+    "</div>" +
+    '<div class="sec-head"><h2>Action Queue &amp; Alerts</h2><span class="lbl">4 kategori</span></div>' +
+    aq("Monitor", false, "Kuesioner", fmtNum(s.respPer) + " respons &middot; completion " + s.completion + "% dari target aktif", "kuesioner") +
+    aq("Analyze", !!s.topSalah, "Post Test", s.topSalah ? esc(s.topSalah.teks) + " &mdash; " + s.topSalah.n + "x salah" : "Belum ada pola kesalahan", "posttest") +
+    aq("Investigate", s.review > 0, "Photo Escalation", fmtNum(s.review) + " akun berstatus review &middot; foto dibuka hanya saat eskalasi", "petugas") +
+    aq("Review", s.pending > 0, "Redeem Queue", fmtNum(s.pending) + " permintaan pending &middot; cek ketersediaan stok", "redeem") +
+    '<div class="sec-head"><h2>Completion Rate per Group</h2><span class="lbl">bulan ini</span></div><div class="card">' +
+    s.perGroup.map((x) => '<div style="padding:10px 0;border-bottom:1px solid var(--border);"><div class="row"><span class="grow" style="font-weight:700;font-size:14px;">' + esc(x.g) +
+      '</span><span class="mono" style="font-size:13px;color:var(--ink-dim);">' + fmtNum(x.isi) + " / " + fmtNum(x.target) + " &middot; " + x.pct + "%</span></div>" +
+      '<div class="prog"><i style="width:' + Math.min(100, x.pct) + '%"></i></div></div>').join("") + "</div>" +
+    (s.topSalah ? '<div class="card" style="margin-top:14px;background:var(--warn-soft);border-color:#EBD5B4;"><div class="card-title" style="color:var(--warn);">Soal paling banyak salah</div>' +
+      '<div style="font-weight:700;font-size:14.5px;">' + esc(s.topSalah.teks) + "</div>" +
+      '<div style="font-size:13px;color:var(--ink-dim);margin-top:3px;">' + s.topSalah.n + " dari " + s.topSalah.dari + " peserta " + esc(s.topSalah.judul) + " menjawab salah &middot; rekomendasi refresh materi</div></div>" : "");
+}
+function aq(tag, warn, judul, sub, menu) {
+  return '<div class="aq"><span class="pill ' + (warn ? "pill-warn" : "pill-neutral") + '">' + tag + '</span><div class="grow"><div class="aq-n">' + judul + '</div><div class="aq-s">' + sub + "</div></div>" +
+    '<button class="btn btn-ghost btn-sm" data-do="admMenu" data-v="' + menu + '">Buka</button></div>';
+}
+
+function aPetugas() {
+  const f = S.fPetugas, P = C.adm.petugas;
+  const opt = (arr, val, semua) => '<option value="">' + semua + "</option>" + arr.map((x) => '<option value="' + esc(x) + '" ' + (val === x ? "selected" : "") + ">" + esc(x) + "</option>").join("");
+  return head("Data Petugas", (C.adm.stats ? fmtNum(C.adm.stats.total) + " record &middot; " : "") + "dimuat per " + HALAMAN + " baris") +
+    '<div class="filters" style="margin-bottom:14px;">' +
+      '<input type="text" class="mono" placeholder="Cari User ID / Kode (persis)" value="' + esc(f.q) + '" data-in="fPetugas.q" style="min-width:230px;">' +
+      '<button class="btn btn-ghost btn-sm" data-do="cariPetugas">Cari</button>' +
+      '<select data-in="fPetugas.group">' + opt(GROUPS, f.group, "Semua Group") + "</select>" +
+      '<select data-in="fPetugas.status">' + opt(["aktif", "review", "nonaktif"], f.status, "Semua Status") + "</select>" +
+    "</div>" +
+    '<div class="tbl-wrap"><table><thead><tr><th>User ID</th><th>Kode</th><th>Nama Lengkap</th><th>Group</th><th>Hierarki Wilayah</th><th>Poin</th><th>Saldo</th><th>Status</th><th></th></tr></thead><tbody>' +
+    (!P.rows.length ? '<tr><td colspan="9"><div class="empty">' + (P.loading ? "Memuat&hellip;" : "Tidak ada petugas yang cocok.") + "</div></td></tr>" :
+      P.rows.map((p) => {
+        const st = p.status || "aktif";
+        const pil = st === "aktif" ? "pill-good" : st === "review" ? "pill-warn" : "pill-neutral";
+        return "<tr><td class=\"mono\">" + esc(p.id) + '</td><td class="mono">' + esc(p.kode || "-") + '</td><td style="font-weight:600;">' + esc(p.nama) + "</td><td>" + grpTag(p.group) + "</td>" +
+          '<td style="font-size:12px;color:var(--ink-dim);">' + [p.area, p.regional, p.branch, p.cluster].map((x) => esc(x || "-")).join(" / ") + "</td>" +
+          '<td class="mono">' + fmtNum(p.poinPeringkat) + '</td><td class="mono">' + fmtNum(p.saldo) + '</td><td><span class="pill ' + pil + '">' + st + "</span></td>" +
+          '<td><button class="btn btn-ghost btn-sm" data-do="detailPetugas" data-v="' + esc(p.id) + '">Detail</button></td></tr>';
+      }).join("")) +
+    "</tbody></table></div>" +
+    '<div class="pager"><span>' + fmtNum(P.rows.length) + " baris dimuat</span>" +
+    (!P.habis ? '<button class="btn btn-ghost btn-sm" data-do="petugasLagi" ' + (P.loading ? "disabled" : "") + ">" + (P.loading ? "Memuat…" : "Muat " + HALAMAN + " lagi") + "</button>" : "<span>Semua sudah dimuat</span>") + "</div>";
+}
+
+function targetSelect(path, val) {
+  return '<select data-in="' + path + '"><option value="semua">Semua Group</option>' + GROUPS.map((g) => '<option ' + (val === g ? "selected" : "") + ">" + esc(g) + "</option>").join("") + "</select>";
+}
+function aKuesioner() {
+  const d = S.draftKu;
+  const arr = listOf(C.kuesioner).sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+  return head("Kuesioner", "Market survey &middot; tanpa benar/salah &middot; lengkap = " + POIN_KUESIONER + " poin") +
+    '<div class="card" style="margin-bottom:18px;"><div class="card-title">Buat Kuesioner</div><div class="filters">' +
+      '<input type="text" placeholder="Judul, cth. Market Pulse — September" value="' + esc(d.judul) + '" data-in="draftKu.judul" style="flex:1;min-width:220px;">' +
+      targetSelect("draftKu.target", d.target) + '<button class="btn btn-primary btn-sm" data-do="buatModul" data-t="kuesioner">Buat</button></div></div>' +
+    (!arr.length ? '<div class="card"><div class="empty">Belum ada kuesioner.</div></div>' : arr.map((k) => kartuModul(k, "kuesioner")).join(""));
+}
+function aPosttest() {
+  const d = S.draftPt;
+  const arr = listOf(C.posttest).sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+  return head("Post Test", "Standardisasi knowledge &middot; auto scoring " + POIN_PER_BENAR + " poin per jawaban benar") +
+    '<div class="card" style="margin-bottom:18px;"><div class="card-title">Buat Post Test</div><div class="filters">' +
+      '<input type="text" placeholder="Judul, cth. Basic Selling Skill" value="' + esc(d.judul) + '" data-in="draftPt.judul" style="flex:1;min-width:220px;">' +
+      targetSelect("draftPt.target", d.target) + '<button class="btn btn-primary btn-sm" data-do="buatModul" data-t="posttest">Buat</button></div></div>' +
+    '<div class="note" style="margin-bottom:14px;">Soal yang sudah dikerjakan petugas sebaiknya tidak diubah &mdash; buat modul baru untuk materi baru. Jawaban lama tetap tersimpan lengkap dengan teks soalnya.</div>' +
+    (!arr.length ? '<div class="card"><div class="empty">Belum ada post test.</div></div>' : arr.map((t) => kartuModul(t, "posttest")).join(""));
+}
+function kartuModul(m, tipe) {
+  const isKu = tipe === "kuesioner";
+  const items = isKu ? (m.pertanyaan || []) : (m.soal || []);
+  const buka = S.openQ === tipe + ":" + m.id;
+  const d = S.draftSoal;
+  const terkunci = !isKu && (C.adm.peserta[m.id] || 0) > 0;
+  let html = '<div class="card" style="margin-bottom:14px;"><div class="row" style="flex-wrap:wrap;">' +
+    '<div class="grow"><div style="font-weight:800;font-size:16px;">' + esc(m.judul) + '</div><div class="lbl" style="color:var(--ink-dim);">' + items.length + " " + (isKu ? "pertanyaan" : "soal") + " &middot; " + (m.target === "semua" ? "semua group" : esc(m.target)) + "</div></div>" +
+    '<span class="pill ' + (m.aktif ? "pill-good" : "pill-neutral") + '" style="cursor:pointer;" data-do="toggleAktif" data-t="' + tipe + '" data-v="' + m.id + '">' + (m.aktif ? "Aktif" : "Nonaktif") + "</span>" +
+    '<button class="btn btn-ghost btn-sm" data-do="bukaSoal" data-t="' + tipe + '" data-v="' + m.id + '">' + (buka ? "Tutup" : "Kelola " + (isKu ? "Pertanyaan" : "Soal")) + "</button>" +
+    '<button class="btn btn-danger btn-sm" data-do="hapusModul" data-t="' + tipe + '" data-v="' + m.id + '">Hapus</button></div>';
+  if (buka) {
+    html += '<div style="margin-top:16px;border-top:1px solid var(--border);padding-top:14px;">' +
+      (!items.length ? '<div class="empty" style="padding:14px;">Belum ada ' + (isKu ? "pertanyaan" : "soal") + ".</div>" : items.map((q, i) =>
+        '<div class="card" style="background:var(--surface-2);margin-bottom:10px;"><div class="row"><div class="grow" style="font-weight:700;font-size:14px;">' + (i + 1) + ". " + esc(q.teks) + "</div>" +
+        (terkunci ? "" : '<button class="btn btn-danger btn-sm" data-do="hapusSoal" data-t="' + tipe + '" data-m="' + m.id + '" data-v="' + q.id + '">Hapus</button>') + "</div>" +
+        '<ul style="margin:8px 0 0;padding-left:18px;font-size:13px;color:var(--ink-dim);">' +
+        (q.opsi || []).map((o, oi) => { const k = !isKu && (C.adm.kunci[m.id] || [])[i] === oi; return "<li" + (k ? ' style="color:var(--good);font-weight:700;"' : "") + ">" + esc(o) + (k ? " &mdash; kunci" : "") + "</li>"; }).join("") + "</ul></div>").join("")) +
+      (terkunci ? '<div class="note">Sudah ada ' + fmtNum(C.adm.peserta[m.id]) + " peserta &mdash; soal dikunci supaya penilaian tetap konsisten. Buat post test baru untuk materi baru.</div>" :
+      '<div class="card" style="background:var(--surface-2);"><div class="card-title">Tambah ' + (isKu ? "Pertanyaan" : "Soal") + (isKu ? "" : " (maks " + MAKS_SOAL + ")") + "</div>" +
+      '<div class="field"><label>Pertanyaan</label><input type="text" value="' + esc(d.teks) + '" data-in="draftSoal.teks"></div>' +
+      [0, 1, 2, 3].map((i) => '<div class="field" style="margin-top:9px;"><label>Opsi ' + (i + 1) + (!isKu && d.kunci === i ? " (kunci)" : "") + '</label><div class="row">' +
+        (isKu ? "" : '<input type="radio" name="kunci" ' + (d.kunci === i ? "checked" : "") + ' data-do="setKunci" data-v="' + i + '" style="width:auto;flex:none;">') +
+        '<input type="text" class="grow" value="' + esc(d.opsi[i]) + '" data-in="draftSoal.opsi.' + i + '"></div></div>').join("") +
+      '<button class="btn btn-primary btn-sm" style="margin-top:12px;" data-do="tambahSoal" data-t="' + tipe + '" data-v="' + m.id + '">Tambah</button>' +
+      (isKu ? "" : '<div class="note" style="margin-top:10px;">Pilih radio di sebelah opsi untuk menandai kunci jawaban. Kunci disimpan terpisah dan tidak bisa dibaca petugas sebelum menjawab.</div>') + "</div>") + "</div>";
+  }
+  return html + "</div>";
+}
+
+function aKnowledge() {
+  const d = S.draftKn;
+  const arr = listOf(C.knowledge);
+  return head("Knowledge", "Direktori tautan materi eksternal &middot; bisa ditargetkan per group") +
+    '<div class="card" style="margin-bottom:18px;"><div class="card-title">Tambah Materi</div><div class="filters">' +
+      '<input type="text" placeholder="Judul materi" value="' + esc(d.judul) + '" data-in="draftKn.judul" style="flex:1;min-width:200px;">' +
+      '<select data-in="draftKn.tipe">' + ["KV", "PDF", "VID", "DOC", "FAQ"].map((t) => "<option " + (d.tipe === t ? "selected" : "") + ">" + t + "</option>").join("") + "</select>" +
+      '<input type="text" placeholder="https://..." value="' + esc(d.url) + '" data-in="draftKn.url" style="flex:1;min-width:220px;">' +
+      targetSelect("draftKn.target", d.target) + '<button class="btn btn-primary btn-sm" data-do="tambahKnowledge">Tambah</button></div></div>' +
+    (!arr.length ? '<div class="card"><div class="empty">Belum ada materi.</div></div>' :
+      '<div class="tbl-wrap"><table><thead><tr><th>Tipe</th><th>Judul</th><th>URL</th><th>Target</th><th>Status</th><th></th></tr></thead><tbody>' +
+      arr.map((k) => '<tr><td><span class="pill pill-neutral">' + esc(k.tipe) + '</span></td><td style="font-weight:600;">' + esc(k.judul) + "</td>" +
+        '<td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><a href="' + esc(k.url) + '" target="_blank" rel="noopener noreferrer">' + esc(k.url) + "</a></td>" +
+        "<td>" + (k.target === "semua" ? "Semua" : grpTag(k.target)) + "</td>" +
+        '<td><span class="pill ' + (k.aktif !== false ? "pill-good" : "pill-neutral") + '" style="cursor:pointer;" data-do="toggleKnowledge" data-v="' + k.id + '">' + (k.aktif !== false ? "Aktif" : "Nonaktif") + "</span></td>" +
+        '<td><button class="btn btn-danger btn-sm" data-do="hapusKnowledge" data-v="' + k.id + '">Hapus</button></td></tr>').join("") + "</tbody></table></div>");
+}
+
+function aPoin() {
+  const d = S.draftAdj;
+  const chips = [["semua", "Semua"]].concat(GROUPS.map((g) => [g, g]));
+  return head("Poin &amp; Leaderboard", "Point ledger &middot; semua perubahan poin tercatat untuk audit") +
+    '<div class="card" style="margin-bottom:18px;"><div class="card-title">Manual Adjustment</div><div class="filters">' +
+      '<input type="text" class="mono" placeholder="User ID / Kode" value="' + esc(d.id) + '" data-in="draftAdj.id" style="min-width:170px;">' +
+      '<input type="number" placeholder="Poin (+/-)" value="' + esc(d.poin) + '" data-in="draftAdj.poin" style="min-width:120px;">' +
+      '<input type="text" placeholder="Alasan (wajib)" value="' + esc(d.alasan) + '" data-in="draftAdj.alasan" style="flex:1;min-width:220px;">' +
+      '<button class="btn btn-primary btn-sm" data-do="manualAdj">Catat</button></div>' +
+      '<div class="note" style="margin-top:10px;">Wajib mencatat alasan; admin pelaksana tercatat otomatis. Mempengaruhi saldo dan leaderboard.</div></div>' +
+    '<div class="sec-head"><h2>Leaderboard &mdash; Top 20</h2></div><div class="chips" style="margin-bottom:12px;">' +
+      chips.map((c) => '<button class="chip ' + (S.lbFilter === c[0] ? "on" : "") + '" data-do="lbFilter" data-v="' + esc(c[0]) + '">' + esc(c[1]) + "</button>").join("") + "</div>" +
+    '<div class="card" style="margin-bottom:18px;">' + (C.lb.loading ? '<div class="skel">Memuat&hellip;</div>' : barisLb(C.lb.rows, null)) + "</div>" +
+    '<div class="sec-head"><h2>Point Ledger &mdash; 50 Terbaru</h2><button class="btn btn-ghost btn-sm" data-do="refreshLedger">Muat ulang</button></div>' +
+    '<div class="tbl-wrap"><table><thead><tr><th>Waktu</th><th>User ID</th><th>Nama</th><th>Aktivitas</th><th>In/Out</th><th>Oleh</th></tr></thead><tbody>' +
+    (!C.adm.ledgerLoaded ? '<tr><td colspan="6"><div class="skel">Memuat&hellip;</div></td></tr>' : !C.adm.ledger.length ? '<tr><td colspan="6"><div class="empty">Belum ada transaksi.</div></td></tr>' :
+      C.adm.ledger.map((l) => '<tr><td class="mono" style="font-size:12px;">' + fmtWaktu(l.waktu) + '</td><td class="mono">' + esc(l.userId) + "</td><td>" + esc(l.nama) + "</td><td>" + esc(l.aktivitas) + "</td>" +
+        '<td class="mono" style="font-weight:700;color:' + (l.delta >= 0 ? "var(--good)" : "var(--bad)") + ';">' + (l.delta >= 0 ? "+" : "") + l.delta + '</td><td style="font-size:12px;color:var(--ink-dim);">' + esc(l.oleh || "sistem") + "</td></tr>").join("")) +
+    "</tbody></table></div>";
+}
+
+function aRedeem() {
+  const d = S.draftHd;
+  const hadiah = listOf(C.hadiah);
+  const chips = [["pending", "Pending"], ["selesai", "Selesai"], ["ditolak", "Ditolak"], ["semua", "Semua"]];
+  return head("Hadiah &amp; Redeem", "Katalog, kuota 1x/bulan, dan antrean persetujuan") +
+    '<div class="card" style="margin-bottom:18px;"><div class="card-title">Tambah Hadiah</div><div class="filters">' +
+      '<input type="text" placeholder="Nama hadiah" value="' + esc(d.nama) + '" data-in="draftHd.nama" style="flex:1;min-width:200px;">' +
+      '<input type="number" placeholder="Poin" value="' + esc(d.poin) + '" data-in="draftHd.poin" style="min-width:110px;">' +
+      '<input type="number" placeholder="Stok (kosong = tak terbatas)" value="' + esc(d.stok) + '" data-in="draftHd.stok" style="min-width:190px;">' +
+      '<button class="btn btn-primary btn-sm" data-do="tambahHadiah">Tambah</button></div></div>' +
+    (hadiah.length ? '<div class="tbl-wrap" style="margin-bottom:22px;"><table><thead><tr><th>Hadiah</th><th>Poin</th><th>Stok</th><th>Status</th><th></th></tr></thead><tbody>' +
+      hadiah.map((h) => '<tr><td style="font-weight:600;">' + esc(h.nama) + '</td><td class="mono">' + fmtNum(h.poin) + '</td><td class="mono">' + (h.stok === -1 ? "&infin;" : fmtNum(h.stok)) + "</td>" +
+        '<td><span class="pill ' + (h.aktif !== false ? "pill-good" : "pill-neutral") + '" style="cursor:pointer;" data-do="toggleHadiah" data-v="' + h.id + '">' + (h.aktif !== false ? "Aktif" : "Nonaktif") + "</span></td>" +
+        '<td><button class="btn btn-danger btn-sm" data-do="hapusHadiah" data-v="' + h.id + '">Hapus</button></td></tr>').join("") + "</tbody></table></div>" : "") +
+    '<div class="sec-head"><h2>Redeem Queue</h2><div class="chips">' +
+      chips.map((c) => '<button class="chip ' + (S.fRedeem === c[0] ? "on" : "") + '" data-do="fRedeem" data-v="' + c[0] + '">' + c[1] + "</button>").join("") + "</div></div>" +
+    (!C.adm.redeemLoaded ? '<div class="skel">Memuat&hellip;</div>' : !C.adm.redeem.length ? '<div class="card"><div class="empty">Tidak ada permintaan pada filter ini.</div></div>' :
+      C.adm.redeem.map((r) => {
+        const pil = r.status === "selesai" ? "pill-good" : r.status === "ditolak" ? "pill-bad" : "pill-warn";
+        return '<div class="aq"><div class="grow"><div class="aq-n">' + esc(r.hadiahNama) + '</div><div class="aq-s"><span class="mono">' + esc(r.userId) + "</span> &middot; " + esc(r.nama) +
+          " &middot; " + fmtNum(r.poin) + " poin &middot; " + fmtWaktu(r.waktu) + (r.alasan ? " &middot; alasan: " + esc(r.alasan) : "") + "</div></div>" +
+          '<span class="pill ' + pil + '">' + esc(r.status) + "</span>" +
+          (r.fotoId ? '<button class="btn btn-ghost btn-sm" data-do="lihatFotoRedeem" data-v="' + r.id + '">Lihat Foto</button>' : "") +
+          (r.status === "pending" ? '<button class="btn btn-ok btn-sm" data-do="setujuiRedeem" data-v="' + r.id + '">Setujui</button><button class="btn btn-danger btn-sm" data-do="tolakRedeem" data-v="' + r.id + '">Tolak</button>' : "") +
+          "</div>";
+      }).join("")) +
+    '<div class="note" style="margin-top:14px;">Poin berstatus ditahan selama pending. Penolakan mengembalikan poin dan membuka lagi kuota 1x/bulan petugas.</div>';
+}
+
+function aPengaturan() {
+  return head("Pengaturan", "Master wilayah &amp; parameter program") +
+    '<div class="card" style="margin-bottom:18px;"><div class="card-title">Master Wilayah</div>' +
+      '<div style="font-size:13px;color:var(--ink-dim);margin-bottom:10px;">Tempel satu baris per cluster: <span class="mono">Area, Regional, Branch, Cluster</span> (koma atau tab). Data lama diganti. Petugas yang sudah terdaftar tidak terpengaruh.</div>' +
+      '<div class="field"><textarea rows="8" data-in="bulkWilayah" placeholder="Area 2, Jabar, Bandung, Bandung Kota">' + esc(S.bulkWilayah) + "</textarea></div>" +
+      '<div class="row" style="margin-top:12px;"><button class="btn btn-primary btn-sm" data-do="simpanWilayah">Simpan Master Wilayah</button>' +
+      '<button class="btn btn-ghost btn-sm" data-do="muatContohWilayah">Muat Contoh</button>' +
+      '<span class="lbl" style="margin-left:auto;">' + fmtNum(C.wilayah.length) + " cluster tersimpan</span></div></div>" +
+    '<div class="card"><div class="card-title">Parameter Poin</div><div class="stat-grid">' +
+      '<div class="stat"><div class="lbl">Kuesioner Lengkap</div><div class="n mono">' + POIN_KUESIONER + '</div><div class="k lbl" style="color:var(--ink-dim);">poin</div></div>' +
+      '<div class="stat"><div class="lbl">Per Jawaban Benar</div><div class="n mono">' + POIN_PER_BENAR + '</div><div class="k lbl" style="color:var(--ink-dim);">poin &middot; post test</div></div>' +
+      '<div class="stat"><div class="lbl">Batas Redeem</div><div class="n mono">1x</div><div class="k lbl" style="color:var(--ink-dim);">per petugas per bulan</div></div>' +
+    '</div><div class="note" style="margin-top:14px;">Nilai mengikuti framework MVP dan juga dikunci di aturan keamanan server.</div></div>';
+}
+
+/* ---------- modal ---------- */
+function kotakFoto(src, label) {
+  return "<div>" + (src ? '<img src="' + src + '" alt="">' : '<div style="aspect-ratio:3/4;background:var(--surface-3);border-radius:10px;"></div>') + '<div class="cl">' + label + "</div></div>";
+}
+function modalDetail(d) {
+  const p = d.pub, v = p.id, priv = d.priv;
+  const foto0 = d.fotos[0];
+  return '<div class="modal-bd" data-do="tutupModal"><div class="modal" data-stop="1">' +
+    '<div class="card-title">Detail Petugas</div><h2 style="font-size:20px;">' + esc(p.nama) + "</h2>" +
+    '<div class="lbl" style="color:var(--ink-dim);margin-bottom:14px;">' + esc(v) + " &middot; " + esc(p.kode || "-") + " &middot; " + esc(p.group) + "</div>" +
+    '<div class="cmp" style="margin-bottom:14px;">' + kotakFoto(priv.foto, "Baseline") + kotakFoto(foto0 && foto0.foto, foto0 ? esc(foto0.tipe) + " &middot; " + fmtTgl(foto0.waktu) : "belum ada aktivitas") + "</div>" +
+    (priv.fotoPending ? '<div class="note" style="margin-bottom:12px;"><div style="margin-bottom:8px;">Ada pengajuan ganti foto baseline:</div><img src="' + priv.fotoPending + '" style="width:120px;border-radius:8px;display:block;margin-bottom:8px;">' +
+      '<button class="btn btn-ok btn-sm" data-do="setujuiFoto" data-v="' + esc(v) + '">Setujui</button> <button class="btn btn-danger btn-sm" data-do="tolakFoto" data-v="' + esc(v) + '">Tolak</button></div>' : "") +
+    '<div class="card" style="background:var(--surface-2);margin-bottom:12px;">' +
+      '<div class="lbl">Wilayah</div><div style="font-size:13.5px;">' + [p.area, p.regional, p.branch, p.cluster].map((x) => esc(x || "-")).join(" / ") + "</div>" +
+      '<div class="lbl" style="margin-top:10px;">Nomor Aktif</div><div class="mono" style="font-size:13.5px;">' + esc(priv.nomor || "-") + "</div>" +
+      '<div class="lbl" style="margin-top:10px;">Poin Peringkat / Saldo</div><div class="mono" style="font-size:13.5px;">' + fmtNum(p.poinPeringkat) + " / " + fmtNum(p.saldo) + "</div></div>" +
+    '<div class="card-title">Point Ledger</div>' +
+    (!d.ledger.length ? '<div class="empty" style="padding:14px;">Belum ada transaksi.</div>' : d.ledger.slice(0, 15).map((l) =>
+      '<div class="led"><span class="ld">' + fmtTgl(l.waktu) + '</span><span class="grow" style="font-size:12.5px;">' + esc(l.aktivitas) + '</span><span class="lv ' + (l.delta >= 0 ? "pos" : "neg") + '">' + (l.delta >= 0 ? "+" : "") + l.delta + "</span></div>").join("")) +
+    '<div class="row" style="margin-top:16px;flex-wrap:wrap;">' +
+      '<select data-status="' + esc(v) + '" class="grow" style="padding:9px;border-radius:9px;border:1px solid var(--border-strong);">' +
+        ["aktif", "review", "nonaktif"].map((s) => '<option value="' + s + '" ' + ((p.status || "aktif") === s ? "selected" : "") + ">" + s + "</option>").join("") + "</select>" +
+      '<button class="btn btn-ghost btn-sm" data-do="resetPin" data-v="' + esc(v) + '">Reset PIN</button>' +
+      '<button class="btn btn-ghost btn-sm" data-do="tutupModal">Tutup</button></div></div></div>';
+}
+function modalFotoRedeem(base, foto) {
+  return '<div class="modal-bd" data-do="tutupModal"><div class="modal" data-stop="1"><div class="card-title">Verifikasi Foto Redeem</div>' +
+    '<div class="cmp">' + kotakFoto(base, "Baseline") + kotakFoto(foto, "Saat redeem") + "</div>" +
+    '<button class="btn btn-ghost btn-block" style="margin-top:14px;" data-do="tutupModal">Tutup</button></div></div>';
+}
+
+
+/* ============ render ============ */
+function vAdmBelum() {
+  const u = S.adminUser;
+  return '<div class="center-narrow"><div class="card lift"><div class="card-title">Akses Admin Belum Aktif</div>' +
+    '<p style="font-size:14px;margin:0 0 12px;">Login berhasil, tetapi akun <b>' + esc(u.email) + "</b> belum terdaftar sebagai Super Admin.</p>" +
+    '<div class="note">Di Firebase Console &rarr; Firestore Database &rarr; buat koleksi <span class="mono">admins</span> dengan Document ID berikut:</div>' +
+    '<div class="mono" style="margin:10px 0;padding:10px;border:1px solid var(--border);border-radius:9px;word-break:break-all;background:var(--surface-2);">' + esc(u.uid) + "</div>" +
+    '<button class="btn btn-ghost btn-block" data-do="admCekUlang">Saya sudah menambahkannya — cek ulang</button>' +
+    '<button class="btn btn-ghost btn-block" style="margin-top:9px;" data-do="admKeluar">Keluar</button></div></div>';
+}
+
+function vShell(inner) {
+  const p = S.profilSaya;
+  const nav = [["home", "HM", "Home"], ["tugas", "TG", "Tugas"], ["hadiah", "HD", "Hadiah"], ["profil", "PF", "Profil"]];
+  const inFlow = S.view !== "app";
+  return '<div class="wrap-mobile"><div class="topbar"><div class="brand"><b>DEBY</b><span>DS Database</span></div>' +
+    '<button class="tb-act" data-do="tab" data-v="profil">' + esc((p.nama || "").split(" ")[0]) + "</button></div>" + inner +
+    '<nav class="bnav">' + nav.map((n) => '<button class="' + (!inFlow && S.tab === n[0] ? "on" : "") + '" data-do="tab" data-v="' + n[0] + '"><span class="bi">' + n[1] + '</span><span class="bt">' + n[2] + "</span></button>").join("") +
+    "</nav></div>";
+}
+
+function render() {
+  const root = document.getElementById("app");
+  let html;
+  if (S.mode === "admin") {
+    html = !S.adminUser ? vAdmLogin() : !S.adminCek ? '<div class="empty">Memeriksa akses admin&hellip;</div>' : S.adminOk ? vAdmin() : vAdmBelum();
+  } else if (S.view === "daftar") html = vDaftar();
+  else if (S.view === "admLogin") html = vAdmLogin();
+  else if (!S.me || S.view === "masuk") html = vMasuk();
+  else if (!S.profilSaya) html = '<div class="wrap-plain"><div class="pad"><div class="empty">Memuat akun&hellip;</div></div></div>';
+  else if (S.view === "gate" && S.gate) html = vShell(vGate());
+  else if (S.view === "run" && S.run) html = vShell(vRun());
+  else if (S.view === "hasil" && S.hasil) html = vShell(vHasil());
+  else {
+    const fn = { home: vHome, tugas: vTugas, leaderboard: vLeaderboard, knowledge: vKnowledge, hadiah: vHadiah, poin: vPoin, profil: vProfil, bantuan: vBantuan }[S.tab] || vHome;
+    html = vShell(fn());
+  }
+  if (S.toast) html += '<div class="toast ' + (S.toast.kind === "ok" ? "ok" : S.toast.kind === "no" ? "no" : "") + '">' + esc(S.toast.msg) + "</div>";
+  if (S.modal) html += S.modal;
+
+  /* pertahankan fokus & posisi kursor saat data realtime memicu render ulang */
+  const a = document.activeElement;
+  const keep = a && a.getAttribute && a.getAttribute("data-in");
+  const selStart = keep && typeof a.selectionStart === "number" ? a.selectionStart : null;
+  root.innerHTML = html;
+  if (keep) {
+    const el = root.querySelector('[data-in="' + keep + '"]');
+    if (el) { el.focus(); if (selStart != null && el.setSelectionRange) { try { el.setSelectionRange(selStart, selStart); } catch (e) {} } }
+  }
+}
+
+/* ============ navigasi ============ */
+function onTab(v) {
+  if (v === "home") { if (C.lb.filter !== "semua" || !C.lb.rows.length) loadLeaderboard("semua"); loadRank(); }
+  if (v === "leaderboard") { loadLeaderboard(S.lbFilter); loadRank(); }
+}
+function onAdmMenu(v) {
+  if (v === "dashboard" && !C.adm.stats) loadAdminStats();
+  if (v === "petugas" && !C.adm.petugas.rows.length) loadPetugasPage(true);
+  if (v === "poin") { loadLeaderboard(S.lbFilter); loadLedgerTerbaru(); }
+  if (v === "redeem") subscribeAdminRedeem();
+  if (v === "posttest") loadKunciAdmin();
+  if (v === "pengaturan" && !C.wilayahLoaded) loadWilayah();
+}
+function pesanGagal(e, fallback) {
+  if (e && e.code === "permission-denied") return "Sesi berakhir atau aksi tidak diizinkan. Keluar lalu masuk lagi.";
+  return (fallback || "Gagal") + ": " + (e && e.message ? e.message : e);
+}
+function mulaiSesiLokal(userId) {
+  localStorage.setItem(LS, userId);
+  localStorage.setItem(LS + "_exp", String(Date.now() + SESI_JAM * 3600 * 1000 - 5 * 60000));
+  S.me = userId; S.view = "app"; S.tab = "home";
+  subscribeSaya(userId);
+  onTab("home");
+}
+function setPath(path, val) {
+  const parts = path.split(".");
+  let o = S;
+  for (let i = 0; i < parts.length - 1; i++) o = o[parts[i]];
+  const last = parts[parts.length - 1];
+  if (Array.isArray(o)) o[parseInt(last, 10)] = val; else o[last] = val;
+}
+const modulCol = (t) => (t === "kuesioner" ? "kuesioner" : "posttest");
+const modulField = (t) => (t === "kuesioner" ? "pertanyaan" : "soal");
+
+/* ============ aksi ============ */
+const DO = {
+  ke(v) { S.view = v; S.masuk.err = ""; S.daftar.err = ""; S.admLogin.err = ""; render(); },
+  keDaftar() { S.view = "daftar"; if (!C.wilayahLoaded) loadWilayah(); render(); },
+  tab(v) { S.view = "app"; S.tab = v; S.gate = null; S.run = null; render(); onTab(v); },
+  setGroup(v) { S.daftar.group = v; render(); },
+  lbFilter(v) { S.lbFilter = v; loadLeaderboard(v); },
+
+  async masuk() {
+    const m = S.masuk;
+    if (!m.id.trim() || !m.pin) { m.err = "User ID / Kode dan PIN wajib diisi."; return render(); }
+    try {
+      const userId = await cariUserId(m.id);
+      if (!userId) { m.err = "User ID atau Kode Digipos tidak ditemukan."; return render(); }
+      const d = await getDoc(doc(db, "petugas", userId));
+      if (!d.exists()) { m.err = "Akun tidak ditemukan."; return render(); }
+      if ((d.data().status || "aktif") === "nonaktif") { m.err = "Akun nonaktif. Hubungi Admin."; return render(); }
+      try { await buatSesi(userId, m.pin); }
+      catch (err) {
+        m.err = err.code === "permission-denied" ? "PIN salah."
+          : String(err.code || "").indexOf("auth/") === 0 ? "Login perangkat belum aktif. Admin perlu mengaktifkan Anonymous sign-in di Firebase."
+          : "Gagal masuk: " + err.message;
+        return render();
       }
-      html += '</div>';
-    });
-  }
-  html += '</div>';
-  return html;
-}
+      S.masuk = { id: "", pin: "", err: "" };
+      mulaiSesiLokal(userId);
+    } catch (e) { m.err = "Gagal masuk: " + e.message; render(); }
+  },
 
-function adminSubmissions(){
-  var list = submissionList().sort(function(a,b){ return (b.submittedAt||"").localeCompare(a.submittedAt||""); });
-  var html = '<div class="card"><div class="section-title">Hasil Post Test ('+list.length+')</div>';
-  if(!cache.submissionsLoaded){ html += '<div class="empty-msg">Memuat&hellip;</div>'; }
-  else if(list.length===0){ html += '<div class="empty-msg">Belum ada submission.</div>'; }
-  else {
-    html += '<div class="table-wrap"><table><thead><tr><th></th><th>Nama</th><th>Tim</th><th>Kuis</th><th>Skor</th><th>Poin</th><th>Waktu</th></tr></thead><tbody>'+
-      list.map(function(s){
-        var priv = cache.submissionsPrivate[s.id] || {};
-        return '<tr><td>'+(priv.photoDataUrl?'<img class="thumb" src="'+priv.photoDataUrl+'" data-action="viewSubmissionCompare" data-val="'+s.id+'">':'<div class="thumb"></div>')+'</td>'+
-          '<td>'+esc(s.memberName)+'</td><td>'+teamBadge(s.team)+'</td><td>'+esc(s.quizTitle)+'</td>'+
-          '<td class="mono">'+s.score+'/'+s.totalQuestions+'</td><td class="mono">'+s.pointsEarned+'</td><td>'+fmtDate(s.submittedAt)+'</td></tr>';
-      }).join("")+'</tbody></table></div>';
-  }
-  html += '</div>';
-  return html;
-}
+  async daftar() {
+    const d = S.daftar;
+    const err = (t) => { d.err = t; render(); };
+    if (!d.nama.trim()) return err("Nama lengkap wajib diisi.");
+    if (!d.group) return err("Pilih group.");
+    if (!USERID_RE.test(normUserId(d.userId))) return err("User ID Digipos harus tepat 10 digit angka.");
+    if (!KODE_RE.test(normKode(d.kode))) return err("Format Kode Digipos tidak sesuai, contoh AHA1927381_DS.");
+    if (!d.nomor.trim()) return err("Nomor aktif wajib diisi.");
+    if (!d.area || !d.regional || !d.branch || !d.cluster) return err("Lengkapi 4 data wilayah.");
+    if (!d.foto) return err("Foto petugas wajib diambil.");
+    if (!d.pin || d.pin.length < 4) return err("PIN minimal 4 digit.");
+    if (d.pin !== d.pin2) return err("PIN dan ulangi PIN tidak sama.");
+    d.busy = true; d.err = ""; render();
+    try {
+      const userId = await daftarPetugas(d);
+      S.daftar = { nama: "", group: "", userId: "", kode: "", nomor: "", area: "", regional: "", branch: "", cluster: "", pin: "", pin2: "", foto: null, err: "", busy: false };
+      mulaiSesiLokal(userId);
+      toast("ok", "Registrasi berhasil. Selamat datang!");
+    } catch (e) { d.busy = false; err(e.code === "permission-denied" ? "Data ditolak server. Periksa format User ID dan Kode." : e.message); }
+  },
 
-function adminPrizes(){
-  var list = Object.keys(cache.prizes).map(function(id){ return Object.assign({id:id}, cache.prizes[id]); });
-  var np = state.newPrize;
-  var html = '<div class="stack">';
-  html += '<div class="card"><div class="section-title">Tambah Hadiah</div><div class="grid cols-3">'+
-    '<div class="field"><label>Nama Hadiah</label><input type="text" value="'+esc(np.name)+'" data-input="newPrizeName"></div>'+
-    '<div class="field"><label>Biaya Poin</label><input type="number" value="'+esc(np.cost)+'" data-input="newPrizeCost"></div>'+
-    '<div class="field"><label>Stok (kosongkan = tak terbatas)</label><input type="number" value="'+esc(np.stock)+'" data-input="newPrizeStock"></div>'+
-    '</div><button class="btn btn-primary" style="margin-top:12px;" data-action="createPrize">Tambah</button></div>';
-  if(!cache.prizesLoaded){ html += '<div class="card"><div class="empty-msg">Memuat&hellip;</div></div>'; }
-  else if(list.length===0){ html += '<div class="card"><div class="empty-msg">Belum ada hadiah.</div></div>'; }
-  else {
-    html += '<div class="card"><div class="table-wrap"><table><thead><tr><th>Nama</th><th>Biaya</th><th>Stok</th><th>Status</th><th></th></tr></thead><tbody>'+
-      list.map(function(p){
-        return '<tr><td>'+esc(p.name)+'</td><td class="mono">'+p.cost+'</td><td class="mono">'+(p.stock===-1?"~":p.stock)+'</td>'+
-          '<td><div class="pill-toggle" data-action="togglePrizeActive" data-val="'+p.id+'"><div class="switch '+(p.active!==false?"on":"")+'"></div>'+(p.active!==false?"Aktif":"Nonaktif")+'</div></td>'+
-          '<td><button class="btn btn-danger btn-sm" data-action="deletePrize" data-val="'+p.id+'">Hapus</button></td></tr>';
-      }).join("")+'</tbody></table></div></div>';
-  }
-  html += '</div>';
-  return html;
-}
+  keluar() { keluarPetugas(); },
 
-function adminRedemptions(){
-  var list = redemptionList().sort(function(a,b){ return (b.requestedAt||"").localeCompare(a.requestedAt||""); });
-  var html = '<div class="card"><div class="section-title">Permintaan Penukaran Hadiah</div>';
-  if(!cache.redemptionsLoaded){ html += '<div class="empty-msg">Memuat&hellip;</div>'; }
-  else if(list.length===0){ html += '<div class="empty-msg">Belum ada permintaan.</div>'; }
-  else {
-    html += '<div class="stack" style="gap:10px;">'+list.map(function(r){
-      var b = r.status==="fulfilled"?"badge-good":r.status==="rejected"?"badge-bad":"badge-warn";
-      var lbl = r.status==="fulfilled"?"Diberikan":r.status==="rejected"?"Ditolak":"Menunggu";
-      var actions = r.status==="pending" ?
-        '<button class="btn btn-primary btn-sm" data-action="approveRedemption" data-val="'+r.id+'">Setujui</button>'+
-        '<button class="btn btn-danger btn-sm" data-action="rejectRedemption" data-val="'+r.id+'">Tolak</button>' : "";
-      return '<div class="qcard" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">'+
-        '<div style="flex:1;"><div style="font-weight:600;">'+esc(r.memberName)+' &middot; '+teamBadge(r.team)+'</div>'+
-        '<div class="subhead">'+esc(r.prizeName)+' &middot; '+r.pointCost+' poin &middot; '+fmtDate(r.requestedAt)+'</div></div>'+
-        '<span class="badge '+b+'">'+lbl+'</span>'+actions+'</div>';
-    }).join("")+'</div>';
-  }
-  html += '</div>';
-  return html;
-}
+  async mulai(v, el) {
+    const t = el.getAttribute("data-t");
+    if (t === "kuesioner" && sudahKuesioner(v)) return toast("no", "Kuesioner ini sudah kamu isi.");
+    if (t === "posttest" && hasilPosttest(v)) return toast("no", "Post test ini sudah kamu kerjakan.");
+    if (t === "posttest" && (await jawabanTerkunci(v, S.me))) {
+      /* jawaban sudah terkunci tapi nilai belum tersimpan — lanjutkan penilaian, tidak mengulang */
+      try {
+        const h = await submitPosttest(S.profilSaya, Object.assign({ id: v }, C.posttest[v]), null, null);
+        S.hasil = Object.assign({ tipe: "posttest" }, h); S.view = "hasil"; render(); loadRank();
+      } catch (e) { toast("no", pesanGagal(e, "Gagal melanjutkan penilaian")); }
+      return;
+    }
+    S.gate = { tujuan: t, refId: v, foto: null, busy: false }; S.view = "gate"; render();
+  },
+  mulaiRedeem(v) { S.gate = { tujuan: "redeem", refId: v, foto: null, busy: false }; S.view = "gate"; render(); },
+  gateBatal() { S.gate = null; S.view = "app"; render(); },
 
-function renderApp(){
-  var app = document.getElementById("app");
-  if(state.view==="loading"){ app.innerHTML = '<div class="empty-msg">Memuat Poin Juara&hellip;</div>'; return; }
-  var content;
-  switch(state.view){
-    case "home": content = viewHome(); break;
-    case "identify": content = viewIdentify(); break;
-    case "dashboard": content = viewDashboard(); break;
-    case "leaderboard": content = viewLeaderboard(); break;
-    case "rewards": content = viewRewards(); break;
-    case "quiz": content = viewQuiz(); break;
-    case "quizResult": content = viewQuizResult(); break;
-    case "adminLogin": content = viewAdminLogin(); break;
-    case "admin": content = viewAdmin(); break;
-    default: content = viewHome();
-  }
-  var body = renderTopbar() + renderNavTabs() + content;
-  if(state.toast){ body += '<div class="toast '+esc(state.toast.type)+'">'+esc(state.toast.msg)+'</div>'; }
-  if(state.compareModal){
-    var cm = state.compareModal;
-    body += '<div class="modal-backdrop" data-action="closeCompareModal"><div class="modal" onclick="event.stopPropagation()">'+
-      '<div class="section-title">Bandingkan Foto</div>'+
-      '<div class="compare-grid">'+
-        '<div><img src="'+(cm.reg||"")+'"><div class="lbl">Foto registrasi</div></div>'+
-        '<div><img src="'+(cm.verify||cm.reg||"")+'"><div class="lbl">'+(cm.verify?"Foto verifikasi":"(tidak ada foto verifikasi)")+'</div></div>'+
-      '</div>'+
-      '<button class="btn btn-ghost btn-block" style="margin-top:12px;" data-action="closeCompareModal">Tutup</button>'+
-    '</div></div>';
-  }
-  body += '<div class="footer-note">Poin Juara &middot; program internal Direct Sales / YPCR / Buddies</div>';
-  app.innerHTML = body;
-}
+  async gateLanjut() {
+    const g = S.gate, p = S.profilSaya;
+    if (!g || !g.foto || g.busy) return;
+    g.busy = true; render();
+    try {
+      const fotoId = await simpanFotoAktivitas(p, g.tujuan, g.foto);
+      if (g.tujuan === "redeem") {
+        const h = C.hadiah[g.refId];
+        if (!h) throw new Error("Hadiah tidak ditemukan.");
+        if (redeemBulanIniSaya().length) throw new Error("Kuota penukaran bulan ini sudah dipakai.");
+        if (tersediaSaya() < h.poin) throw new Error("Poin tidak cukup.");
+        if (h.stok !== -1 && h.stok <= 0) throw new Error("Stok habis.");
+        await ajukanRedeem(p, g.refId, h, fotoId);
+        S.gate = null; S.view = "app"; S.tab = "hadiah";
+        return toast("ok", "Permintaan terkirim. Poin ditahan sampai Admin menyetujui.");
+      }
+      const src = g.tujuan === "kuesioner" ? C.kuesioner : C.posttest;
+      if (!src[g.refId]) throw new Error("Modul tidak ditemukan.");
+      S.run = { tipe: g.tujuan, doc: Object.assign({ id: g.refId }, src[g.refId]), idx: 0, jawaban: {}, fotoId, busy: false };
+      S.gate = null; S.view = "run"; render();
+    } catch (e) { if (S.gate) S.gate.busy = false; toast("no", pesanGagal(e, "Gagal")); }
+  },
 
-function goHomeOrDash(){ state.view = state.memberId ? "dashboard" : "home"; renderApp(); }
+  runBack() { const r = S.run; if (!r) return; if (r.idx === 0) { S.run = null; S.view = "app"; return render(); } r.idx--; render(); },
+  async runNext() {
+    const r = S.run;
+    if (!r || r.busy) return;
+    const items = r.tipe === "kuesioner" ? r.doc.pertanyaan : r.doc.soal;
+    if (r.idx < items.length - 1) { r.idx++; return render(); }
+    r.busy = true; render();
+    try {
+      if (r.tipe === "kuesioner") { await submitKuesioner(S.profilSaya, r.doc, r.jawaban, r.fotoId); S.hasil = { tipe: "kuesioner" }; }
+      else { const h = await submitPosttest(S.profilSaya, r.doc, r.jawaban, r.fotoId); S.hasil = Object.assign({ tipe: "posttest" }, h); }
+      S.run = null; S.view = "hasil"; render(); loadRank();
+    } catch (e) { r.busy = false; toast("no", pesanGagal(e, "Gagal mengirim")); }
+  },
 
-var actions = {
-  setView: function(v){ state.view = v; renderApp(); },
-  setIdentifyMode: function(v){ state.identifyMode = v; renderApp(); },
-  setRegisterTeam: function(v){ state.registerTeam = v; renderApp(); },
-  switchAccount: function(){ localStorage.removeItem(LS_KEY); state.memberId=null; state.view="home"; renderApp(); },
-  goAdminLogin: function(){ state.view="adminLogin"; renderApp(); },
-  exitAdmin: function(){ auth.signOut(); state.view = state.memberId?"dashboard":"home"; renderApp(); },
-  selectMember: function(v){ state.memberId = v; localStorage.setItem(LS_KEY, v); state.view = "dashboard"; renderApp(); },
-  submitRegister: function(){
-    if(!state.registerName.trim()){ showToast("error","Nama wajib diisi."); return; }
-    if(!state.registerTeam){ showToast("error","Pilih tim dulu."); return; }
-    if(!state.registerPhoto){ showToast("error","Foto registrasi wajib diambil."); return; }
-    var ref = db.collection("members").doc();
-    var id = ref.id;
-    var now = new Date().toISOString();
-    Promise.all([
-      ref.set({ name: state.registerName.trim(), team: state.registerTeam, totalPoints:0, createdAt: now }),
-      db.collection("members_private").doc(id).set({ phone: state.registerPhone.trim(), photoDataUrl: state.registerPhoto })
-    ]).then(function(){
-      localStorage.setItem(LS_KEY, id);
-      state.memberId = id;
-      state.registerName=""; state.registerTeam=""; state.registerPhone=""; state.registerPhoto=null;
-      state.view = "dashboard";
-      showToast("success","Berhasil daftar. Selamat bergabung!");
-    }).catch(function(err){ showToast("error","Gagal menyimpan: "+err.message); });
+  async simpanProfil() {
+    const p = S.profilSaya, f = S.profil, upd = {};
+    if (f.nomor.trim()) upd.nomor = f.nomor.trim();
+    if (f.pin) {
+      if (f.pin.length < 4) return toast("no", "PIN minimal 4 digit.");
+      if (f.pin !== f.pin2) return toast("no", "PIN tidak sama.");
+      upd.pinHash = await hashPin(f.pin);
+    }
+    if (!Object.keys(upd).length) return toast("no", "Tidak ada perubahan.");
+    try {
+      await setDoc(doc(db, "petugas_cek", p.id), upd, { merge: true });
+      if (upd.pinHash) await buatSesi(p.id, f.pin);
+      S.profil = { nomor: "", pin: "", pin2: "", foto: null };
+      toast("ok", "Perubahan tersimpan.");
+    } catch (e) { toast("no", pesanGagal(e, "Gagal menyimpan")); }
   },
-  startQuiz: function(v){ state.activeQuizId = v; state.quizStep=1; state.quizPhoto=null; state.quizAnswers={}; state.view="quiz"; renderApp(); },
-  quizNextStep: function(){ if(!state.quizPhoto){ showToast("error","Ambil foto dulu."); return;} state.quizStep=2; renderApp(); },
-  quizPrevStep: function(){ state.quizStep=1; renderApp(); },
-  submitQuiz: function(){
-    var m = currentMember();
-    var q = cache.quizzes[state.activeQuizId];
-    if(!m || !q) return;
-    var questions = q.questions||[];
-    var score=0, points=0;
-    questions.forEach(function(qq){ if(state.quizAnswers[qq.id]===qq.correctIndex){ score++; points+=(qq.points||0); } });
-    var ref = db.collection("submissions").doc();
-    var id = ref.id;
-    Promise.all([
-      ref.set({
-        memberId:m.id, memberName:m.name, team:m.team, quizId: state.activeQuizId, quizTitle:q.title,
-        answers: state.quizAnswers, score:score, totalQuestions:questions.length, pointsEarned: points,
-        submittedAt: new Date().toISOString()
-      }),
-      db.collection("submissions_private").doc(id).set({ photoDataUrl: state.quizPhoto })
-    ]).then(function(){
-      state.lastResult = {score:score,totalQuestions:questions.length,pointsEarned:points};
-      state.view="quizResult";
-      renderApp();
-    }).catch(function(err){ showToast("error","Gagal mengirim jawaban: "+err.message); });
+  async ajukanFoto() {
+    if (!S.profil.foto) return;
+    try {
+      await setDoc(doc(db, "petugas_cek", S.profilSaya.id), { fotoPending: S.profil.foto }, { merge: true });
+      S.profil.foto = null; toast("ok", "Perubahan foto menunggu persetujuan Admin.");
+    } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
   },
-  setLeaderboardFilter: function(v){ state.leaderboardFilter=v; renderApp(); },
-  redeemPrize: function(v){
-    var m = currentMember();
-    var p = cache.prizes[v];
-    if(!m || !p) return;
-    var bal = balanceForMember(m.id);
-    if(bal < p.cost){ showToast("error","Poin tidak cukup."); return; }
-    if(p.stock!==-1 && p.stock<=0){ showToast("error","Stok habis."); return; }
-    db.collection("redemptions").add({
-      memberId:m.id, memberName:m.name, team:m.team, prizeId:v, prizeName:p.name, pointCost:p.cost,
-      status:"pending", requestedAt:new Date().toISOString()
-    }).then(function(){
-      if(p.stock!==-1){ db.collection("prizes").doc(v).update({stock: p.stock-1}); }
-      showToast("success","Permintaan penukaran terkirim.");
-    }).catch(function(err){ showToast("error","Gagal menukar: "+err.message); });
+
+  /* ---- admin ---- */
+  async admMasuk() {
+    const a = S.admLogin;
+    if (!a.email || !a.pass) { a.err = "Isi email dan kata sandi."; return render(); }
+    try { await signInWithEmailAndPassword(auth, a.email, a.pass); S.admLogin = { email: "", pass: "", err: "" }; S.mode = "admin"; render(); }
+    catch (e) { a.err = "Email atau kata sandi salah."; render(); }
   },
-  submitAdminLogin: function(){
-    if(!state.adminEmail || !state.adminPassword){ state.adminError="Isi email dan kata sandi."; renderApp(); return; }
-    auth.signInWithEmailAndPassword(state.adminEmail, state.adminPassword).then(function(){
-      state.adminError=""; state.adminPassword=""; state.view="admin"; renderApp();
-    }).catch(function(err){ state.adminError = "Login gagal: email/kata sandi salah."; renderApp(); });
+  async admKeluar() { stop("admin"); await signOut(auth); S.mode = "petugas"; S.view = S.me ? "app" : "masuk"; render(); },
+  admCekUlang() { cekAdmin(S.adminUser); },
+  admMenu(v) { S.adminMenu = v; S.openQ = null; render(); onAdmMenu(v); },
+  refreshStats() { C.adm.stats = null; render(); loadAdminStats(); },
+  refreshLedger() { loadLedgerTerbaru(); },
+  cariPetugas() { loadPetugasPage(true); },
+  petugasLagi() { loadPetugasPage(false); },
+  fRedeem(v) { S.fRedeem = v; subscribeAdminRedeem(); render(); },
+
+  async detailPetugas(v) {
+    S.modal = '<div class="modal-bd" data-do="tutupModal"><div class="modal" data-stop="1"><div class="empty">Memuat detail&hellip;</div></div></div>';
+    render();
+    try {
+      const d = await loadDetailPetugas(v);
+      S.modal = d.pub ? modalDetail(d) : null;
+      if (!d.pub) toast("no", "Petugas tidak ditemukan.");
+      render();
+    } catch (e) { S.modal = null; toast("no", pesanGagal(e, "Gagal memuat detail")); }
   },
-  setAdminTab: function(v){ state.adminTab=v; renderApp(); },
-  setAdminMembersFilter: function(v){ state.adminMembersFilter=v; renderApp(); },
-  deleteMember: function(v){
-    if(!confirm("Hapus anggota ini? Riwayat post test tetap tersimpan.")) return;
-    db.collection("members").doc(v).delete();
-    db.collection("members_private").doc(v).delete();
+  tutupModal() { S.modal = null; render(); },
+
+  async lihatFotoRedeem(v) {
+    const r = C.adm.redeem.find((x) => x.id === v);
+    if (!r) return;
+    S.modal = '<div class="modal-bd" data-do="tutupModal"><div class="modal" data-stop="1"><div class="empty">Memuat foto&hellip;</div></div></div>';
+    render();
+    try {
+      const [cek, foto] = await Promise.all([getDoc(doc(db, "petugas_cek", r.userId)), fotoById(r.fotoId)]);
+      S.modal = modalFotoRedeem(cek.exists() ? cek.data().foto : null, foto);
+      render();
+    } catch (e) { S.modal = null; toast("no", pesanGagal(e, "Gagal memuat foto")); }
   },
-  viewMemberCompare: function(v){
-    var priv = cache.membersPrivate[v] || {};
-    state.compareModal = { reg: priv.photoDataUrl, verify: null };
-    renderApp();
+
+  async setujuiFoto(v) {
+    try {
+      const cek = await getDoc(doc(db, "petugas_cek", v));
+      const pending = cek.exists() ? cek.data().fotoPending : null;
+      if (!pending) return;
+      await setDoc(doc(db, "petugas_cek", v), { foto: pending, fotoPending: deleteField() }, { merge: true });
+      toast("ok", "Foto baseline diperbarui."); DO.detailPetugas(v);
+    } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
   },
-  viewSubmissionCompare: function(v){
-    var s = cache.submissions[v];
-    var priv = cache.submissionsPrivate[v] || {};
-    var memberPriv = s ? (cache.membersPrivate[s.memberId] || {}) : {};
-    state.compareModal = { reg: memberPriv.photoDataUrl, verify: priv.photoDataUrl };
-    renderApp();
+  async tolakFoto(v) {
+    try { await setDoc(doc(db, "petugas_cek", v), { fotoPending: deleteField() }, { merge: true }); toast("ok", "Pengajuan foto ditolak."); DO.detailPetugas(v); }
+    catch (e) { toast("no", pesanGagal(e, "Gagal")); }
   },
-  closeCompareModal: function(){ state.compareModal=null; renderApp(); },
-  createQuiz: function(){
-    if(!state.newQuizTitle.trim()){ showToast("error","Judul wajib diisi."); return; }
-    db.collection("quizzes").add({title:state.newQuizTitle.trim(), active:true, questions:[], createdAt:new Date().toISOString()})
-      .then(function(){ state.newQuizTitle=""; showToast("success","Post test dibuat."); });
+  async resetPin(v) {
+    const baru = prompt("PIN baru untuk " + v + " (minimal 4 digit):");
+    if (!baru) return;
+    if (baru.length < 4) return toast("no", "PIN minimal 4 digit.");
+    try {
+      await setDoc(doc(db, "petugas_cek", v), { pinHash: await hashPin(baru) }, { merge: true });
+      await deleteDoc(doc(db, "sesi", v)).catch(() => {});
+      toast("ok", "PIN direset. Sampaikan PIN baru ke petugas.");
+    } catch (e) { toast("no", pesanGagal(e, "Gagal reset PIN")); }
   },
-  toggleQuizActive: function(v){
-    var q = cache.quizzes[v]; if(!q) return;
-    db.collection("quizzes").doc(v).update({active: !q.active});
+
+  async buatModul(_, el) {
+    const t = el.getAttribute("data-t");
+    const d = t === "kuesioner" ? S.draftKu : S.draftPt;
+    if (!d.judul.trim()) return toast("no", "Judul wajib diisi.");
+    const data = { judul: d.judul.trim(), target: d.target, aktif: false, createdAt: nowIso() };
+    data[modulField(t)] = [];
+    try {
+      const ref = doc(collection(db, modulCol(t)));
+      const b = writeBatch(db);
+      b.set(ref, data);
+      if (t === "posttest") b.set(doc(db, "posttest_kunci", ref.id), { kunci: [] });
+      await b.commit();
+      if (t === "posttest") { C.adm.kunci[ref.id] = []; C.adm.peserta[ref.id] = 0; }
+      if (t === "kuesioner") S.draftKu = { judul: "", target: "semua" }; else S.draftPt = { judul: "", target: "semua" };
+      S.openQ = t + ":" + ref.id; S.draftSoal = { teks: "", opsi: ["", "", "", ""], kunci: 0 };
+      toast("ok", "Dibuat (nonaktif). Tambahkan pertanyaan, lalu aktifkan.");
+    } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
   },
-  toggleEditQuiz: function(v){ state.editingQuizId = state.editingQuizId===v ? null : v; renderApp(); },
-  deleteQuiz: function(v){ if(!confirm("Hapus post test ini?")) return; db.collection("quizzes").doc(v).delete(); },
-  setQDraftCorrect: function(v){ state.qDraft.correct = parseInt(v,10); renderApp(); },
-  addQuestion: function(v){
-    var d = state.qDraft;
-    if(!d.text.trim() || d.opts.some(function(o){return !o.trim();})){ showToast("error","Lengkapi pertanyaan dan semua opsi."); return; }
-    var q = cache.quizzes[v]; if(!q) return;
-    var newQ = {id: Math.random().toString(36).slice(2,10), text:d.text.trim(), options:d.opts.map(function(o){return o.trim();}), correctIndex:d.correct, points: parseInt(d.points,10)||0};
-    var questions = (q.questions||[]).concat([newQ]);
-    db.collection("quizzes").doc(v).update({questions:questions}).then(function(){
-      state.qDraft = {text:"",opts:["","","",""],correct:0,points:10};
-      showToast("success","Soal ditambahkan.");
-    });
+  async toggleAktif(v, el) {
+    const t = el.getAttribute("data-t");
+    const cur = (t === "kuesioner" ? C.kuesioner : C.posttest)[v];
+    if (!cur) return;
+    if (!cur.aktif && !(cur[modulField(t)] || []).length) return toast("no", "Tambahkan minimal 1 pertanyaan sebelum mengaktifkan.");
+    if (!cur.aktif && t === "posttest" && (C.adm.kunci[v] || []).length !== (cur.soal || []).length) return toast("no", "Jumlah kunci jawaban tidak sama dengan jumlah soal. Buka Kelola Soal lalu periksa.");
+    try { await updateDoc(doc(db, modulCol(t), v), { aktif: !cur.aktif }); } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
   },
-  deleteQuestion: function(v, el){
-    var quizId = el.getAttribute("data-quiz");
-    var q = cache.quizzes[quizId]; if(!q) return;
-    var questions = (q.questions||[]).filter(function(qq){ return qq.id!==v; });
-    db.collection("quizzes").doc(quizId).update({questions:questions});
+  async bukaSoal(v, el) {
+    const t = el.getAttribute("data-t"), k = t + ":" + v;
+    S.openQ = S.openQ === k ? null : k;
+    S.draftSoal = { teks: "", opsi: ["", "", "", ""], kunci: 0 };
+    render();
+    if (t === "posttest" && S.openQ === k) {
+      try {
+        C.adm.peserta[v] = (await getCountFromServer(query(collection(db, "jawaban"), where("testId", "==", v)))).data().count;
+        render();
+      } catch (e) {}
+    }
   },
-  createPrize: function(){
-    var np = state.newPrize;
-    if(!np.name.trim() || np.cost===""){ showToast("error","Lengkapi nama dan biaya poin."); return; }
-    var stock = np.stock===""? -1 : parseInt(np.stock,10);
-    db.collection("prizes").add({name:np.name.trim(), cost:parseInt(np.cost,10)||0, stock:stock, active:true, createdAt:new Date().toISOString()})
-      .then(function(){ state.newPrize={name:"",cost:"",stock:""}; showToast("success","Hadiah ditambahkan."); });
+  setKunci(v) { S.draftSoal.kunci = parseInt(v, 10); render(); },
+  async tambahSoal(v, el) {
+    const t = el.getAttribute("data-t"), d = S.draftSoal;
+    if (!d.teks.trim()) return toast("no", "Pertanyaan wajib diisi.");
+    const idx = [0, 1, 2, 3].filter((i) => d.opsi[i].trim());
+    if (idx.length < 2) return toast("no", "Minimal 2 opsi.");
+    const item = { id: uid(), teks: d.teks.trim(), opsi: idx.map((i) => d.opsi[i].trim()) };
+    const cur = (t === "kuesioner" ? C.kuesioner : C.posttest)[v];
+    const daftar = (cur[modulField(t)] || []).concat([item]);
+    try {
+      if (t === "posttest") {
+        const k = idx.indexOf(d.kunci);
+        if (k < 0) return toast("no", "Kunci jawaban harus opsi yang terisi.");
+        if (daftar.length > MAKS_SOAL) return toast("no", "Maksimal " + MAKS_SOAL + " soal per post test.");
+        if ((C.adm.peserta[v] || 0) > 0) return toast("no", "Sudah ada peserta, soal tidak bisa diubah.");
+        const kunci = (C.adm.kunci[v] || []).concat([k]);
+        const b = writeBatch(db);
+        b.update(doc(db, "posttest", v), { soal: daftar });
+        b.set(doc(db, "posttest_kunci", v), { kunci });
+        await b.commit();
+        C.adm.kunci[v] = kunci;
+      } else {
+        await updateDoc(doc(db, "kuesioner", v), { pertanyaan: daftar });
+      }
+      S.draftSoal = { teks: "", opsi: ["", "", "", ""], kunci: 0 };
+      toast("ok", "Ditambahkan.");
+    } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
   },
-  togglePrizeActive: function(v){ var p = cache.prizes[v]; if(!p) return; db.collection("prizes").doc(v).update({active: p.active===false}); },
-  deletePrize: function(v){ if(!confirm("Hapus hadiah ini?")) return; db.collection("prizes").doc(v).delete(); },
-  approveRedemption: function(v){ db.collection("redemptions").doc(v).update({status:"fulfilled", resolvedAt:new Date().toISOString()}); },
-  rejectRedemption: function(v){
-    var r = cache.redemptions[v]; if(!r) return;
-    db.collection("redemptions").doc(v).update({status:"rejected", resolvedAt:new Date().toISOString()}).then(function(){
-      var p = cache.prizes[r.prizeId];
-      if(p && p.stock!==-1){ db.collection("prizes").doc(r.prizeId).update({stock:p.stock+1}); }
-    });
+  async hapusSoal(v, el) {
+    const t = el.getAttribute("data-t"), mid = el.getAttribute("data-m");
+    const cur = (t === "kuesioner" ? C.kuesioner : C.posttest)[mid];
+    const lama = cur[modulField(t)] || [];
+    const pos = lama.findIndex((q) => q.id === v);
+    if (pos < 0) return;
+    try {
+      if (t === "posttest") {
+        if ((C.adm.peserta[mid] || 0) > 0) return toast("no", "Sudah ada peserta, soal tidak bisa diubah.");
+        const kunci = (C.adm.kunci[mid] || []).filter((_, i) => i !== pos);
+        const b = writeBatch(db);
+        b.update(doc(db, "posttest", mid), { soal: lama.filter((_, i) => i !== pos) });
+        b.set(doc(db, "posttest_kunci", mid), { kunci });
+        await b.commit();
+        C.adm.kunci[mid] = kunci;
+      } else {
+        await updateDoc(doc(db, "kuesioner", mid), { pertanyaan: lama.filter((_, i) => i !== pos) });
+      }
+    } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
+  },
+  async hapusModul(v, el) {
+    if (!confirm("Hapus modul ini? Jawaban & poin yang sudah masuk tetap tersimpan.")) return;
+    const t = el.getAttribute("data-t");
+    try {
+      const b = writeBatch(db);
+      b.delete(doc(db, modulCol(t), v));
+      if (t === "posttest") b.delete(doc(db, "posttest_kunci", v));
+      await b.commit();
+    } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
+  },
+
+  async tambahKnowledge() {
+    const d = S.draftKn;
+    if (!d.judul.trim() || !d.url.trim()) return toast("no", "Judul dan URL wajib diisi.");
+    if (!/^https?:\/\//i.test(d.url.trim())) return toast("no", "URL harus diawali http:// atau https://");
+    try { await addDoc(collection(db, "knowledge"), { judul: d.judul.trim(), tipe: d.tipe, url: d.url.trim(), target: d.target, aktif: true, createdAt: nowIso() }); S.draftKn = { judul: "", tipe: "PDF", url: "", target: "semua" }; toast("ok", "Materi ditambahkan."); }
+    catch (e) { toast("no", pesanGagal(e, "Gagal")); }
+  },
+  async toggleKnowledge(v) { try { await updateDoc(doc(db, "knowledge", v), { aktif: C.knowledge[v].aktif === false }); } catch (e) { toast("no", pesanGagal(e, "Gagal")); } },
+  async hapusKnowledge(v) { if (!confirm("Hapus materi ini?")) return; try { await deleteDoc(doc(db, "knowledge", v)); } catch (e) { toast("no", pesanGagal(e, "Gagal")); } },
+
+  async tambahHadiah() {
+    const d = S.draftHd;
+    const poin = parseInt(d.poin, 10);
+    if (!d.nama.trim() || !(poin > 0)) return toast("no", "Nama dan poin (lebih dari 0) wajib diisi.");
+    try { await addDoc(collection(db, "hadiah"), { nama: d.nama.trim(), poin, stok: d.stok === "" ? -1 : Math.max(0, parseInt(d.stok, 10) || 0), aktif: true, createdAt: nowIso() }); S.draftHd = { nama: "", poin: "", stok: "" }; toast("ok", "Hadiah ditambahkan."); }
+    catch (e) { toast("no", pesanGagal(e, "Gagal")); }
+  },
+  async toggleHadiah(v) { try { await updateDoc(doc(db, "hadiah", v), { aktif: C.hadiah[v].aktif === false }); } catch (e) { toast("no", pesanGagal(e, "Gagal")); } },
+  async hapusHadiah(v) { if (!confirm("Hapus hadiah ini?")) return; try { await deleteDoc(doc(db, "hadiah", v)); } catch (e) { toast("no", pesanGagal(e, "Gagal")); } },
+
+  async setujuiRedeem(v) {
+    const r = C.adm.redeem.find((x) => x.id === v);
+    if (!r || r.status !== "pending") return;
+    if (!confirm("Setujui penukaran " + r.hadiahNama + " untuk " + r.nama + "? Poin dipotong permanen.")) return;
+    try { await setujuiRedeem(r); toast("ok", "Disetujui. Poin dipotong permanen."); if (C.adm.stats) C.adm.stats.pending = Math.max(0, C.adm.stats.pending - 1); }
+    catch (e) { toast("no", pesanGagal(e, "Gagal")); }
+  },
+  async tolakRedeem(v) {
+    const r = C.adm.redeem.find((x) => x.id === v);
+    if (!r || r.status !== "pending") return;
+    const alasan = prompt("Alasan penolakan:");
+    if (alasan === null) return;
+    try { await tolakRedeem(r, alasan); toast("ok", "Ditolak. Poin dan kuota petugas dikembalikan."); if (C.adm.stats) C.adm.stats.pending = Math.max(0, C.adm.stats.pending - 1); }
+    catch (e) { toast("no", pesanGagal(e, "Gagal")); }
+  },
+
+  async manualAdj() {
+    const d = S.draftAdj;
+    const delta = parseInt(d.poin, 10);
+    if (!delta) return toast("no", "Poin tidak boleh kosong / nol.");
+    if (!d.alasan.trim()) return toast("no", "Alasan wajib diisi.");
+    try {
+      const userId = await cariUserId(d.id);
+      if (!userId) return toast("no", "User ID / Kode tidak ditemukan.");
+      await catatAdjustment(userId, delta, d.alasan.trim());
+      S.draftAdj = { id: "", poin: "", alasan: "" };
+      toast("ok", "Adjustment tercatat di ledger."); loadLedgerTerbaru();
+    } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
+  },
+
+  async simpanWilayah() {
+    const rowsIn = S.bulkWilayah.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map((l) => {
+      const p = l.split(l.indexOf("\t") >= 0 ? "\t" : ",").map((x) => x.trim());
+      return { area: p[0] || "", regional: p[1] || "", branch: p[2] || "", cluster: p[3] || "" };
+    }).filter((r) => r.area && r.regional && r.branch && r.cluster);
+    if (!rowsIn.length) return toast("no", "Tidak ada baris valid. Format: Area, Regional, Branch, Cluster");
+    try { await setDoc(doc(db, "master", "wilayah"), { rows: rowsIn, updatedAt: nowIso() }); toast("ok", rowsIn.length + " cluster tersimpan."); loadWilayah(); }
+    catch (e) { toast("no", pesanGagal(e, "Gagal")); }
+  },
+  muatContohWilayah() {
+    S.bulkWilayah = ["Area 1, Sumbagut, Medan, Medan Kota", "Area 1, Sumbagsel, Palembang, Palembang Kota", "Area 2, Jabo, Jakarta, Jakarta Selatan",
+      "Area 2, Jabar, Bandung, Bandung Kota", "Area 3, Jatim, Surabaya, Surabaya Utara", "Area 3, Bali Nusra, Denpasar, Denpasar",
+      "Area 4, Kalimantan, Balikpapan, Balikpapan Kota", "Area 4, Sulawesi, Makassar, Makassar Kota"].join("\n");
+    render();
   }
 };
 
-var inputMap = {
-  identifySearch:"identifySearch", registerName:"registerName", registerPhone:"registerPhone",
-  adminEmail:"adminEmail", adminPassword:"adminPassword", newQuizTitle:"newQuizTitle",
-  qDraftText:function(v){ state.qDraft.text=v; }, qDraftOpt0:function(v){ state.qDraft.opts[0]=v; },
-  qDraftOpt1:function(v){ state.qDraft.opts[1]=v; }, qDraftOpt2:function(v){ state.qDraft.opts[2]=v; },
-  qDraftOpt3:function(v){ state.qDraft.opts[3]=v; }, qDraftPoints:function(v){ state.qDraft.points=v; },
-  newPrizeName:function(v){ state.newPrize.name=v; }, newPrizeCost:function(v){ state.newPrize.cost=v; },
-  newPrizeStock:function(v){ state.newPrize.stock=v; }
-};
-
-document.getElementById("app").addEventListener("click", function(e){
-  var el = e.target.closest("[data-action]");
-  if(!el) return;
-  var action = el.getAttribute("data-action");
-  var val = el.getAttribute("data-val");
-  if(actions[action]) actions[action](val, el);
+/* ============ event ============ */
+const root = document.getElementById("app");
+root.addEventListener("click", (e) => {
+  const el = e.target.closest("[data-do]");
+  if (!el) return;
+  if (el.classList.contains("modal-bd") && e.target.closest("[data-stop]")) return;
+  const fn = DO[el.getAttribute("data-do")];
+  if (fn) fn(el.getAttribute("data-v"), el);
 });
-document.getElementById("app").addEventListener("input", function(e){
-  var el = e.target;
-  var key = el.getAttribute("data-input");
-  if(key && inputMap[key]){
-    var mapper = inputMap[key];
-    if(typeof mapper==="function") mapper(el.value); else state[mapper] = el.value;
+root.addEventListener("input", (e) => {
+  const el = e.target, path = el.getAttribute("data-in");
+  if (!path || el.tagName === "SELECT") return;
+  setPath(path, el.value);
+  if (el.getAttribute("data-live")) {
+    const hint = root.querySelector('[data-hint="' + path.split(".")[1] + '"]');
+    if (path === "daftar.userId" && hint) {
+      const bad = el.value && !USERID_RE.test(normUserId(el.value));
+      hint.textContent = bad ? "Harus tepat 10 digit angka." : "10 digit angka, sesuai data Digipos.";
+      hint.style.color = bad ? "var(--bad)" : "";
+    }
+    if (path === "daftar.kode" && hint) {
+      const bad = el.value && !KODE_RE.test(normKode(el.value));
+      hint.textContent = bad ? "Format: huruf/angka lalu garis bawah, cth. AHA1927381_DS." : "Huruf/angka + sufiks, cth. AHA1927381_DS.";
+      hint.style.color = bad ? "var(--bad)" : "";
+    }
   }
 });
-document.getElementById("app").addEventListener("change", function(e){
-  var el = e.target;
-  var photoTarget = el.getAttribute("data-photo-input");
-  if(photoTarget && el.files && el.files[0]){
-    compressPhoto(el.files[0]).then(function(dataUrl){
-      if(photoTarget==="registerPhoto") state.registerPhoto = dataUrl;
-      if(photoTarget==="quizPhoto") state.quizPhoto = dataUrl;
-      renderApp();
-    }).catch(function(){ showToast("error","Gagal memproses foto."); });
+root.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter") return;
+  const path = e.target.getAttribute && e.target.getAttribute("data-in");
+  if (path === "masuk.pin" || path === "masuk.id") DO.masuk();
+  if (path === "admLogin.pass") DO.admMasuk();
+  if (path === "fPetugas.q") DO.cariPetugas();
+});
+root.addEventListener("change", async (e) => {
+  const el = e.target;
+  const stId = el.getAttribute("data-status");
+  if (stId) {
+    try { await updateDoc(doc(db, "petugas", stId), { status: el.value }); toast("ok", "Status diperbarui."); }
+    catch (err) { toast("no", pesanGagal(err, "Gagal")); }
     return;
   }
-  var ansKey = el.getAttribute("data-quiz-answer");
-  if(ansKey){
-    state.quizAnswers[ansKey] = parseInt(el.value,10);
-    var q = cache.quizzes[state.activeQuizId];
-    var total = (q.questions||[]).length;
-    var answered = Object.keys(state.quizAnswers).length;
-    var fill = document.querySelector(".progress-fill");
-    if(fill) fill.style.width = Math.round(answered/total*100)+"%";
-    var btn = document.getElementById("quizSubmitBtn");
-    if(btn) btn.disabled = answered<total;
-    var label = el.closest(".card").querySelector(".progress-track").nextElementSibling;
-    if(label) label.textContent = answered+" / "+total+" terjawab";
+  const path = el.getAttribute("data-in");
+  if (path && el.tagName === "SELECT") {
+    setPath(path, el.value);
+    if (path === "daftar.area") { S.daftar.regional = ""; S.daftar.branch = ""; S.daftar.cluster = ""; }
+    if (path === "daftar.regional") { S.daftar.branch = ""; S.daftar.cluster = ""; }
+    if (path === "daftar.branch") S.daftar.cluster = "";
+    if (path === "fPetugas.group" || path === "fPetugas.status") { S.fPetugas.q = ""; loadPetugasPage(true); }
+    return render();
   }
+  const ft = el.getAttribute("data-foto");
+  if (ft && el.files && el.files[0]) {
+    try {
+      const url = await kompresFoto(el.files[0], ft === "daftar" ? 420 : 360, 0.58);
+      if (ft === "daftar") S.daftar.foto = url;
+      else if (ft === "gate" && S.gate) S.gate.foto = url;
+      else if (ft === "profil") S.profil.foto = url;
+      render();
+    } catch (err) { toast("no", "Gagal memproses foto."); }
+    return;
+  }
+  const ans = el.getAttribute("data-ans");
+  if (ans && S.run) { S.run.jawaban[ans] = parseInt(el.value, 10); render(); }
 });
 
-function subscribePublic(){
-  db.collection("members").onSnapshot(function(qs){
-    var m = {}; qs.forEach(function(d){ m[d.id]=d.data(); });
-    cache.members = m; cache.membersLoaded = true; renderApp();
-  }, function(err){ cache.membersLoaded = true; console.error(err); });
-
-  db.collection("quizzes").onSnapshot(function(qs){
-    var m = {}; qs.forEach(function(d){ m[d.id]=d.data(); });
-    cache.quizzes = m; cache.quizzesLoaded = true; renderApp();
-  }, function(err){ cache.quizzesLoaded = true; console.error(err); });
-
-  db.collection("submissions").onSnapshot(function(qs){
-    var m = {}; qs.forEach(function(d){ m[d.id]=d.data(); });
-    cache.submissions = m; cache.submissionsLoaded = true; renderApp();
-  }, function(err){ cache.submissionsLoaded = true; console.error(err); });
-
-  db.collection("prizes").onSnapshot(function(qs){
-    var m = {}; qs.forEach(function(d){ m[d.id]=d.data(); });
-    cache.prizes = m; cache.prizesLoaded = true; renderApp();
-  }, function(err){ cache.prizesLoaded = true; console.error(err); });
-
-  db.collection("redemptions").onSnapshot(function(qs){
-    var m = {}; qs.forEach(function(d){ m[d.id]=d.data(); });
-    cache.redemptions = m; cache.redemptionsLoaded = true; renderApp();
-  }, function(err){ cache.redemptionsLoaded = true; console.error(err); });
+/* ============ boot ============ */
+async function cekAdmin(user) {
+  S.adminCek = false; render();
+  try { S.adminOk = (await getDoc(doc(db, "admins", user.uid))).exists(); }
+  catch (e) { S.adminOk = false; }
+  S.adminCek = true;
+  render();
+  if (S.adminOk) onAdmMenu(S.adminMenu);
 }
 
-function subscribePrivate(){
-  unsubPrivate.push(db.collection("members_private").onSnapshot(function(qs){
-    var m = {}; qs.forEach(function(d){ m[d.id]=d.data(); });
-    cache.membersPrivate = m; renderApp();
-  }, function(err){ console.error(err); }));
-  unsubPrivate.push(db.collection("submissions_private").onSnapshot(function(qs){
-    var m = {}; qs.forEach(function(d){ m[d.id]=d.data(); });
-    cache.submissionsPrivate = m; renderApp();
-  }, function(err){ console.error(err); }));
-}
-function unsubscribePrivate(){
-  unsubPrivate.forEach(function(fn){ fn(); });
-  unsubPrivate = [];
-  cache.membersPrivate = {}; cache.submissionsPrivate = {};
-}
-
-auth.onAuthStateChanged(function(user){
-  state.adminUser = user;
-  if(user){ subscribePrivate(); }
-  else { unsubscribePrivate(); }
-  renderApp();
+onAuthStateChanged(auth, (u) => {
+  /* identitas anonim milik perangkat petugas tidak pernah dianggap calon admin */
+  const user = u && !u.isAnonymous ? u : null;
+  S.adminUser = user;
+  if (user) { S.mode = "admin"; cekAdmin(user); }
+  else { S.adminOk = false; S.adminCek = false; if (S.mode === "admin") { S.mode = "petugas"; S.view = S.me ? "app" : "masuk"; } render(); }
 });
 
-subscribePublic();
-var saved = localStorage.getItem(LS_KEY);
-if(saved){ state.memberId = saved; state.view = "dashboard"; } else { state.view = "home"; }
-renderApp();
-
+subscribeKatalog();
+(function mulai() {
+  const saved = localStorage.getItem(LS);
+  const exp = parseInt(localStorage.getItem(LS + "_exp") || "0", 10);
+  if (saved && exp > Date.now()) {
+    S.me = saved; S.view = "app"; S.tab = "home";
+    subscribeSaya(saved);
+    onTab("home");
+  } else {
+    if (saved) S.masuk.err = "Sesi berakhir. Silakan masuk lagi.";
+    localStorage.removeItem(LS); localStorage.removeItem(LS + "_exp");
+    S.view = "masuk";
+  }
+  render();
 })();
 </script>
 </body>
 </html>
+
