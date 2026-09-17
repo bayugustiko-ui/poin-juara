@@ -251,6 +251,21 @@ tr:last-child td{border-bottom:none;}
 .pager{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;font-size:12.5px;color:var(--ink-dim);}
 .skel{color:var(--ink-faint);font-size:13px;padding:14px 0;text-align:center;}
 .rank-note{font-size:11.5px;color:var(--ink-dim);margin-top:4px;}
+[hidden]{display:none!important;}
+button.photo-tile{font:inherit;padding:0;width:100%;}
+.cam-overlay{position:fixed;inset:0;max-width:520px;margin:0 auto;background:#0d0b0b;color:#fff;z-index:100;display:flex;flex-direction:column;gap:12px;padding:16px;}
+.cam-top{display:flex;align-items:center;justify-content:space-between;}
+.cam-top b{font-size:17px;font-weight:800;}
+.cam-x{background:rgba(255,255,255,.12);border:none;color:#fff;padding:8px 13px;border-radius:9px;font-weight:600;cursor:pointer;}
+.cam-frame{position:relative;flex:1;min-height:0;border-radius:18px;overflow:hidden;background:#000;}
+.cam-frame video,.cam-frame .cam-still{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);}
+.cam-guide{position:absolute;left:50%;top:46%;width:62%;aspect-ratio:3/4;transform:translate(-50%,-50%);border:2px dashed rgba(255,255,255,.55);border-radius:50%;pointer-events:none;}
+.cam-msg{font-size:13.5px;line-height:1.45;color:rgba(255,255,255,.85);min-height:40px;}
+.cam-msg.bad{color:#ffb4a8;}
+.cam-msg.warn{color:#f3c97a;}
+.cam-actions{display:flex;flex-direction:column;gap:9px;}
+.cam-sec{background:rgba(255,255,255,.12);color:#fff;}
+.cam-warn{background:#6b4a12;color:#fde7b8;}
 </style>
 </head>
 <body>
@@ -290,15 +305,20 @@ const POIN_KUESIONER = 25;
 const POIN_PER_BENAR = 5;
 const HALAMAN = 50;
 /* Batas soal per post test: rules menghitung ulang nilai soal demi soal tanpa loop */
-const MAKS_SOAL = 20;
+const MAKS_SOAL = 30;
+/* Kuesioner tidak dinilai, jadi batasnya hanya soal ukuran dokumen jawaban */
+const MAKS_PERTANYAAN = 50;
 /* Firestore membatasi 500 operasi per batch */
 const IMPORT_BATCH = 450;
 /* Leaderboard petugas dibaca dari 1 dokumen ringkasan; Admin memperbaruinya bila lebih tua dari ini */
 const LB_BASI_JAM = 6;
 /* Storage gratis 1 GB tidak pernah reset: foto aktivitas punya masa simpan, foto baseline disimpan */
-const HAPUS_FOTO_HARI = { kuesioner: 60, posttest: 60, redeem: 120 };
+const HAPUS_FOTO_HARI = { kuesioner: 45, posttest: 45, redeem: 45 };
 const FOTO_AKTIVITAS = { dim: 300, q: 0.5 };
 const FOTO_BASELINE = { dim: 400, q: 0.55 };
+/* Deteksi wajah berjalan di HP (face-api TinyFaceDetector, sekali unduh ±1,5 MB lalu tersimpan di cache) */
+const FACEAPI_BASE = "https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15";
+const DETEKSI = { inputSize: 320, skorMin: 0.5, rasioMin: 0.18, maksGagal: 3 };
 
 /* Format mengikuti data Digipos: user_id 10 digit; username huruf/angka, boleh titik, sufiks _XX opsional */
 const USERID_RE = /^\d{10}$/;
@@ -341,30 +361,12 @@ function grpTag(g) { return '<span class="grp ' + grpClass(g) + '">' + esc(g) + 
 function fmtNum(n) { return (n == null ? 0 : n).toLocaleString("id-ID"); }
 function namaTampil(p) { return (p && (p.nama || p.kode || p.id)) || "-"; }
 
-function kompresFoto(file, maxDim, q) {
-  return new Promise((res, rej) => {
-    const fr = new FileReader();
-    fr.onerror = rej;
-    fr.onload = () => {
-      const img = new Image();
-      img.onerror = rej;
-      img.onload = () => {
-        let w = img.width, h = img.height;
-        if (w > h && w > maxDim) { h = Math.round(h * maxDim / w); w = maxDim; }
-        else if (h >= w && h > maxDim) { w = Math.round(w * maxDim / h); h = maxDim; }
-        const c = document.createElement("canvas");
-        c.width = w; c.height = h;
-        c.getContext("2d").drawImage(img, 0, 0, w, h);
-        res(c.toDataURL("image/jpeg", q));
-      };
-      img.src = fr.result;
-    };
-    fr.readAsDataURL(file);
-  });
-}
 
 /* ============ state ============ */
 const kosongTarget = () => ({ group: "semua", area: "", regional: "" });
+/* Satu slot upload dipakai bergantian oleh knowledge / hadiah / adjustment */
+const kosongUmum = () => ({ jenis: "", namaFile: "", valid: [], salah: [], busy: false, log: [] });
+const MAKS_BARIS_UPLOAD = { knowledge: 200, hadiah: 100, adjustment: 300, wilayah: 2000 };
 const kosongModul = () => Object.assign({ judul: "", mulai: "", selesai: "" }, kosongTarget());
 
 const S = {
@@ -378,15 +380,15 @@ const S = {
   adminCek: false,
   adminMenu: "dashboard",
   masuk: { id: "", username: "", err: "", info: "", busy: false },
-  daftar: { nama: "", group: "", userId: "", kode: "", nomor: "", area: "", regional: "", branch: "", cluster: "", foto: null, err: "", busy: false },
-  lengkapi: { nama: "", nomor: "", foto: null, err: "", busy: false },
+  daftar: { nama: "", group: "", userId: "", kode: "", nomor: "", area: "", regional: "", branch: "", cluster: "", foto: null, wajah: null, err: "", busy: false },
+  lengkapi: { nama: "", nomor: "", foto: null, wajah: null, err: "", busy: false },
   gate: null,
   run: null,
   hasil: null,
   lbFilter: "semua",
-  profil: { nomor: "", foto: null },
+  profil: { nomor: "", foto: null, wajah: null },
   admLogin: { email: "", pass: "", err: "" },
-  fPetugas: { group: "", status: "", q: "" },
+  fPetugas: { group: "", status: "", q: "", area: "", regional: "", branch: "", cluster: "" },
   fRedeem: "pending",
   draftModul: { kuesioner: kosongModul(), posttest: kosongModul() },
   draftSoal: { teks: "", opsi: ["", "", "", ""], kunci: 0 },
@@ -395,6 +397,8 @@ const S = {
   draftAdj: { id: "", poin: "", alasan: "" },
   bulkWilayah: "",
   imp: { namaFile: "", sheet: "", valid: [], salah: [], group: "Direct Sales", busy: false, log: [], hasil: null },
+  impSoal: { key: "", namaFile: "", valid: [], salah: [], busy: false },
+  impUmum: kosongUmum(),
   openQ: null,
   modal: null,
   toast: null
@@ -414,7 +418,7 @@ const C = {
     petugas: { rows: [], cursor: null, habis: false, loading: false, key: "" },
     redeem: [], redeemLoaded: false,
     ledger: [], ledgerLoaded: false,
-    kunci: {}, peserta: {}, fotoCache: {},
+    kunci: {}, peserta: {}, fotoCache: {}, peringatan: [],
     fotoBersih: null
   }
 };
@@ -433,7 +437,6 @@ function snap(p) {
     periode: periode()
   };
 }
-
 
 /* =====================================================================
    DATA LAYER
@@ -525,6 +528,7 @@ async function daftarBaru(d) {
   b.set(doc(db, "petugas_cek", userId), { nomor: d.nomor.trim(), foto: d.foto });
   b.set(doc(db, "perangkat", userId), { authUid, kode, waktu: nowIso() });
   b.set(doc(db, "sesiAuth", authUid), { userId });
+  if (wajahBermasalah(d.wajah)) b.set(doc(col("peringatan")), dokPeringatan(Object.assign({ id: userId }, pub), "registrasi", d.wajah, ""));
   await b.commit();
   return userId;
 }
@@ -534,6 +538,7 @@ async function lengkapiProfil(p, l) {
   const b = writeBatch(db);
   b.update(doc(db, "petugas", p.id), { nama: l.nama.trim(), status: "aktif", lengkapAt: nowIso() });
   b.set(doc(db, "petugas_cek", p.id), { nomor: l.nomor.trim(), foto: l.foto });
+  if (wajahBermasalah(l.wajah)) b.set(doc(col("peringatan")), dokPeringatan(Object.assign({}, p, { nama: l.nama.trim() }), "lengkapi", l.wajah, ""));
   await b.commit();
 }
 
@@ -648,9 +653,26 @@ function tugasSaya() {
 }
 
 /* ---------- tulis: aktivitas ---------- */
-async function simpanFotoAktivitas(p, tujuan, foto) {
+/* Foto yang lolos dengan tanda (wajah tidak terdeteksi / pendeteksi gagal dimuat) → antrean Peringatan Admin */
+function wajahBermasalah(meta) { return !!(meta && meta.status && meta.status !== "ok"); }
+function dokPeringatan(p, tipe, meta, fotoId) {
+  return {
+    userId: p.id, kode: p.kode || "", nama: p.nama || "", group: p.group || "", regional: p.regional || "", cluster: p.cluster || "",
+    tipe, jenis: meta.status, gagalDeteksi: meta.gagal || 0, fotoId: fotoId || "", status: "baru", waktu: nowIso()
+  };
+}
+
+async function simpanFotoAktivitas(p, tujuan, foto, meta) {
   const ref = doc(col("foto_aktivitas"));
-  await setDoc(ref, Object.assign(snap(p), { tipe: tujuan, foto, waktu: nowIso(), hapusSetelah: tambahHari(HAPUS_FOTO_HARI[tujuan] || 60) }));
+  const b = writeBatch(db);
+  b.set(ref, Object.assign(snap(p), {
+    tipe: tujuan, foto, waktu: nowIso(), hapusSetelah: tambahHari(HAPUS_FOTO_HARI[tujuan] || 45),
+    wajah: meta && meta.status ? meta.status : "tidak_dicek",
+    skorWajah: meta && meta.skor != null ? meta.skor : null,
+    gagalDeteksi: meta && meta.gagal ? meta.gagal : 0
+  }));
+  if (wajahBermasalah(meta)) b.set(doc(col("peringatan")), dokPeringatan(p, tujuan, meta, ref.id));
+  await b.commit();
   return ref.id;
 }
 
@@ -660,7 +682,7 @@ function tambahPoinKe(b, p, delta, ledgerId) {
   b.update(doc(db, "petugas", p.id), upd);
 }
 
-async function submitKuesioner(p, k, jawaban, fotoId) {
+async function submitKuesioner(p, k, jawaban, fotoId, wajahFoto) {
   const w = nowIso();
   const detail = (k.pertanyaan || []).map((q) => ({
     pertanyaanId: q.id, pertanyaan: q.teks,
@@ -670,7 +692,7 @@ async function submitKuesioner(p, k, jawaban, fotoId) {
   const ledgerId = "kue_" + k.id + "_" + p.id;
   const b = writeBatch(db);
   b.set(doc(db, "respons", k.id + "_" + p.id), Object.assign({}, s, {
-    grupPeriode: p.group + "|" + s.periode, kuesionerId: k.id, judul: k.judul, jawaban: detail, fotoId, waktu: w
+    grupPeriode: p.group + "|" + s.periode, kuesionerId: k.id, judul: k.judul, jawaban: detail, fotoId, wajahFoto: wajahFoto || "", waktu: w
   }));
   b.set(doc(db, "ledger", ledgerId), Object.assign({}, s, {
     delta: POIN_KUESIONER, jenis: "kuesioner", ref: k.id, aktivitas: "Kuesioner " + k.judul + " — Lengkap", waktu: w, oleh: "sistem"
@@ -700,7 +722,7 @@ async function jawabanTerkunci(tid, userId) {
   } catch (e) { return null; }
 }
 
-async function submitPosttest(p, t, jawaban, fotoId) {
+async function submitPosttest(p, t, jawaban, fotoId, wajahFoto) {
   const w = nowIso();
   const idx = await kunciJawaban(p, t, jawaban);
   const kd = await getDoc(doc(db, "posttest_kunci", t.id));
@@ -717,7 +739,7 @@ async function submitPosttest(p, t, jawaban, fotoId) {
   const ledgerId = "pt_" + t.id + "_" + p.id;
   const b = writeBatch(db);
   b.set(doc(db, "hasil", t.id + "_" + p.id), Object.assign({}, s, {
-    grupPeriode: p.group + "|" + s.periode, testId: t.id, judul: t.judul, detail, benar, total, poin, fotoId: fotoId || "", waktu: w
+    grupPeriode: p.group + "|" + s.periode, testId: t.id, judul: t.judul, detail, benar, total, poin, fotoId: fotoId || "", wajahFoto: wajahFoto || "", waktu: w
   }));
   b.set(doc(db, "ledger", ledgerId), Object.assign({}, s, {
     delta: poin, jenis: "posttest", ref: t.id, aktivitas: "Post Test " + t.judul + " — " + benar + " benar × " + POIN_PER_BENAR, waktu: w, oleh: "sistem"
@@ -727,11 +749,11 @@ async function submitPosttest(p, t, jawaban, fotoId) {
   return { benar, total, poin, detail };
 }
 
-async function ajukanRedeem(p, hadiahId, h, fotoId) {
+async function ajukanRedeem(p, hadiahId, h, fotoId, wajah) {
   const s = snap(p);
   const b = writeBatch(db);
   b.set(doc(db, "redeem", p.id + "_" + s.periode), Object.assign({}, s, {
-    hadiahId, hadiahNama: h.nama, poin: h.poin, status: "pending", fotoId, waktu: nowIso()
+    hadiahId, hadiahNama: h.nama, poin: h.poin, status: "pending", fotoId, wajah: wajah || "", waktu: nowIso()
   }));
   if (h.stok !== -1) b.update(doc(db, "hadiah", hadiahId), { stok: increment(-1) });
   await b.commit();
@@ -783,7 +805,7 @@ async function loadAdminStats() {
   const per = periode();
   const seminggu = new Date(Date.now() - 7 * 86400000).toISOString();
   const cnt = (q) => getCountFromServer(q).then((r) => r.data().count).catch(() => 0);
-  const [total, aktif, review, belum, baru, respPer, pending, grpTotals, grpResp, pt, rv] = await Promise.all([
+  const [total, aktif, review, belum, baru, respPer, pending, grpTotals, grpResp, pt, rv, prCount, prList] = await Promise.all([
     cnt(col("petugas")),
     cnt(query(col("petugas"), where("status", "==", "aktif"))),
     cnt(query(col("petugas"), where("status", "==", "review"))),
@@ -794,7 +816,9 @@ async function loadAdminStats() {
     Promise.all(GROUPS.map((g) => cnt(query(col("petugas"), where("group", "==", g))))),
     Promise.all(GROUPS.map((g) => cnt(query(col("respons"), where("grupPeriode", "==", g + "|" + per))))),
     getAggregateFromServer(col("hasil"), { rata: average("benar"), soal: average("total") }).then((r) => r.data()).catch(() => ({ rata: null, soal: null })),
-    getDocs(query(col("petugas"), where("status", "==", "review"), limit(20))).then(rows).catch(() => [])
+    getDocs(query(col("petugas"), where("status", "==", "review"), limit(20))).then(rows).catch(() => []),
+    cnt(query(col("peringatan"), where("status", "==", "baru"))),
+    getDocs(query(col("peringatan"), where("status", "==", "baru"), limit(20))).then(rows).catch(() => [])
   ]);
   const kuAktif = listOf(C.adm.kuesioner).filter((k) => k.aktif);
   const perGroup = GROUPS.map((g, i) => {
@@ -803,7 +827,8 @@ async function loadAdminStats() {
   });
   const targetAll = perGroup.reduce((s, x) => s + x.target, 0);
   C.adm.reviewList = rv;
-  C.adm.stats = { total, aktif, review, belum, baru, respPer, pending, perGroup, completion: targetAll ? Math.round(respPer / targetAll * 100) : 0, rataBenar: pt.rata, rataSoal: pt.soal, topSalah: null };
+  C.adm.peringatan = prList.sort((a, b) => (b.waktu || "").localeCompare(a.waktu || ""));
+  C.adm.stats = { total, aktif, review, belum, baru, respPer, pending, perGroup, peringatan: prCount, completion: targetAll ? Math.round(respPer / targetAll * 100) : 0, rataBenar: pt.rata, rataSoal: pt.soal, topSalah: null };
   render();
   loadSoalPalingSalah();
   loadLeaderboard().then(() => {
@@ -866,6 +891,202 @@ async function bacaFileImport(file) {
     .map((h) => String(h).trim().toLowerCase()).includes("user_id");
   const sheet = wb.SheetNames.find(adaUserId) || wb.SheetNames[0];
   return { sheet, data: X.utils.sheet_to_json(wb.Sheets[sheet], { defval: "", raw: true }) };
+}
+
+/* ---- upload soal massal: satu baris Excel = satu pertanyaan ---- */
+async function bacaFileSoal(file) {
+  const X = await muatSheetJS();
+  const wb = X.read(await file.arrayBuffer(), { type: "array" });
+  const adaSoal = (n) => ((X.utils.sheet_to_json(wb.Sheets[n], { header: 1, blankrows: false })[0]) || [])
+    .map((h) => String(h).trim().toLowerCase()).some((h) => ["pertanyaan", "soal", "teks"].includes(h));
+  const sheet = wb.SheetNames.find(adaSoal) || wb.SheetNames[0];
+  return { sheet, data: X.utils.sheet_to_json(wb.Sheets[sheet], { defval: "", raw: false }) };
+}
+
+const HURUF_KUNCI = { A: 0, B: 1, C: 2, D: 3, "1": 0, "2": 1, "3": 2, "4": 3 };
+
+function siapkanSoal(data, tipe) {
+  const isKu = tipe === "kuesioner";
+  const maks = isKu ? MAKS_PERTANYAAN : MAKS_SOAL;
+  const ambil = (r, keys) => {
+    for (const k of Object.keys(r)) if (keys.includes(String(k).trim().toLowerCase())) return String(r[k] == null ? "" : r[k]).trim();
+    return "";
+  };
+  const valid = [], salah = [];
+  data.forEach((r, i) => {
+    const baris = i + 2;
+    const teks = ambil(r, ["pertanyaan", "soal", "teks", "question"]);
+    const mentah = [1, 2, 3, 4].map((n) => ambil(r, ["opsi" + n, "opsi_" + n, "pilihan" + n, "jawaban" + n, ["a", "b", "c", "d"][n - 1]]));
+    /* baris kosong di bawah data diabaikan, bukan dianggap salah */
+    if (!teks && !mentah.some((o) => o)) return;
+    const isi = mentah.map((o, n) => ({ o, n })).filter((x) => x.o);
+    let alasan = "", kunci = 0;
+    if (!teks) alasan = "pertanyaan kosong";
+    else if (isi.length < 2) alasan = "minimal 2 opsi";
+    else if (valid.length >= maks) alasan = "melebihi maksimal " + maks;
+    else if (!isKu) {
+      const kolom = HURUF_KUNCI[ambil(r, ["kunci", "kunci_jawaban", "jawaban_benar", "answer"]).toUpperCase()];
+      if (kolom === undefined) alasan = "kunci harus diisi 1-4 atau A-D";
+      else {
+        kunci = isi.findIndex((x) => x.n === kolom);
+        if (kunci < 0) alasan = "kunci menunjuk opsi yang kosong";
+      }
+    }
+    if (alasan) { salah.push({ baris, teks, alasan }); return; }
+    valid.push({ teks, opsi: isi.map((x) => x.o), kunci });
+  });
+  return { valid, salah };
+}
+
+/* ---- upload knowledge / hadiah / adjustment ---- */
+function ambilKol(r, keys) {
+  for (const k of Object.keys(r)) if (keys.includes(String(k).trim().toLowerCase())) return String(r[k] == null ? "" : r[k]).trim();
+  return "";
+}
+const TIPE_KN = ["KV", "PDF", "VID", "DOC", "FAQ"];
+
+function siapkanKnowledge(data) {
+  const valid = [], salah = [];
+  data.forEach((r, i) => {
+    const baris = i + 2;
+    const judul = ambilKol(r, ["judul", "nama", "materi", "title"]);
+    const url = ambilKol(r, ["url", "link", "tautan"]);
+    if (!judul && !url) return;
+    const tipe = ambilKol(r, ["tipe", "jenis", "type"]).toUpperCase();
+    const grp = ambilKol(r, ["group", "grup"]);
+    let alasan = "";
+    if (!judul) alasan = "judul kosong";
+    else if (!url) alasan = "url kosong";
+    else if (!/^https?:\/\//i.test(url)) alasan = "url harus diawali http:// atau https://";
+    else if (valid.length >= MAKS_BARIS_UPLOAD.knowledge) alasan = "melebihi maksimal " + MAKS_BARIS_UPLOAD.knowledge;
+    if (alasan) { salah.push({ baris, alasan }); return; }
+    valid.push({
+      judul, url, tipe: TIPE_KN.includes(tipe) ? tipe : "PDF",
+      group: GROUPS.includes(grp) ? grp : "semua",
+      area: ambilKol(r, ["area", "area_name"]), regional: ambilKol(r, ["regional", "regional_name"])
+    });
+  });
+  return { valid, salah };
+}
+
+function siapkanHadiah(data) {
+  const valid = [], salah = [];
+  data.forEach((r, i) => {
+    const baris = i + 2;
+    const nama = ambilKol(r, ["nama", "hadiah", "nama_hadiah", "item"]);
+    const poinRaw = ambilKol(r, ["poin", "point", "harga"]);
+    if (!nama && !poinRaw) return;
+    const poin = parseInt(poinRaw.replace(/[^\d-]/g, ""), 10);
+    const stokRaw = ambilKol(r, ["stok", "stock", "kuota"]);
+    let alasan = "";
+    if (!nama) alasan = "nama hadiah kosong";
+    else if (!(poin > 0)) alasan = "poin harus angka lebih dari 0";
+    else if (valid.length >= MAKS_BARIS_UPLOAD.hadiah) alasan = "melebihi maksimal " + MAKS_BARIS_UPLOAD.hadiah;
+    if (alasan) { salah.push({ baris, alasan }); return; }
+    /* stok kosong atau tanda hubung = tak terbatas (-1) */
+    const stok = !stokRaw || stokRaw === "-" ? -1 : Math.max(0, parseInt(stokRaw.replace(/[^\d]/g, ""), 10) || 0);
+    valid.push({ nama, poin, stok });
+  });
+  return { valid, salah };
+}
+
+function siapkanAdjustment(data) {
+  const valid = [], salah = [];
+  data.forEach((r, i) => {
+    const baris = i + 2;
+    const id = ambilKol(r, ["user_id", "userid", "id", "id_digipos", "username_digipos", "username", "kode", "code"]);
+    const poinRaw = ambilKol(r, ["poin", "point", "delta", "adjustment"]);
+    const alasanKol = ambilKol(r, ["alasan", "keterangan", "catatan", "reason"]);
+    if (!id && !poinRaw) return;
+    const poin = parseInt(poinRaw.replace(/[^\d+-]/g, ""), 10);
+    let alasan = "";
+    if (!id) alasan = "ID / Username kosong";
+    else if (!poin) alasan = "poin kosong atau nol";
+    else if (!alasanKol) alasan = "alasan wajib diisi";
+    else if (valid.length >= MAKS_BARIS_UPLOAD.adjustment) alasan = "melebihi maksimal " + MAKS_BARIS_UPLOAD.adjustment;
+    if (alasan) { salah.push({ baris, alasan }); return; }
+    valid.push({ baris, id, poin, alasan: alasanKol });
+  });
+  return { valid, salah };
+}
+
+/* Baris dobel (area+regional+branch+cluster sama persis) dengan Master Wilayah yang ada dilewati otomatis */
+function siapkanWilayah(data) {
+  const valid = [], salah = [];
+  const kunci = new Set();
+  data.forEach((r, i) => {
+    const baris = i + 2;
+    const area = ambilKol(r, ["area", "area_name", "nama_area"]);
+    const regional = ambilKol(r, ["regional", "regional_name", "nama_regional"]);
+    const branch = ambilKol(r, ["branch", "branch_name", "nama_branch"]);
+    const cluster = ambilKol(r, ["cluster", "cluster_name", "nama_cluster"]);
+    if (!area && !regional && !branch && !cluster) return;
+    let alasan = "";
+    if (!area || !regional || !branch || !cluster) alasan = "area/regional/branch/cluster harus lengkap semua";
+    else if (valid.length >= MAKS_BARIS_UPLOAD.wilayah) alasan = "melebihi maksimal " + MAKS_BARIS_UPLOAD.wilayah;
+    else {
+      const k = [area, regional, branch, cluster].join("|");
+      if (kunci.has(k)) alasan = "baris dobel dalam file";
+      else kunci.add(k);
+    }
+    if (alasan) { salah.push({ baris, alasan }); return; }
+    valid.push({ area, regional, branch, cluster });
+  });
+  return { valid, salah };
+}
+
+async function simpanWilayahMassal(rowsBaru) {
+  const k = (w) => [w.area, w.regional, w.branch, w.cluster].join("|");
+  const peta = new Map();
+  C.wilayah.concat(rowsBaru).forEach((w) => peta.set(k(w), w));
+  const rowsW = Array.from(peta.values()).sort((a, b) => k(a).localeCompare(k(b)));
+  await setDoc(doc(db, "master", "wilayah"), { rows: rowsW, updatedAt: nowIso() });
+  C.wilayah = rowsW;
+  return rowsW.length;
+}
+
+async function simpanKnowledgeMassal(rows) {
+  const b = writeBatch(db), now = nowIso();
+  rows.forEach((r) => b.set(doc(col("knowledge")), {
+    judul: r.judul, tipe: r.tipe, url: r.url,
+    target: { group: r.group, area: r.area, regional: r.regional },
+    aktif: true, createdAt: now
+  }));
+  await b.commit();
+}
+
+async function simpanHadiahMassal(rows) {
+  const b = writeBatch(db), now = nowIso();
+  rows.forEach((r) => b.set(doc(col("hadiah")), { nama: r.nama, poin: r.poin, stok: r.stok, aktif: true, createdAt: now }));
+  await b.commit();
+}
+
+/* Satu per satu: tiap baris perlu cari userId lalu tulis ledger + saldo dalam 1 batch */
+async function jalankanAdjustmentMassal(rows, log) {
+  let berhasil = 0;
+  const gagal = [];
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    try {
+      const userId = await cariUserId(r.id);
+      if (!userId) gagal.push({ baris: r.baris, alasan: "ID / Username tidak ditemukan" });
+      else { await catatAdjustment(userId, r.poin, r.alasan); berhasil++; }
+    } catch (e) { gagal.push({ baris: r.baris, alasan: e.message || "gagal menyimpan" }); }
+    if ((i + 1) % 10 === 0 || i === rows.length - 1) log(fmtNum(i + 1) + " dari " + fmtNum(rows.length) + " baris diproses…");
+  }
+  return { berhasil, gagal };
+}
+
+/* Mengganti seluruh soal sekaligus: 1 batch, kunci post test tetap di dokumen terpisah */
+async function simpanSoalMassal(tipe, modulId, items) {
+  const field = tipe === "kuesioner" ? "pertanyaan" : "soal";
+  const daftar = items.map((it) => ({ id: uid(), teks: it.teks, opsi: it.opsi }));
+  const kunci = items.map((it) => it.kunci);
+  const b = writeBatch(db);
+  b.update(doc(db, tipe, modulId), { [field]: daftar });
+  if (tipe === "posttest") b.set(doc(db, "posttest_kunci", modulId), { kunci });
+  await b.commit();
+  return { daftar, kunci };
 }
 
 function siapkanImport(data, groupDefault) {
@@ -939,7 +1160,7 @@ async function cariUserId(input) {
 
 async function loadPetugasPage(reset) {
   const f = S.fPetugas, P = C.adm.petugas;
-  const key = f.group + "|" + f.status + "|" + f.q;
+  const key = [f.group, f.status, f.area, f.regional, f.branch, f.cluster, f.q].join("|");
   if (reset || P.key !== key) { P.rows = []; P.cursor = null; P.habis = false; P.key = key; }
   if (P.habis || P.loading) return;
   P.loading = true; render();
@@ -950,15 +1171,19 @@ async function loadPetugasPage(reset) {
       P.rows = d && d.exists() ? [Object.assign({ id: d.id }, d.data())] : [];
       P.habis = true;
     } else {
+      /* Semua filter di bawah adalah equality (==) murni: Firestore memakai index otomatis
+         gabungan tanpa perlu composite index manual, selama tidak ada orderBy di field lain. */
       const cons = [];
       if (f.group) cons.push(where("group", "==", f.group));
-      else if (f.status) cons.push(where("status", "==", f.status));
+      if (f.status) cons.push(where("status", "==", f.status));
+      if (f.area) cons.push(where("area", "==", f.area));
+      if (f.regional) cons.push(where("regional", "==", f.regional));
+      if (f.branch) cons.push(where("branch", "==", f.branch));
+      if (f.cluster) cons.push(where("cluster", "==", f.cluster));
       if (P.cursor) cons.push(startAfter(P.cursor));
       cons.push(limit(HALAMAN));
       const qs = await getDocs(query(col("petugas"), ...cons));
-      let r = rows(qs);
-      if (f.group && f.status) r = r.filter((x) => x.status === f.status);
-      P.rows = P.rows.concat(r);
+      P.rows = P.rows.concat(rows(qs));
       P.cursor = qs.docs.length ? qs.docs[qs.docs.length - 1] : P.cursor;
       P.habis = qs.docs.length < HALAMAN;
     }
@@ -967,19 +1192,21 @@ async function loadPetugasPage(reset) {
 }
 
 async function loadDetailPetugas(userId) {
-  const [pub, priv, hp, fotos, led] = await Promise.all([
+  const [pub, priv, hp, fotos, led, prg] = await Promise.all([
     getDoc(doc(db, "petugas", userId)),
     getDoc(doc(db, "petugas_cek", userId)),
     getDoc(doc(db, "perangkat", userId)),
     getDocs(query(col("foto_aktivitas"), where("userId", "==", userId), limit(20))),
-    getDocs(query(col("ledger"), where("userId", "==", userId), limit(200)))
+    getDocs(query(col("ledger"), where("userId", "==", userId), limit(200))),
+    getDocs(query(col("peringatan"), where("userId", "==", userId), limit(20)))
   ]);
   return {
     pub: pub.exists() ? Object.assign({ id: pub.id }, pub.data()) : null,
     priv: priv.exists() ? priv.data() : {},
     hp: hp.exists() ? hp.data() : null,
     fotos: rows(fotos).sort((a, b) => (b.waktu || "").localeCompare(a.waktu || "")),
-    ledger: rows(led).sort((a, b) => (b.waktu || "").localeCompare(a.waktu || ""))
+    ledger: rows(led).sort((a, b) => (b.waktu || "").localeCompare(a.waktu || "")),
+    peringatan: rows(prg).sort((a, b) => (b.waktu || "").localeCompare(a.waktu || ""))
   };
 }
 
@@ -1070,13 +1297,19 @@ async function catatAdjustment(userId, delta, alasan) {
   await b.commit();
 }
 
+async function tandaiPeringatan(id) {
+  await updateDoc(doc(db, "peringatan", id), { status: "dicek", dicekAt: nowIso(), dicekOleh: S.adminUser ? S.adminUser.email : "admin" });
+}
 
 /* ============ PETUGAS — komponen ============ */
-function fotoInput(nama, dataUrl, capMsg) {
-  return '<label class="photo-tile">' +
-    (dataUrl ? '<img src="' + dataUrl + '" alt=""><span class="retake">Ganti foto</span>'
-      : '<span class="ph-ico">[ ]</span><span class="cap">' + esc(capMsg || "Ketuk untuk ambil foto") + "</span>") +
-    '<input type="file" accept="image/*" capture="user" data-foto="' + nama + '" hidden></label>';
+/* Foto hanya lewat kamera depan langsung + deteksi wajah — tidak ada pilihan galeri */
+function fotoInput(nama, dataUrl, capMsg, meta) {
+  const tanda = meta && meta.status && meta.status !== "ok"
+    ? '<div class="note" style="margin-top:8px;color:var(--warn);">&#9888; Wajah tidak terdeteksi &mdash; foto dikirim dengan tanda untuk dicek Admin.</div>' : "";
+  return '<button type="button" class="photo-tile" data-do="bukaKamera" data-v="' + nama + '">' +
+    (dataUrl ? '<img src="' + dataUrl + '" alt=""><span class="retake">Ambil ulang</span>'
+      : '<span class="ph-ico">[ ]</span><span class="cap">' + esc(capMsg || "Buka kamera depan") + "</span>") +
+    "</button>" + tanda;
 }
 function hero(eyebrow, judul, sub) {
   return '<div class="hero"><div class="eyebrow">' + eyebrow + "</div><h1>" + judul + "</h1>" + (sub ? "<p>" + sub + "</p>" : "") + "</div>";
@@ -1162,7 +1395,7 @@ function vDaftar() {
       sel("branch", "Nama Branch", d.regional ? opsiWilayah("branch", d) : [], !!d.regional) +
       sel("cluster", "Nama Cluster", d.branch ? opsiWilayah("cluster", d) : [], !!d.branch) +
     "</div>" +
-    '<div class="card"><div class="card-title">10 &nbsp;Foto Petugas</div>' + fotoInput("daftar", d.foto, "Ambil foto referensi") +
+    '<div class="card"><div class="card-title">10 &nbsp;Foto Petugas</div>' + fotoInput("daftar", d.foto, "Buka kamera depan", d.wajah) +
       '<div class="note" style="margin-top:10px;">Kamera depan &middot; foto baseline untuk verifikasi berikutnya.</div></div>' +
     (d.err ? '<div class="err">' + d.err + "</div>" : "") +
     '<button class="btn btn-primary btn-block" data-do="daftar" ' + (d.busy ? "disabled" : "") + ">" + (d.busy ? "Mendaftarkan…" : "Daftar & Hubungkan HP Ini") + "</button>" +
@@ -1185,7 +1418,7 @@ function vLengkapi() {
     '<div class="card"><div class="card-title">Isi Data Diri</div>' +
       '<div class="field"><label class="req">Nama Lengkap</label><input type="text" value="' + esc(l.nama) + '" data-in="lengkapi.nama" placeholder="Nama sesuai KTP"></div>' +
       '<div class="field"><label class="req">Nomor Aktif</label><input type="tel" class="mono" value="' + esc(l.nomor) + '" data-in="lengkapi.nomor" placeholder="0812..."></div></div>' +
-    '<div class="card"><div class="card-title">Foto Petugas</div>' + fotoInput("lengkapi", l.foto, "Ambil foto referensi") +
+    '<div class="card"><div class="card-title">Foto Petugas</div>' + fotoInput("lengkapi", l.foto, "Buka kamera depan", l.wajah) +
       '<div class="note" style="margin-top:10px;">Kamera depan &middot; foto baseline untuk verifikasi berikutnya.</div></div>' +
     (l.err ? '<div class="err">' + esc(l.err) + "</div>" : "") +
     '<button class="btn btn-primary btn-block" data-do="lengkapi" ' + (l.busy ? "disabled" : "") + ">" + (l.busy ? "Menyimpan…" : "Simpan &amp; Mulai") + "</button>" +
@@ -1204,9 +1437,9 @@ function vGate() {
   return '<div class="pad"><div class="gate-dark">' +
     '<div class="lbl" style="color:rgba(255,255,255,.55);">S-02 &middot; Photo Check</div>' +
     "<h2>Verifikasi Wajah</h2><p>" + esc(t.sub) + "</p>" +
-    fotoInput("gate", g.foto, "Ketuk untuk ambil foto") +
+    fotoInput("gate", g.foto, "Buka kamera depan", g.wajah) +
     '<div class="gate-meta"><span class="k">Referensi baseline</span><span class="v">' + esc(p.id) + "</span></div>" +
-    '<div class="gate-meta"><span class="k">Status</span><span class="v" style="color:' + (g.foto ? "#7ee2ad" : "rgba(255,255,255,.6)") + ';">' + (g.foto ? "Foto terekam" : "Menunggu foto") + "</span></div>" +
+    '<div class="gate-meta"><span class="k">Status</span><span class="v" style="color:' + (!g.foto ? "rgba(255,255,255,.6)" : g.wajah && g.wajah.status !== "ok" ? "#f3c97a" : "#7ee2ad") + ';">' + (!g.foto ? "Menunggu foto" : g.wajah && g.wajah.status !== "ok" ? "Terekam &middot; ditandai untuk Admin" : "Wajah terdeteksi") + "</span></div>" +
     '<button class="btn btn-primary btn-block" style="margin-top:18px;" ' + (g.foto && !g.busy ? "" : "disabled") + ' data-do="gateLanjut">' + (g.busy ? "Menyimpan…" : esc(t.lanjut)) + "</button>" +
     '<button class="btn btn-block" style="margin-top:9px;background:rgba(255,255,255,.1);color:#fff;" data-do="gateBatal">Batal</button>' +
     '<div style="margin-top:14px;font-size:11.5px;color:rgba(255,255,255,.5);text-align:center;">Bukan sistem absensi harian. Foto hanya dibuka Admin saat eskalasi.</div>' +
@@ -1410,7 +1643,7 @@ function vProfil() {
       '<div style="width:56px;height:56px;border-radius:12px;background:var(--red-soft);color:var(--red);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:20px;">' + esc(namaTampil(p).charAt(0)) + "</div>" +
       '<div class="grow"><div style="font-weight:800;font-size:16px;">' + esc(namaTampil(p)) + '</div><div class="lbl" style="color:var(--ink-dim);">' + esc(p.kode) + " &middot; " + esc(p.group) + "</div></div></div>" +
       '<div class="note" style="margin-top:12px;">Foto dan nomor aktif hanya dapat dilihat Admin. Kamu tetap bisa menggantinya di bawah.</div>' +
-      '<div style="margin-top:12px;">' + fotoInput("profil", f.foto, "Ganti foto referensi") + "</div>" +
+      '<div style="margin-top:12px;">' + fotoInput("profil", f.foto, "Ganti foto lewat kamera depan", f.wajah) + "</div>" +
       (f.foto ? '<button class="btn btn-ghost btn-sm btn-block" style="margin-top:9px;" data-do="ajukanFoto">Ajukan Perubahan Foto</button>' : "") +
     "</div>" +
     '<div class="card"><div class="card-title">Dapat Diubah</div>' +
@@ -1437,7 +1670,6 @@ function vBantuan() {
     '<div class="pad stack">' + faq.map((x) => '<div class="card"><div style="font-weight:700;font-size:14.5px;margin-bottom:5px;">' + esc(x[0]) + '</div><div style="font-size:13.5px;color:var(--ink-dim);">' + esc(x[1]) + "</div></div>").join("") + "</div>";
 }
 
-
 /* ============ ADMIN ============ */
 function vAdmLogin() {
   const a = S.admLogin;
@@ -1456,12 +1688,16 @@ const ADM_MENU = [
 ];
 const STATUS_LABEL = { belum_lengkap: "belum lengkap", review: "menunggu verifikasi", aktif: "aktif", nonaktif: "nonaktif" };
 const STATUS_PILL = { belum_lengkap: "pill-neutral", review: "pill-warn", aktif: "pill-good", nonaktif: "pill-bad" };
+const LABEL_TIPE_FOTO = { registrasi: "Registrasi", lengkapi: "Lengkapi profil", kuesioner: "Kuesioner", posttest: "Post Test", redeem: "Redeem", ganti_foto: "Ganti foto" };
+function ketPeringatan(w) {
+  return w.jenis === "tidak_dicek" ? "pendeteksi wajah gagal dimuat di HP" : "wajah tidak terdeteksi setelah " + (w.gagalDeteksi || DETEKSI.maksGagal) + "x percobaan";
+}
 function pillStatus(s) { s = s || "aktif"; return '<span class="pill ' + (STATUS_PILL[s] || "pill-neutral") + '">' + esc(STATUS_LABEL[s] || s) + "</span>"; }
 
 function vAdmin() {
   const st = C.adm.stats;
   const cnt = {
-    petugas: st ? st.review : null, kuesioner: Object.keys(C.adm.kuesioner).length, posttest: Object.keys(C.adm.posttest).length,
+    dashboard: st ? st.peringatan : null, petugas: st ? st.review : null, kuesioner: Object.keys(C.adm.kuesioner).length, posttest: Object.keys(C.adm.posttest).length,
     knowledge: Object.keys(C.adm.knowledge).length, redeem: st ? st.pending : null
   };
   const body = ({ dashboard: aDashboard, petugas: aPetugas, kuesioner: () => aModul("kuesioner"), posttest: () => aModul("posttest"), knowledge: aKnowledge, poin: aPoin, redeem: aRedeem, pengaturan: aPengaturan }[S.adminMenu] || aDashboard)();
@@ -1495,6 +1731,13 @@ function aDashboard() {
       '<div class="stat"><div class="lbl">Completion Kuesioner</div><div class="n mono">' + s.completion + '%</div><div class="k lbl" style="color:var(--ink-dim);">' + fmtNum(s.respPer) + " respons bulan ini</div></div>" +
       '<div class="stat"><div class="lbl">Redeem Pending</div><div class="n red mono">' + fmtNum(s.pending) + '</div><div class="k lbl" style="color:var(--ink-dim);">poin ditahan &middot; perlu review</div></div>' +
     "</div>" +
+    '<div class="sec-head"><h2>&#9888; Peringatan Foto</h2><span class="lbl">' + fmtNum(s.peringatan || 0) + " belum dicek</span></div>" +
+    (!C.adm.peringatan.length ? '<div class="card"><div class="empty" style="padding:16px;">Tidak ada foto yang perlu dicek.</div></div>' :
+      C.adm.peringatan.map((w) => '<div class="aq"><span class="pill pill-warn">' + esc(LABEL_TIPE_FOTO[w.tipe] || w.tipe) + "</span>" +
+        '<div class="grow"><div class="aq-n">' + esc(w.nama || w.kode) + " &middot; " + grpTag(w.group) + "</div>" +
+        '<div class="aq-s"><span class="mono">' + esc(w.userId) + "</span> &middot; " + ketPeringatan(w) + " &middot; " + fmtWaktu(w.waktu) + "</div></div>" +
+        '<button class="btn btn-ghost btn-sm" data-do="lihatPeringatan" data-v="' + esc(w.id) + '">Lihat foto</button>' +
+        '<button class="btn btn-ok btn-sm" data-do="tandaiPeringatan" data-v="' + esc(w.id) + '">Sudah dicek</button></div>').join("")) +
     '<div class="sec-head"><h2>Verifikasi Petugas Baru</h2><span class="lbl">' + fmtNum(s.review) + " menunggu</span></div>" +
     (!C.adm.reviewList.length ? '<div class="card"><div class="empty" style="padding:16px;">Tidak ada petugas baru yang menunggu verifikasi.</div></div>' :
       C.adm.reviewList.map((p) => '<div class="aq"><div class="grow"><div class="aq-n">' + esc(namaTampil(p)) + " &middot; " + grpTag(p.group) + "</div>" +
@@ -1513,6 +1756,22 @@ function aDashboard() {
       '<div class="prog"><i style="width:' + Math.min(100, x.pct) + '%"></i></div></div>').join("") + "</div>";
 }
 
+/* Empat dropdown berjenjang: Area menyempit ke Regional, lalu Branch, lalu Cluster.
+   Semua exact-match, dipetakan dari Master Wilayah yang sudah dimuat gratis di memori. */
+function pilihWilayahFilter(prefix, f) {
+  const uniq = (arr) => arr.filter((v, i, a) => a.indexOf(v) === i).sort();
+  const cocok = (w, sd) => (!f.area || w.area === f.area) && (sd < 1 || !f.regional || w.regional === f.regional) && (sd < 2 || !f.branch || w.branch === f.branch);
+  const areas = uniq(C.wilayah.map((w) => w.area));
+  const regs = uniq(C.wilayah.filter((w) => cocok(w, 0)).map((w) => w.regional));
+  const branches = uniq(C.wilayah.filter((w) => cocok(w, 1)).map((w) => w.branch));
+  const clusters = uniq(C.wilayah.filter((w) => cocok(w, 2)).map((w) => w.cluster));
+  const opt = (arr, val, semua) => '<option value="">' + semua + "</option>" + arr.map((x) => '<option value="' + esc(x) + '" ' + (val === x ? "selected" : "") + ">" + esc(x) + "</option>").join("");
+  return '<select data-in="' + prefix + '.area">' + opt(areas, f.area, "Semua Area") + "</select>" +
+    '<select data-in="' + prefix + '.regional">' + opt(regs, f.regional, "Semua Regional") + "</select>" +
+    '<select data-in="' + prefix + '.branch">' + opt(branches, f.branch, "Semua Branch") + "</select>" +
+    '<select data-in="' + prefix + '.cluster">' + opt(clusters, f.cluster, "Semua Cluster") + "</select>";
+}
+
 function aPetugas() {
   const f = S.fPetugas, P = C.adm.petugas;
   const opt = (arr, val, semua, label) => '<option value="">' + semua + "</option>" + arr.map((x) => '<option value="' + esc(x) + '" ' + (val === x ? "selected" : "") + ">" + esc(label ? label(x) : x) + "</option>").join("");
@@ -1522,7 +1781,9 @@ function aPetugas() {
       '<button class="btn btn-ghost btn-sm" data-do="cariPetugas">Cari</button>' +
       '<select data-in="fPetugas.group">' + opt(GROUPS, f.group, "Semua Group") + "</select>" +
       '<select data-in="fPetugas.status">' + opt(["review", "belum_lengkap", "aktif", "nonaktif"], f.status, "Semua Status", (x) => STATUS_LABEL[x]) + "</select>" +
+      pilihWilayahFilter("fPetugas", f) +
     "</div>" +
+    '<div class="note" style="margin-bottom:12px;">Cari ID/Username harus persis (hemat kuota). Filter wilayah menyempit berjenjang: pilih Area dulu untuk mempersempit Regional, lalu Branch, lalu Cluster.</div>' +
     '<div class="tbl-wrap"><table><thead><tr><th>ID Digipos</th><th>Username</th><th>Nama</th><th>Group</th><th>Regional / Cluster</th><th>Poin</th><th>Saldo</th><th>Status</th><th></th></tr></thead><tbody>' +
     (!P.rows.length ? '<tr><td colspan="9"><div class="empty">' + (P.loading ? "Memuat&hellip;" : "Tidak ada petugas yang cocok.") + "</div></td></tr>" :
       P.rows.map((p) => '<tr><td class="mono">' + esc(p.id) + '</td><td class="mono">' + esc(p.kode || "-") + '</td><td style="font-weight:600;">' + esc(p.nama || "—") + "</td><td>" + grpTag(p.group) + "</td>" +
@@ -1569,6 +1830,50 @@ function aModul(tipe) {
     (!C.adm.katalogLoaded ? '<div class="skel">Memuat&hellip;</div>' : !arr.length ? '<div class="card"><div class="empty">Belum ada modul.</div></div>' : arr.map((m) => kartuModul(m, tipe)).join(""));
 }
 
+function kartuUploadUmum(jenis, judul, kolom, catatan) {
+  const si = S.impUmum, aktif = si.jenis === jenis;
+  return '<div class="card" style="margin-bottom:18px;"><div class="card-title">' + judul + "</div>" +
+    '<div style="font-size:13px;color:var(--ink-dim);margin-bottom:10px;">Kolom: <span class="mono">' + kolom + "</span>. " + catatan +
+      " Maksimal " + fmtNum(MAKS_BARIS_UPLOAD[jenis]) + " baris per file.</div>" +
+    '<div class="filters"><label class="btn btn-ghost btn-sm" style="cursor:pointer;">Pilih file Excel<input type="file" accept=".xlsx,.xls,.csv" data-umum="' + jenis + '" hidden></label>' +
+      '<button class="btn btn-ghost btn-sm" data-do="contohUmum" data-t="' + jenis + '">Unduh contoh format</button>' +
+      '<span class="lbl">' + (aktif && si.namaFile ? esc(si.namaFile) : "belum ada file") + "</span></div>" +
+    (!aktif || !(si.valid.length || si.salah.length) ? "" :
+      '<div class="stat-grid" style="margin-top:12px;">' +
+        '<div class="stat"><div class="lbl">Siap diproses</div><div class="n mono">' + fmtNum(si.valid.length) + "</div></div>" +
+        '<div class="stat"><div class="lbl">Ditolak</div><div class="n mono" style="color:' + (si.salah.length ? "var(--bad)" : "inherit") + ';">' + fmtNum(si.salah.length) + "</div></div></div>" +
+      (si.salah.length ? '<div class="note" style="margin-top:10px;">' + si.salah.slice(0, 10).map((s) => "Baris " + s.baris + ": " + esc(s.alasan)).join("<br>") +
+        (si.salah.length > 10 ? "<br>&hellip;dan " + (si.salah.length - 10) + " lainnya" : "") + "</div>" : "") +
+      '<div class="row" style="margin-top:12px;"><button class="btn btn-primary btn-sm" data-do="pasangUmum" data-t="' + jenis + '"' + (si.valid.length && !si.busy ? "" : " disabled") + ">" +
+        (si.busy ? "Memproses&hellip;" : "Proses " + fmtNum(si.valid.length) + " baris") + "</button>" +
+        '<button class="btn btn-ghost btn-sm" data-do="batalUmum">Batal</button></div>') +
+    (aktif && si.log.length ? '<div class="note mono" style="margin-top:12px;white-space:pre-wrap;">' + si.log.map(esc).join("\n") + "</div>" : "") +
+    "</div>";
+}
+
+function kartuUploadSoal(m, tipe, isKu) {
+  const si = S.impSoal, aktif = si.key === tipe + ":" + m.id;
+  const maks = isKu ? MAKS_PERTANYAAN : MAKS_SOAL;
+  const nama = isKu ? "pertanyaan" : "soal";
+  return '<div class="card" style="background:var(--surface-2);margin-bottom:10px;"><div class="card-title">Upload ' + nama + " dari Excel</div>" +
+    '<div style="font-size:13px;color:var(--ink-dim);margin-bottom:10px;">Satu baris = satu ' + nama + '. Kolom: <span class="mono">pertanyaan, opsi1, opsi2, opsi3, opsi4' + (isKu ? "" : ", kunci") + "</span>" +
+      (isKu ? "" : ' &middot; kunci diisi <span class="mono">1&ndash;4</span> atau <span class="mono">A&ndash;D</span>') +
+      ". Maksimal " + maks + ". Upload <b>mengganti seluruh " + nama + "</b> di modul ini.</div>" +
+    '<div class="filters"><label class="btn btn-ghost btn-sm" style="cursor:pointer;">Pilih file Excel<input type="file" accept=".xlsx,.xls,.csv" data-soal="' + tipe + ":" + m.id + '" hidden></label>' +
+      '<button class="btn btn-ghost btn-sm" data-do="contohSoal" data-t="' + tipe + '">Unduh contoh format</button>' +
+      '<span class="lbl">' + (aktif && si.namaFile ? esc(si.namaFile) : "belum ada file") + "</span></div>" +
+    (!aktif || !(si.valid.length || si.salah.length) ? "" :
+      '<div class="stat-grid" style="margin-top:12px;">' +
+        '<div class="stat"><div class="lbl">Siap dipasang</div><div class="n mono">' + fmtNum(si.valid.length) + "</div></div>" +
+        '<div class="stat"><div class="lbl">Ditolak</div><div class="n mono" style="color:' + (si.salah.length ? "var(--bad)" : "inherit") + ';">' + fmtNum(si.salah.length) + "</div></div></div>" +
+      (si.salah.length ? '<div class="note" style="margin-top:10px;">' + si.salah.slice(0, 10).map((s) => "Baris " + s.baris + ": " + esc(s.alasan)).join("<br>") +
+        (si.salah.length > 10 ? "<br>&hellip;dan " + (si.salah.length - 10) + " lainnya" : "") + "</div>" : "") +
+      '<div class="row" style="margin-top:12px;"><button class="btn btn-primary btn-sm" data-do="pasangSoal" data-t="' + tipe + '" data-v="' + m.id + '"' + (si.valid.length && !si.busy ? "" : " disabled") + ">" +
+        (si.busy ? "Menyimpan&hellip;" : "Pasang " + fmtNum(si.valid.length) + " " + nama) + "</button>" +
+        '<button class="btn btn-ghost btn-sm" data-do="batalSoal">Batal</button></div>') +
+    "</div>";
+}
+
 function kartuModul(m, tipe) {
   const isKu = tipe === "kuesioner";
   const items = isKu ? (m.pertanyaan || []) : (m.soal || []);
@@ -1590,7 +1895,8 @@ function kartuModul(m, tipe) {
         '<ul style="margin:8px 0 0;padding-left:18px;font-size:13px;color:var(--ink-dim);">' +
         (q.opsi || []).map((o, oi) => { const k = !isKu && kunci[i] === oi; return "<li" + (k ? ' style="color:var(--good);font-weight:700;"' : "") + ">" + esc(o) + (k ? " &mdash; kunci" : "") + "</li>"; }).join("") + "</ul></div>").join("")) +
       (terkunci ? '<div class="note">Sudah ada ' + fmtNum(C.adm.peserta[m.id]) + " peserta &mdash; soal dikunci supaya penilaian tetap konsisten. Buat post test baru untuk materi baru.</div>" :
-        '<div class="card" style="background:var(--surface-2);"><div class="card-title">Tambah ' + (isKu ? "Pertanyaan" : "Soal (maks " + MAKS_SOAL + ")") + "</div>" +
+        kartuUploadSoal(m, tipe, isKu) +
+        '<div class="card" style="background:var(--surface-2);"><div class="card-title">Tambah satu ' + (isKu ? "Pertanyaan" : "Soal (maks " + MAKS_SOAL + ")") + "</div>" +
         '<div class="field"><label>Pertanyaan</label><input type="text" value="' + esc(d.teks) + '" data-in="draftSoal.teks"></div>' +
         [0, 1, 2, 3].map((i) => '<div class="field" style="margin-top:9px;"><label>Opsi ' + (i + 1) + (!isKu && d.kunci === i ? " (kunci)" : "") + '</label><div class="row">' +
           (isKu ? "" : '<input type="radio" name="kunci" ' + (d.kunci === i ? "checked" : "") + ' data-do="setKunci" data-v="' + i + '" style="width:auto;flex:none;">') +
@@ -1611,6 +1917,8 @@ function aKnowledge() {
       '<select data-in="draftKn.tipe">' + ["KV", "PDF", "VID", "DOC", "FAQ"].map((t) => "<option " + (d.tipe === t ? "selected" : "") + ">" + t + "</option>").join("") + "</select>" +
       '<input type="text" placeholder="https://..." value="' + esc(d.url) + '" data-in="draftKn.url" style="flex:1;min-width:220px;"></div>' +
       '<div class="filters" style="margin-top:10px;">' + pilihTarget("draftKn", d) + '<button class="btn btn-primary btn-sm" data-do="tambahKnowledge">Tambah</button></div></div>' +
+    kartuUploadUmum("knowledge", "Upload Materi dari Excel", "judul, url, tipe, group, area, regional",
+      "Tipe: KV / PDF / VID / DOC / FAQ (kosong dianggap PDF). Kolom group, area, regional boleh dikosongkan berarti untuk semua. Materi lama tidak dihapus, file ini menambah.") +
     (!arr.length ? '<div class="card"><div class="empty">Belum ada materi.</div></div>' :
       '<div class="tbl-wrap"><table><thead><tr><th>Tipe</th><th>Judul</th><th>URL</th><th>Target</th><th>Status</th><th></th></tr></thead><tbody>' +
       arr.map((k) => '<tr><td><span class="pill pill-neutral">' + esc(k.tipe) + '</span></td><td style="font-weight:600;">' + esc(k.judul) + "</td>" +
@@ -1631,6 +1939,8 @@ function aPoin() {
       '<input type="text" placeholder="Alasan (wajib)" value="' + esc(d.alasan) + '" data-in="draftAdj.alasan" style="flex:1;min-width:220px;">' +
       '<button class="btn btn-primary btn-sm" data-do="manualAdj">Catat</button></div>' +
       '<div class="note" style="margin-top:10px;">Wajib mencatat alasan; admin pelaksana tercatat otomatis. Mempengaruhi saldo dan leaderboard.</div></div>' +
+    kartuUploadUmum("adjustment", "Upload Adjustment Poin dari Excel", "user_id, poin, alasan",
+      "Kolom user_id boleh diisi ID Digipos atau Username. Poin boleh minus, misalnya <span class=\"mono\">-25</span>. Semua baris tercatat di ledger dengan alasannya. Diproses satu per satu, jadi file besar butuh waktu.") +
     '<div class="sec-head"><h2>Leaderboard &mdash; Top 20</h2><button class="btn btn-ghost btn-sm" data-do="perbaruiLb">Perbarui sekarang</button></div>' +
     '<div class="lbl" style="margin-bottom:10px;">' + (C.lb && C.lb.diperbarui ? "Diperbarui " + fmtWaktu(C.lb.diperbarui) : "Belum pernah diperbarui") + "</div>" +
     '<div class="chips" style="margin-bottom:12px;">' + chips.map((c) => '<button class="chip ' + (S.lbFilter === c[0] ? "on" : "") + '" data-do="lbFilter" data-v="' + esc(c[0]) + '">' + esc(c[1]) + "</button>").join("") + "</div>" +
@@ -1653,6 +1963,8 @@ function aRedeem() {
       '<input type="number" placeholder="Poin" value="' + esc(d.poin) + '" data-in="draftHd.poin" style="min-width:110px;">' +
       '<input type="number" placeholder="Stok (kosong = tak terbatas)" value="' + esc(d.stok) + '" data-in="draftHd.stok" style="min-width:190px;">' +
       '<button class="btn btn-primary btn-sm" data-do="tambahHadiah">Tambah</button></div></div>' +
+    kartuUploadUmum("hadiah", "Upload Hadiah dari Excel", "nama, poin, stok",
+      "Stok dikosongkan atau diisi tanda hubung berarti tak terbatas. Hadiah lama tidak dihapus, file ini menambah.") +
     (hadiah.length ? '<div class="tbl-wrap" style="margin-bottom:22px;"><table><thead><tr><th>Hadiah</th><th>Poin</th><th>Stok</th><th>Status</th><th></th></tr></thead><tbody>' +
       hadiah.map((h) => '<tr><td style="font-weight:600;">' + esc(h.nama) + '</td><td class="mono">' + fmtNum(h.poin) + '</td><td class="mono">' + (h.stok === -1 ? "&infin;" : fmtNum(h.stok)) + "</td>" +
         '<td><span class="pill ' + (h.aktif !== false ? "pill-good" : "pill-neutral") + '" style="cursor:pointer;" data-do="toggleHadiah" data-v="' + h.id + '">' + (h.aktif !== false ? "Aktif" : "Nonaktif") + "</span></td>" +
@@ -1665,11 +1977,12 @@ function aRedeem() {
         return '<div class="aq"><div class="grow"><div class="aq-n">' + esc(r.hadiahNama) + '</div><div class="aq-s"><span class="mono">' + esc(r.userId) + "</span> &middot; " + esc(r.nama || r.kode) +
           " &middot; " + fmtNum(r.poin) + " poin &middot; " + fmtWaktu(r.waktu) + (r.alasan ? " &middot; alasan: " + esc(r.alasan) : "") + "</div></div>" +
           '<span class="pill ' + pil + '">' + esc(r.status) + "</span>" +
+          (r.wajah && r.wajah !== "ok" ? '<span class="pill pill-warn">&#9888; wajah tidak terdeteksi</span>' : "") +
           (r.fotoId ? '<button class="btn btn-ghost btn-sm" data-do="lihatFotoRedeem" data-v="' + r.id + '">Lihat Foto</button>' : "") +
           (r.status === "pending" ? '<button class="btn btn-ok btn-sm" data-do="setujuiRedeem" data-v="' + r.id + '">Setujui</button><button class="btn btn-danger btn-sm" data-do="tolakRedeem" data-v="' + r.id + '">Tolak</button>' : "") +
           "</div>";
       }).join("")) +
-    '<div class="note" style="margin-top:14px;">Poin berstatus ditahan selama pending. Penolakan mengembalikan poin dan membuka lagi kuota 1x/bulan petugas. Proses dalam 120 hari &mdash; setelah itu foto redeem terhapus otomatis.</div>';
+    '<div class="note" style="margin-top:14px;">Poin berstatus ditahan selama pending. Penolakan mengembalikan poin dan membuka lagi kuota 1x/bulan petugas. Proses dalam ' + HAPUS_FOTO_HARI.redeem + ' hari &mdash; setelah itu foto redeem terhapus otomatis.</div>';
 }
 
 function aPengaturan() {
@@ -1691,8 +2004,11 @@ function aPengaturan() {
       (hasil ? '<div class="card" style="margin-top:12px;background:var(--good-soft);border-color:#BFE3CC;"><b style="color:var(--good);">Import selesai.</b> ' + fmtNum(hasil.dibuat) + " akun dibuat, " + fmtNum(hasil.dilewati) + " dilewati karena sudah ada, master wilayah " + fmtNum(hasil.wilayah) + " cluster.</div>" : "") +
     "</div>" +
     '<div class="card" style="margin-bottom:18px;"><div class="card-title">Master Wilayah</div>' +
-      '<div class="row"><span class="grow" style="font-size:13px;color:var(--ink-dim);">Terbentuk otomatis dari import. Tambahan manual: satu baris per cluster <span class="mono">Area, Regional, Branch, Cluster</span>.</span><span class="lbl">' + fmtNum(C.wilayah.length) + " cluster</span></div>" +
-      '<div class="field" style="margin-top:10px;"><textarea rows="4" data-in="bulkWilayah" placeholder="JABOTABEK &amp; JABAR, JABAR, BANDUNG, BANDUNG KOTA">' + esc(S.bulkWilayah) + "</textarea></div>" +
+      '<div class="row"><span class="grow" style="font-size:13px;color:var(--ink-dim);">Terbentuk otomatis dari import. Baris yang sudah ada (Area+Regional+Branch+Cluster sama persis) dilewati otomatis.</span><span class="lbl">' + fmtNum(C.wilayah.length) + " cluster</span></div>" +
+      kartuUploadUmum("wilayah", "Upload Wilayah dari Excel", "area, regional, branch, cluster",
+        "Cara yang direkomendasikan untuk menambah banyak wilayah sekaligus.") +
+      '<div class="lbl" style="margin-top:4px;">Atau tempel cepat (satu baris per cluster, pisah koma atau tab)</div>' +
+      '<div class="field" style="margin-top:8px;"><textarea rows="4" data-in="bulkWilayah" placeholder="JABOTABEK &amp; JABAR, JABAR, BANDUNG, BANDUNG KOTA">' + esc(S.bulkWilayah) + "</textarea></div>" +
       '<button class="btn btn-ghost btn-sm" style="margin-top:10px;" data-do="tambahWilayah">Tambahkan ke Master Wilayah</button></div>' +
     '<div class="card" style="margin-bottom:18px;"><div class="card-title">Penghematan Storage</div>' +
       '<div style="font-size:13px;color:var(--ink-dim);margin-bottom:10px;">Storage gratis 1 GB tidak pernah reset. Foto kuesioner &amp; post test dihapus otomatis setelah ' + HAPUS_FOTO_HARI.kuesioner + " hari, foto redeem setelah " + HAPUS_FOTO_HARI.redeem + " hari. Foto baseline petugas disimpan. Pembersihan berjalan saat Dashboard dibuka.</div>" +
@@ -1715,11 +2031,16 @@ function modalDetail(d) {
     '<div class="card-title">Detail Petugas</div><h2 style="font-size:20px;">' + esc(namaTampil(p)) + "</h2>" +
     '<div class="row" style="margin:6px 0 14px;gap:8px;flex-wrap:wrap;"><span class="lbl" style="color:var(--ink-dim);">' + esc(v) + " &middot; " + esc(p.kode || "-") + "</span>" + grpTag(p.group) + pillStatus(p.status) + "</div>" +
     (p.status === "review" ? '<div class="note" style="margin-bottom:12px;">Petugas baru (daftar mandiri). Periksa foto &amp; data, lalu setujui. <button class="btn btn-ok btn-sm" data-do="setujuiPetugas" data-v="' + esc(v) + '">Setujui</button></div>' : "") +
-    '<div class="cmp" style="margin-bottom:14px;">' + kotakFoto(priv.foto, "Baseline") + kotakFoto(foto0 && foto0.foto, foto0 ? esc(foto0.tipe) + " &middot; " + fmtTgl(foto0.waktu) : "belum ada aktivitas") + "</div>" +
+    '<div class="cmp" style="margin-bottom:14px;">' + kotakFoto(priv.foto, "Baseline") + kotakFoto(foto0 && foto0.foto, foto0 ? esc(foto0.tipe) + " &middot; " + fmtTgl(foto0.waktu) + (foto0.wajah && foto0.wajah !== "ok" ? " &middot; &#9888;" : "") : "belum ada aktivitas") + "</div>" +
+    ((d.peringatan || []).length ? '<div class="note" style="margin-bottom:12px;color:var(--warn);">&#9888; ' + d.peringatan.length + " peringatan foto: " +
+      d.peringatan.slice(0, 5).map((w) => esc(LABEL_TIPE_FOTO[w.tipe] || w.tipe) + " (" + fmtTgl(w.waktu) + (w.status === "dicek" ? ", sudah dicek" : "") + ")").join(", ") + "</div>" : "") +
     (priv.fotoPending ? '<div class="note" style="margin-bottom:12px;"><div style="margin-bottom:8px;">Pengajuan ganti foto baseline:</div><img src="' + priv.fotoPending + '" style="width:120px;border-radius:8px;display:block;margin-bottom:8px;">' +
       '<button class="btn btn-ok btn-sm" data-do="setujuiFoto" data-v="' + esc(v) + '">Setujui</button> <button class="btn btn-danger btn-sm" data-do="tolakFoto" data-v="' + esc(v) + '">Tolak</button></div>' : "") +
     '<div class="card" style="background:var(--surface-2);margin-bottom:12px;">' +
-      '<div class="lbl">Wilayah</div><div style="font-size:13.5px;">' + [p.area, p.regional, p.branch, p.cluster].map((x) => esc(x || "-")).join(" / ") + "</div>" +
+      '<div class="lbl">Area</div><div style="font-size:13.5px;">' + esc(p.area || "-") + "</div>" +
+      '<div class="lbl" style="margin-top:10px;">Regional</div><div style="font-size:13.5px;">' + esc(p.regional || "-") + "</div>" +
+      '<div class="lbl" style="margin-top:10px;">Branch</div><div style="font-size:13.5px;">' + esc(p.branch || "-") + "</div>" +
+      '<div class="lbl" style="margin-top:10px;">Cluster</div><div style="font-size:13.5px;">' + esc(p.cluster || "-") + "</div>" +
       '<div class="lbl" style="margin-top:10px;">Nomor Aktif</div><div class="mono" style="font-size:13.5px;">' + esc(priv.nomor || "-") + "</div>" +
       '<div class="lbl" style="margin-top:10px;">HP Terhubung</div><div style="font-size:13.5px;">' + (d.hp ? "Ya, sejak " + fmtWaktu(d.hp.waktu) : "Belum ada HP terhubung") + "</div>" +
       '<div class="lbl" style="margin-top:10px;">Poin Peringkat / Saldo</div><div class="mono" style="font-size:13.5px;">' + fmtNum(p.poinPeringkat) + " / " + fmtNum(p.saldo) + "</div></div>" +
@@ -1734,10 +2055,23 @@ function modalDetail(d) {
 }
 function modalFotoRedeem(base, foto) {
   return '<div class="modal-bd" data-do="tutupModal"><div class="modal" data-stop="1"><div class="card-title">Verifikasi Foto Redeem</div>' +
-    '<div class="cmp">' + kotakFoto(base, "Baseline") + kotakFoto(foto, "Saat redeem") + "</div>" +
+    '<div class="cmp">' + kotakFoto(base, "Baseline") + kotakFoto(foto, foto ? "Saat redeem" : "Saat redeem &middot; sudah terhapus (lewat " + HAPUS_FOTO_HARI.redeem + " hari)") + "</div>" +
     '<button class="btn btn-ghost btn-block" style="margin-top:14px;" data-do="tutupModal">Tutup</button></div></div>';
 }
-
+function modalPeringatan(w, base, foto) {
+  const aktivitas = ["kuesioner", "posttest", "redeem"].indexOf(w.tipe) >= 0;
+  const label = LABEL_TIPE_FOTO[w.tipe] || w.tipe;
+  const kotak = aktivitas || w.tipe === "ganti_foto"
+    ? '<div class="cmp">' + kotakFoto(base, "Baseline") + kotakFoto(foto, w.tipe === "ganti_foto" ? "Foto pengajuan" : "Foto " + esc(label)) + "</div>"
+    : '<div style="max-width:240px;margin:0 auto;">' + kotakFoto(base, "Foto baseline yang ditandai") + "</div>";
+  return '<div class="modal-bd" data-do="tutupModal"><div class="modal" data-stop="1"><div class="card-title">Peringatan Foto &middot; ' + esc(label) + "</div>" +
+    '<h2 style="font-size:18px;margin-bottom:4px;">' + esc(w.nama || w.kode) + "</h2>" +
+    '<div class="lbl" style="color:var(--ink-dim);margin-bottom:12px;">' + esc(w.userId) + " &middot; " + ketPeringatan(w) + "</div>" + kotak +
+    (aktivitas && !foto ? '<div class="note" style="margin-top:10px;">Foto aktivitas sudah terhapus otomatis karena masa simpannya habis.</div>' : "") +
+    '<div class="row" style="margin-top:14px;flex-wrap:wrap;"><button class="btn btn-ok btn-sm grow" data-do="tandaiPeringatan" data-v="' + esc(w.id) + '">Sudah dicek</button>' +
+    '<button class="btn btn-ghost btn-sm" data-do="detailPetugas" data-v="' + esc(w.userId) + '">Buka data petugas</button>' +
+    '<button class="btn btn-ghost btn-sm" data-do="tutupModal">Tutup</button></div></div></div>';
+}
 
 /* ============ render ============ */
 function vAdmBelum() {
@@ -1856,6 +2190,7 @@ const DO = {
   lbFilter(v) { S.lbFilter = v; render(); },
   muatUlang() { if (!S.me) return; loadSaya(S.me); loadKatalog(true); loadLeaderboard(true); loadRank(true); toast("ok", "Data dimuat ulang."); },
   muatHadiah() { loadHadiah(true); },
+  bukaKamera(v) { bukaKamera(v); },
 
   async masuk() {
     const m = S.masuk;
@@ -1947,16 +2282,16 @@ const DO = {
         if (redeemBulanIniSaya().length) throw new Error("Kuota penukaran bulan ini sudah dipakai.");
         if (tersediaSaya() < h.poin) throw new Error("Poin tidak cukup.");
         if (h.stok !== -1 && h.stok <= 0) throw new Error("Stok habis.");
-        const fotoId = await simpanFotoAktivitas(p, "redeem", g.foto);
-        await ajukanRedeem(p, g.refId, h, fotoId);
+        const fotoId = await simpanFotoAktivitas(p, "redeem", g.foto, g.wajah);
+        await ajukanRedeem(p, g.refId, h, fotoId, g.wajah ? g.wajah.status : "tidak_dicek");
         S.gate = null; S.view = "app"; S.tab = "hadiah";
         loadSaya(S.me); loadHadiah(true);
         return toast("ok", "Permintaan terkirim. Poin ditahan sampai Admin menyetujui.");
       }
       const modul = C.katalog[g.tujuan].find((x) => x.id === g.refId);
       if (!modul) throw new Error("Modul tidak ditemukan.");
-      const fotoId = await simpanFotoAktivitas(p, g.tujuan, g.foto);
-      S.run = { tipe: g.tujuan, doc: modul, idx: 0, jawaban: {}, fotoId, busy: false };
+      const fotoId = await simpanFotoAktivitas(p, g.tujuan, g.foto, g.wajah);
+      S.run = { tipe: g.tujuan, doc: modul, idx: 0, jawaban: {}, fotoId, wajah: g.wajah ? g.wajah.status : "tidak_dicek", busy: false };
       S.gate = null; S.view = "run"; render();
     } catch (e) { if (S.gate) S.gate.busy = false; toast("no", pesanGagal(e, "Gagal")); }
   },
@@ -1969,8 +2304,8 @@ const DO = {
     if (r.idx < items.length - 1) { r.idx++; return render(); }
     r.busy = true; render();
     try {
-      if (r.tipe === "kuesioner") { await submitKuesioner(S.profilSaya, r.doc, r.jawaban, r.fotoId); S.hasil = { tipe: "kuesioner" }; }
-      else { const h = await submitPosttest(S.profilSaya, r.doc, r.jawaban, r.fotoId); S.hasil = Object.assign({ tipe: "posttest" }, h); }
+      if (r.tipe === "kuesioner") { await submitKuesioner(S.profilSaya, r.doc, r.jawaban, r.fotoId, r.wajah); S.hasil = { tipe: "kuesioner" }; }
+      else { const h = await submitPosttest(S.profilSaya, r.doc, r.jawaban, r.fotoId, r.wajah); S.hasil = Object.assign({ tipe: "posttest" }, h); }
       S.run = null; S.view = "hasil"; render();
       loadSaya(S.me); loadRank(true);
     } catch (e) { r.busy = false; toast("no", pesanGagal(e, "Gagal mengirim")); }
@@ -1984,8 +2319,14 @@ const DO = {
   },
   async ajukanFoto() {
     if (!S.profil.foto) return;
-    try { await setDoc(doc(db, "petugas_cek", S.me), { fotoPending: S.profil.foto }, { merge: true }); S.profil.foto = null; toast("ok", "Perubahan foto menunggu persetujuan Admin."); }
-    catch (e) { toast("no", pesanGagal(e, "Gagal")); }
+    try {
+      const b = writeBatch(db);
+      b.set(doc(db, "petugas_cek", S.me), { fotoPending: S.profil.foto }, { merge: true });
+      if (wajahBermasalah(S.profil.wajah)) b.set(doc(collection(db, "peringatan")), dokPeringatan(S.profilSaya, "ganti_foto", S.profil.wajah, ""));
+      await b.commit();
+      S.profil.foto = null; S.profil.wajah = null;
+      toast("ok", "Perubahan foto menunggu persetujuan Admin.");
+    } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
   },
 
   /* ---- admin ---- */
@@ -2043,6 +2384,27 @@ const DO = {
   async tolakFoto(v) {
     try { await setDoc(doc(db, "petugas_cek", v), { fotoPending: deleteField() }, { merge: true }); toast("ok", "Pengajuan foto ditolak."); DO.detailPetugas(v); }
     catch (e) { toast("no", pesanGagal(e, "Gagal")); }
+  },
+  async lihatPeringatan(v) {
+    const w = C.adm.peringatan.find((x) => x.id === v);
+    if (!w) return;
+    S.modal = '<div class="modal-bd" data-do="tutupModal"><div class="modal" data-stop="1"><div class="empty">Memuat foto&hellip;</div></div></div>';
+    render();
+    try {
+      const [cek, foto] = await Promise.all([getDoc(doc(db, "petugas_cek", w.userId)), w.fotoId ? fotoById(w.fotoId) : Promise.resolve(null)]);
+      const c = cek.exists() ? cek.data() : {};
+      S.modal = modalPeringatan(w, c.foto || null, foto || (w.tipe === "ganti_foto" ? c.fotoPending || null : null));
+      render();
+    } catch (e) { S.modal = null; toast("no", pesanGagal(e, "Gagal memuat foto")); }
+  },
+  async tandaiPeringatan(v) {
+    try {
+      await tandaiPeringatan(v);
+      C.adm.peringatan = C.adm.peringatan.filter((x) => x.id !== v);
+      if (C.adm.stats) C.adm.stats.peringatan = Math.max(0, (C.adm.stats.peringatan || 0) - 1);
+      S.modal = null;
+      toast("ok", "Ditandai sudah dicek.");
+    } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
   },
   async setujuiPetugas(v) {
     try {
@@ -2127,6 +2489,94 @@ const DO = {
       S.draftSoal = { teks: "", opsi: ["", "", "", ""], kunci: 0 };
       toast("ok", "Ditambahkan.");
     } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
+  },
+  async pasangUmum(_, el) {
+    const jenis = el.getAttribute("data-t"), si = S.impUmum;
+    if (si.busy || si.jenis !== jenis || !si.valid.length) return;
+    const tanya = jenis === "knowledge" ? "Tambahkan " + si.valid.length + " materi knowledge?"
+      : jenis === "hadiah" ? "Tambahkan " + si.valid.length + " hadiah ke katalog?"
+      : jenis === "wilayah" ? "Tambahkan sampai " + si.valid.length + " baris wilayah? Yang sudah ada otomatis dilewati."
+      : "Proses " + si.valid.length + " adjustment poin? Semua tercatat permanen di ledger.";
+    if (!confirm(tanya)) return;
+    si.busy = true; si.log = []; render();
+    const log = (t) => { si.log.push(t); render(); };
+    try {
+      if (jenis === "knowledge") {
+        await simpanKnowledgeMassal(si.valid);
+        jadwalkanRebuildKatalog();
+        toast("ok", fmtNum(si.valid.length) + " materi ditambahkan.");
+        S.impUmum = kosongUmum();
+      } else if (jenis === "hadiah") {
+        await simpanHadiahMassal(si.valid);
+        loadHadiah(true);
+        toast("ok", fmtNum(si.valid.length) + " hadiah ditambahkan.");
+        S.impUmum = kosongUmum();
+      } else if (jenis === "wilayah") {
+        const total = await simpanWilayahMassal(si.valid);
+        toast("ok", "Master wilayah sekarang " + fmtNum(total) + " cluster.");
+        S.impUmum = kosongUmum();
+      } else {
+        const h = await jalankanAdjustmentMassal(si.valid, log);
+        si.busy = false;
+        si.valid = []; si.salah = h.gagal;
+        log("Selesai: " + fmtNum(h.berhasil) + " berhasil, " + fmtNum(h.gagal.length) + " gagal.");
+        loadLedgerTerbaru();
+        toast(h.gagal.length ? "" : "ok", fmtNum(h.berhasil) + " adjustment tercatat.");
+      }
+    } catch (e) { si.busy = false; toast("no", pesanGagal(e, "Gagal")); }
+    render();
+  },
+  batalUmum() { S.impUmum = kosongUmum(); render(); },
+  async contohUmum(_, el) {
+    const jenis = el.getAttribute("data-t");
+    try {
+      const X = await muatSheetJS();
+      const isi = jenis === "knowledge"
+        ? [["judul", "url", "tipe", "group", "area", "regional"],
+           ["Materi Combo Sakti September", "https://drive.google.com/file/xxxx", "PDF", "", "", ""],
+           ["KV Promo Merdeka", "https://drive.google.com/file/yyyy", "KV", "Direct Sales", "", "JABAR"]]
+        : jenis === "hadiah"
+        ? [["nama", "poin", "stok"], ["Voucher Pulsa 50rb", 500, 20], ["Kaos DEBY", 750, ""]]
+        : jenis === "wilayah"
+        ? [["area", "regional", "branch", "cluster"], ["JABOTABEK & JABAR", "EASTERN JABOTABEK", "KARAWANG", "BEKASI"], ["JABOTABEK & JABAR", "EASTERN JABOTABEK", "KARAWANG", "KARAWANG KOTA"]]
+        : [["user_id", "poin", "alasan"], ["5571191005", 50, "Juara lomba display"], ["AHA1927381_DS", -25, "Koreksi input ganda"]];
+      const wb = X.utils.book_new();
+      X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet(isi), jenis);
+      X.writeFile(wb, "contoh-" + jenis + ".xlsx");
+    } catch (e) { toast("no", pesanGagal(e, "Gagal menyiapkan contoh")); }
+  },
+  async pasangSoal(v, el) {
+    const t = el.getAttribute("data-t"), si = S.impSoal;
+    const nama = t === "kuesioner" ? "pertanyaan" : "soal";
+    if (si.busy || !si.valid.length || si.key !== t + ":" + v) return;
+    if (t === "posttest" && (C.adm.peserta[v] || 0) > 0) return toast("no", "Sudah ada peserta, soal tidak bisa diubah.");
+    const lama = ((C.adm[t][v] || {})[modulField(t)] || []).length;
+    if (!confirm("Pasang " + si.valid.length + " " + nama + "?" + (lama ? " " + lama + " " + nama + " yang ada sekarang akan diganti." : ""))) return;
+    si.busy = true; render();
+    try {
+      const hasil = await simpanSoalMassal(t, v, si.valid);
+      if (t === "posttest") C.adm.kunci[v] = hasil.kunci;
+      S.impSoal = { key: "", namaFile: "", valid: [], salah: [], busy: false };
+      jadwalkanRebuildKatalog();
+      toast("ok", fmtNum(hasil.daftar.length) + " " + nama + " dipasang.");
+    } catch (e) { si.busy = false; toast("no", pesanGagal(e, "Gagal")); }
+  },
+  batalSoal() { S.impSoal = { key: "", namaFile: "", valid: [], salah: [], busy: false }; render(); },
+  async contohSoal(_, el) {
+    const t = el.getAttribute("data-t");
+    try {
+      const X = await muatSheetJS();
+      const isKu = t === "kuesioner";
+      const kepala = ["pertanyaan", "opsi1", "opsi2", "opsi3", "opsi4"].concat(isKu ? [] : ["kunci"]);
+      const contoh = isKu
+        ? [["Seberapa sering pelanggan menanyakan paket Combo?", "Setiap hari", "Beberapa kali seminggu", "Jarang", "Tidak pernah"],
+           ["Kendala terbesar saat menjual di lapangan?", "Stok perdana", "Sinyal", "Harga", "Kompetitor"]]
+        : [["Kuota utama Combo Sakti 30 hari berapa GB?", "10 GB", "15 GB", "20 GB", "25 GB", "B"],
+           ["Masa aktif kartu perdana baru berapa hari?", "30 hari", "60 hari", "90 hari", "120 hari", "A"]];
+      const wb = X.utils.book_new();
+      X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet([kepala].concat(contoh)), "soal");
+      X.writeFile(wb, "contoh-" + t + ".xlsx");
+    } catch (e) { toast("no", pesanGagal(e, "Gagal menyiapkan contoh")); }
   },
   async hapusSoal(v, el) {
     const t = el.getAttribute("data-t"), mid = el.getAttribute("data-m");
@@ -2253,6 +2703,148 @@ const DO = {
   }
 };
 
+/* ============ kamera depan + deteksi wajah ============ */
+let faceapiMod = null, faceapiJanji = null;
+function siapkanDeteksiWajah() {
+  if (faceapiJanji) return faceapiJanji;
+  faceapiJanji = (async () => {
+    const f = await import(FACEAPI_BASE + "/dist/face-api.esm.js");
+    try { await f.tf.setBackend("webgl"); } catch (e) {}
+    await f.tf.ready();
+    await f.nets.tinyFaceDetector.loadFromUri(FACEAPI_BASE + "/model/");
+    /* pemanasan: inferensi pertama lambat karena kompilasi shader, jangan dibebankan ke saat jepret */
+    const c = document.createElement("canvas"); c.width = 160; c.height = 120;
+    await f.detectAllFaces(c, new f.TinyFaceDetectorOptions({ inputSize: 160, scoreThreshold: DETEKSI.skorMin }));
+    faceapiMod = f;
+    return f;
+  })().catch((e) => { faceapiJanji = null; throw e; });
+  return faceapiJanji;
+}
+
+const K = { el: null, stream: null, tujuan: null, gagal: 0, hasil: null };
+const JUDUL_KAMERA = { daftar: "Foto Referensi", lengkapi: "Foto Referensi", gate: "Verifikasi Wajah", profil: "Ganti Foto Referensi" };
+const PESAN_POSISI = "Posisikan wajah di dalam bingkai, lalu tekan <b>Ambil Foto</b>.";
+
+function kPesan(t, jenis) { const m = K.el && K.el.querySelector(".cam-msg"); if (m) { m.innerHTML = t; m.className = "cam-msg" + (jenis ? " " + jenis : ""); } }
+function kTombol(nama, tampil, aktif) {
+  const b = K.el && K.el.querySelector('[data-k="' + nama + '"]');
+  if (!b) return;
+  b.hidden = !tampil;
+  if (aktif !== undefined) b.disabled = !aktif;
+}
+
+async function bukaKamera(tujuan) {
+  tutupKamera();
+  K.tujuan = tujuan; K.gagal = 0; K.hasil = null;
+  K.el = document.createElement("div");
+  K.el.className = "cam-overlay";
+  K.el.innerHTML = '<div class="cam-top"><b>' + esc(JUDUL_KAMERA[tujuan] || "Foto Wajah") + '</b><button class="cam-x" data-k="batal">Tutup</button></div>' +
+    '<div class="cam-frame"><video playsinline muted autoplay></video><img class="cam-still" alt="" hidden><div class="cam-guide"></div></div>' +
+    '<div class="cam-msg">Menyalakan kamera depan&hellip;</div>' +
+    '<div class="cam-actions"><button class="btn btn-primary btn-block" data-k="jepret" disabled>Ambil Foto</button>' +
+    '<button class="btn btn-block cam-sec" data-k="ulang" hidden>Ulangi</button>' +
+    '<button class="btn btn-block cam-warn" data-k="paksa" hidden>Kirim tetap (ditandai untuk Admin)</button></div>';
+  document.body.appendChild(K.el);
+  K.el.addEventListener("click", kameraKlik);
+
+  const deteksi = siapkanDeteksiWajah().then(() => true).catch(() => false);
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    return kPesan("Browser ini tidak bisa membuka kamera langsung. Buka DEBY dari <b>Chrome</b> di HP.", "bad");
+  }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { exact: "user" }, width: { ideal: 720 }, height: { ideal: 960 } } });
+  } catch (e) {
+    const n = e && e.name;
+    return kPesan(n === "NotAllowedError" ? "Izin kamera ditolak. Di Chrome, ketuk ikon di samping alamat situs &rarr; izinkan <b>Kamera</b>, lalu coba lagi."
+      : n === "OverconstrainedError" || n === "NotFoundError" ? "Kamera depan tidak ditemukan. Foto harus diambil dari HP."
+      : "Kamera tidak bisa dibuka. Buka DEBY dari <b>Chrome</b> di HP.", "bad");
+  }
+  if (!K.el) { stream.getTracks().forEach((t) => t.stop()); return; }
+  K.stream = stream;
+  const track = stream.getVideoTracks()[0];
+  const setelan = track && track.getSettings ? track.getSettings() : {};
+  if (setelan.facingMode && setelan.facingMode !== "user") { tutupKamera(); return toast("no", "Hanya kamera depan yang boleh dipakai."); }
+  const v = K.el.querySelector("video");
+  v.srcObject = stream;
+  try { await v.play(); } catch (e) {}
+  kPesan("Menyiapkan pendeteksi wajah&hellip; (unduhan &plusmn;1,5 MB, hanya sekali)");
+  const ok = await deteksi;
+  if (!K.el) return;
+  kPesan(ok ? PESAN_POSISI : "Pendeteksi wajah gagal dimuat. Foto tetap bisa diambil dan akan ditandai untuk dicek Admin.", ok ? "" : "warn");
+  kTombol("jepret", true, true);
+}
+
+function tutupKamera() {
+  if (K.stream) { K.stream.getTracks().forEach((t) => t.stop()); K.stream = null; }
+  if (K.el) { K.el.remove(); K.el = null; }
+}
+
+function jepretFrame() {
+  const v = K.el.querySelector("video");
+  const ukuran = K.tujuan === "gate" ? FOTO_AKTIVITAS : FOTO_BASELINE;
+  const s = Math.min(1, ukuran.dim / Math.max(v.videoWidth, v.videoHeight));
+  const c = document.createElement("canvas");
+  c.width = Math.round(v.videoWidth * s); c.height = Math.round(v.videoHeight * s);
+  c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
+  return { canvas: c, url: c.toDataURL("image/jpeg", ukuran.q) };
+}
+
+async function periksaWajah(canvas) {
+  if (!faceapiMod) return { status: "tidak_dicek", skor: null };
+  const det = await faceapiMod.detectAllFaces(canvas, new faceapiMod.TinyFaceDetectorOptions({ inputSize: DETEKSI.inputSize, scoreThreshold: DETEKSI.skorMin }));
+  if (!det.length) return { status: "gagal", alasan: "Wajah tidak terdeteksi. Pastikan wajahmu terlihat jelas, tidak tertutup, dan cahaya cukup." };
+  if (det.length > 1) return { status: "gagal", alasan: "Terdeteksi lebih dari satu wajah. Foto harus berisi wajahmu saja." };
+  if (det[0].box.width / canvas.width < DETEKSI.rasioMin) return { status: "gagal", alasan: "Wajah terlalu jauh. Dekatkan HP ke wajahmu." };
+  return { status: "ok", skor: +det[0].score.toFixed(2) };
+}
+
+async function kameraKlik(e) {
+  const b = e.target.closest("[data-k]");
+  if (!b || !K.el) return;
+  const aksi = b.getAttribute("data-k");
+  if (aksi === "batal") return tutupKamera();
+  const v = K.el.querySelector("video"), still = K.el.querySelector(".cam-still");
+  if (aksi === "ulang") {
+    still.hidden = true; v.hidden = false; K.hasil = null;
+    kTombol("ulang", false); kTombol("paksa", false); kTombol("jepret", true, true);
+    return kPesan(PESAN_POSISI);
+  }
+  if (aksi === "paksa") {
+    if (K.hasil) terimaFoto(K.hasil, { status: "tidak_terdeteksi", gagal: K.gagal, skor: null });
+    return;
+  }
+  if (aksi !== "jepret" || !v.videoWidth) return;
+  kTombol("jepret", true, false);
+  const shot = jepretFrame();
+  still.src = shot.url; still.hidden = false; v.hidden = true;
+  kPesan("Memeriksa wajah&hellip;");
+  let cek;
+  try { cek = await periksaWajah(shot.canvas); } catch (err) { cek = { status: "tidak_dicek", skor: null }; }
+  if (!K.el) return;
+  if (cek.status === "ok" || cek.status === "tidak_dicek") {
+    return terimaFoto(shot.url, { status: cek.status, gagal: K.gagal, skor: cek.skor != null ? cek.skor : null });
+  }
+  K.gagal++;
+  K.hasil = shot.url;
+  const habis = K.gagal >= DETEKSI.maksGagal;
+  kPesan(cek.alasan + (habis ? "<br><b>Sudah " + K.gagal + "x gagal.</b> Kamu boleh mengirim foto ini dengan tanda peringatan untuk dicek Admin." : " (percobaan " + K.gagal + " dari " + DETEKSI.maksGagal + ")"), "bad");
+  kTombol("jepret", false);
+  kTombol("ulang", true, true);
+  kTombol("paksa", habis, true);
+}
+
+function terimaFoto(url, meta) {
+  const t = K.tujuan;
+  tutupKamera();
+  if (t === "daftar") { S.daftar.foto = url; S.daftar.wajah = meta; }
+  else if (t === "lengkapi") { S.lengkapi.foto = url; S.lengkapi.wajah = meta; }
+  else if (t === "gate" && S.gate) { S.gate.foto = url; S.gate.wajah = meta; }
+  else if (t === "profil") { S.profil.foto = url; S.profil.wajah = meta; }
+  render();
+  if (meta.status !== "ok") toast("", "Foto akan dikirim dengan tanda peringatan untuk Admin.");
+}
+
 /* ============ event ============ */
 const root = document.getElementById("app");
 root.addEventListener("click", (e) => {
@@ -2297,6 +2889,44 @@ root.addEventListener("change", async (e) => {
     return;
   }
 
+  const umumJenis = el.getAttribute("data-umum");
+  if (umumJenis && el.files && el.files[0]) {
+    const file = el.files[0];
+    S.impUmum = Object.assign(kosongUmum(), { jenis: umumJenis, namaFile: file.name });
+    render();
+    try {
+      const { data } = await bacaFileSoal(file);
+      const r = umumJenis === "knowledge" ? siapkanKnowledge(data) : umumJenis === "hadiah" ? siapkanHadiah(data) : umumJenis === "wilayah" ? siapkanWilayah(data) : siapkanAdjustment(data);
+      S.impUmum.valid = r.valid; S.impUmum.salah = r.salah;
+      if (!r.valid.length && !r.salah.length) toast("no", "Tidak ada baris terbaca. Periksa nama kolom di baris pertama.");
+    } catch (err) {
+      S.impUmum = kosongUmum();
+      toast("no", pesanGagal(err, "Gagal membaca file"));
+    }
+    el.value = "";
+    render();
+    return;
+  }
+
+  const soalKey = el.getAttribute("data-soal");
+  if (soalKey && el.files && el.files[0]) {
+    const file = el.files[0], tipe = soalKey.split(":")[0];
+    S.impSoal = { key: soalKey, namaFile: file.name, valid: [], salah: [], busy: false };
+    render();
+    try {
+      const { data } = await bacaFileSoal(file);
+      const r = siapkanSoal(data, tipe);
+      S.impSoal.valid = r.valid; S.impSoal.salah = r.salah;
+      if (!r.valid.length && !r.salah.length) toast("no", "Tidak ada baris terbaca. Pastikan ada kolom pertanyaan dan opsi1-opsi4.");
+    } catch (err) {
+      S.impSoal = { key: "", namaFile: "", valid: [], salah: [], busy: false };
+      toast("no", pesanGagal(err, "Gagal membaca file"));
+    }
+    el.value = "";
+    render();
+    return;
+  }
+
   if (el.getAttribute("data-import") && el.files && el.files[0]) {
     const file = el.files[0];
     S.imp = Object.assign(S.imp, { namaFile: file.name, sheet: "", valid: [], salah: [], log: ["Membaca file…"], hasil: null });
@@ -2318,23 +2948,12 @@ root.addEventListener("change", async (e) => {
     if (path === "daftar.branch") S.daftar.cluster = "";
     if (/^draftModul\.\w+\.area$/.test(path)) setPath(path.replace(/area$/, "regional"), "");
     if (path === "draftKn.area") S.draftKn.regional = "";
-    if (path === "fPetugas.group" || path === "fPetugas.status") { S.fPetugas.q = ""; loadPetugasPage(true); }
+    if (path === "fPetugas.area") { S.fPetugas.regional = ""; S.fPetugas.branch = ""; S.fPetugas.cluster = ""; }
+    if (path === "fPetugas.regional") { S.fPetugas.branch = ""; S.fPetugas.cluster = ""; }
+    if (path === "fPetugas.branch") S.fPetugas.cluster = "";
+    if (/^fPetugas\.(group|status|area|regional|branch|cluster)$/.test(path)) { S.fPetugas.q = ""; loadPetugasPage(true); }
     if (path === "imp.group" && S.imp.raw) { const r = siapkanImport(S.imp.raw, S.imp.group); S.imp.valid = r.valid; S.imp.salah = r.salah; }
     return render();
-  }
-
-  const ft = el.getAttribute("data-foto");
-  if (ft && el.files && el.files[0]) {
-    try {
-      const ukuran = ft === "gate" ? FOTO_AKTIVITAS : FOTO_BASELINE;
-      const url = await kompresFoto(el.files[0], ukuran.dim, ukuran.q);
-      if (ft === "daftar") S.daftar.foto = url;
-      else if (ft === "lengkapi") S.lengkapi.foto = url;
-      else if (ft === "gate" && S.gate) S.gate.foto = url;
-      else if (ft === "profil") S.profil.foto = url;
-      render();
-    } catch (err) { toast("no", "Gagal memproses foto."); }
-    return;
   }
 
   const ans = el.getAttribute("data-ans");
@@ -2373,4 +2992,3 @@ onAuthStateChanged(auth, (u) => {
 </script>
 </body>
 </html>
-
