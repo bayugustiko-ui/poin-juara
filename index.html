@@ -380,6 +380,7 @@ const S = {
   adminCek: false,
   adminMenu: "dashboard",
   masuk: { id: "", username: "", err: "", info: "", busy: false },
+  sambutanPoin: null,
   daftar: { nama: "", group: "", userId: "", kode: "", nomor: "", area: "", regional: "", branch: "", cluster: "", foto: null, wajah: null, err: "", busy: false },
   lengkapi: { nama: "", nomor: "", foto: null, wajah: null, err: "", busy: false },
   gate: null,
@@ -534,9 +535,19 @@ async function daftarBaru(d) {
 }
 
 /* Petugas hasil import melengkapi profil saat pertama masuk → langsung aktif */
+/* Bonus Welcoming +100: lengkapi profil sekaligus nambah poin, divalidasi 1 ledger baru khusus ('wel_'+uid) —
+   lihat firestore.rules match /petugas/{uid} allow update, cabang ketiga. */
 async function lengkapiProfil(p, l) {
   const b = writeBatch(db);
-  b.update(doc(db, "petugas", p.id), { nama: l.nama.trim(), status: "aktif", lengkapAt: nowIso() });
+  const lid = "wel_" + p.id;
+  const f = GRP_FIELD[p.group];
+  const upd = {
+    nama: l.nama.trim(), status: "aktif", lengkapAt: nowIso(),
+    poinPeringkat: (p.poinPeringkat || 0) + 100, saldo: (p.saldo || 0) + 100, lastLedger: lid
+  };
+  upd[f] = (p[f] || 0) + 100;
+  b.update(doc(db, "petugas", p.id), upd);
+  b.set(doc(db, "ledger", lid), { userId: p.id, jenis: "welcome", delta: 100, waktu: nowIso() });
   b.set(doc(db, "petugas_cek", p.id), { nomor: l.nomor.trim(), foto: l.foto });
   if (wajahBermasalah(l.wajah)) b.set(doc(col("peringatan")), dokPeringatan(Object.assign({}, p, { nama: l.nama.trim() }), "lengkapi", l.wajah, ""));
   await b.commit();
@@ -617,7 +628,7 @@ async function loadSaya(userId) {
 
 function keluarPetugas(pesan) {
   S.me = null; S.profilSaya = null; S.view = "masuk"; S.tab = "home";
-  S.gate = null; S.run = null; S.hasil = null;
+  S.gate = null; S.run = null; S.hasil = null; S.sambutanPoin = null;
   S.masuk.err = ""; S.masuk.info = pesan || "";
   C.mine = { respons: [], hasil: [], redeem: [], ledger: [], loaded: false };
   C.rank = null;
@@ -1466,10 +1477,18 @@ function kartuTugas(tipe, d, hasil) {
     '<div class="t-name">' + esc(d.judul) + '</div><div class="t-sub">' + sub + "</div>" + aksi + "</div>";
 }
 
+function bannerSambutan() {
+  if (!S.sambutanPoin) return "";
+  return '<div class="card" style="background:linear-gradient(135deg,var(--red),#B8202E);color:#fff;margin-bottom:12px;">' +
+    '<div style="font-size:15px;font-weight:800;">&#127881; Selamat datang di DEBY!</div>' +
+    '<div style="font-size:13px;margin-top:4px;opacity:.92;">Kamu dapat <b>Welcoming Bonus +' + S.sambutanPoin + ' Poin</b> karena sudah melengkapi data diri. Yuk mulai kerjakan Kuesioner atau Post Test pertamamu.</div>' +
+    '<button class="btn btn-ghost btn-sm" style="margin-top:10px;background:rgba(255,255,255,.18);color:#fff;" data-do="tutupSambutan">Oke, mengerti</button></div>';
+}
 function bannerStatus() {
   const p = S.profilSaya;
-  if (p.status === "review") return kotakInfo("Akunmu sedang menunggu verifikasi Admin. Sementara ini kamu belum bisa mengerjakan tugas atau menukar hadiah.", "warn");
-  return "";
+  let h = bannerSambutan();
+  if (p.status === "review") h += kotakInfo("Akunmu sedang menunggu verifikasi Admin. Sementara ini kamu belum bisa mengerjakan tugas atau menukar hadiah.", "warn");
+  return h;
 }
 
 function vHome() {
@@ -2188,6 +2207,7 @@ const DO = {
   tab(v) { S.view = "app"; S.tab = v; S.gate = null; S.run = null; render(); onTab(v); },
   setGroup(v) { S.daftar.group = v; render(); },
   lbFilter(v) { S.lbFilter = v; render(); },
+  tutupSambutan() { S.sambutanPoin = null; render(); },
   muatUlang() { if (!S.me) return; loadSaya(S.me); loadKatalog(true); loadLeaderboard(true); loadRank(true); toast("ok", "Data dimuat ulang."); },
   muatHadiah() { loadHadiah(true); },
   bukaKamera(v) { bukaKamera(v); },
@@ -2240,6 +2260,7 @@ const DO = {
       await lengkapiProfil(S.profilSaya, l);
       S.lengkapi = { nama: "", nomor: "", foto: null, err: "", busy: false };
       await loadSaya(S.me);
+      S.sambutanPoin = 100;
       onTab("home");
       toast("ok", "Profil lengkap. Selamat datang di DEBY!");
     } catch (e) { l.busy = false; err(pesanGagal(e, "Gagal menyimpan")); }
