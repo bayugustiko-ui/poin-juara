@@ -381,6 +381,10 @@ const S = {
   adminMenu: "dashboard",
   masuk: { id: "", username: "", err: "", info: "", busy: false },
   sambutanPoin: null,
+  organikProfil: null,
+  masukOrg: { nik: "", email: "", err: "", busy: false },
+  daftarOrg: { nama: "", nik: "", email: "", level: "", area: "", regional: "", branch: "", err: "", busy: false },
+  ringkasanOrg: null,
   daftar: { nama: "", group: "", userId: "", kode: "", nomor: "", area: "", regional: "", branch: "", cluster: "", foto: null, wajah: null, err: "", busy: false },
   lengkapi: { nama: "", nomor: "", foto: null, wajah: null, err: "", busy: false },
   gate: null,
@@ -410,7 +414,7 @@ const C = {
   wilayah: [], wilayahLoaded: false,
   katalog: { kuesioner: [], posttest: [], knowledge: [], diperbarui: null, loaded: false },
   hadiah: {}, hadiahLoaded: false,
-  mine: { respons: [], hasil: [], redeem: [], ledger: [], loaded: false },
+  mine: { respons: [], hasil: [], redeem: [], ledger: [], loaded: false, ledgerLoaded: false },
   lb: null, lbLoading: false,
   rank: null,
   adm: {
@@ -475,7 +479,9 @@ async function sesiPerangkat() {
   if (!u || !u.isAnonymous) return null;
   try {
     const sa = await getDoc(doc(db, "sesiAuth", u.uid));
-    return sa.exists() ? sa.data().userId : null;
+    if (!sa.exists()) return null;
+    if (sa.data().tipe === "organik") return { tipe: "organik", email: sa.data().email };
+    return { tipe: "petugas", userId: sa.data().userId };
   } catch (e) { return null; }
 }
 
@@ -507,6 +513,76 @@ async function masukPetugas(idInput, usernameInput) {
   try { await b.commit(); }
   catch (e) { if (e.code === "permission-denied") throw errKode("terikat-hp-lain"); throw e; }
   return userId;
+}
+
+/* ---------- Organik: tim internal Telkomsel, login nama+email, 1 akun = 1 HP juga ---------- */
+function normEmail(s) { return String(s || "").trim().toLowerCase(); }
+
+async function ikatPerangkatOrganik(email) {
+  const authUid = await pastikanAnon();
+  const sa = await getDoc(doc(db, "sesiAuth", authUid));
+  if (sa.exists()) {
+    if (sa.data().tipe === "organik" && sa.data().email === email) return "sudah";
+    throw errKode("hp-akun-lain");
+  }
+  return authUid;
+}
+
+async function masukOrganik(nikInput, emailInput) {
+  const email = normEmail(emailInput);
+  const nik = String(nikInput || "").trim();
+  if (!email) throw errKode("format-id");
+  if (!nik) throw errKode("username-kosong");
+  const d = await getDoc(doc(db, "organik", email));
+  if (!d.exists()) throw errKode("tidak-terdaftar");
+  const o = d.data();
+  if (String(o.nik || "").trim() !== nik) throw errKode("username-salah");
+  if (o.status === "nonaktif") throw errKode("nonaktif");
+  const authUid = await ikatPerangkatOrganik(email);
+  if (authUid === "sudah") return email;
+  const b = writeBatch(db);
+  b.set(doc(db, "perangkat_organik", email), { authUid, waktu: nowIso() });
+  b.set(doc(db, "sesiAuth", authUid), { email, tipe: "organik" });
+  try { await b.commit(); }
+  catch (e) { if (e.code === "permission-denied") throw errKode("terikat-hp-lain"); throw e; }
+  return email;
+}
+
+/* Daftar Organik: pilih level (area/regional/branch/cluster) + lokasinya, status review sampai disetujui Admin */
+/* Wilayah apa saja yang tercakup di bawah level+value yang dipilih Organik — dihitung dari
+   Master Wilayah yang sudah dimuat gratis di client. Dipakai buat batasi query & tulis ringkasan
+   supaya Organik cuma bisa sentuh wilayah di bawah cakupannya sendiri (lihat firestore.rules).
+   Level 'hq' tidak ada kolomnya di Master Wilayah — artinya cakupan seluruh baris (nasional). */
+function hitungCakupan(level, value) {
+  const baris = level === "hq" ? C.wilayah : C.wilayah.filter((r) => r[level] === value);
+  const uniq = (arr) => arr.filter((v, i, a) => v && a.indexOf(v) === i);
+  return {
+    cakupanBranch: uniq(baris.map((r) => r.branch)),
+    cakupanRegional: uniq(baris.map((r) => r.regional)),
+    cakupanArea: uniq(baris.map((r) => r.area))
+  };
+}
+
+async function daftarOrganik(d) {
+  const email = normEmail(d.email);
+  const nama = d.nama.trim();
+  const nik = String(d.nik || "").trim();
+  if (!email || !nama || !nik) throw errKode("format-id");
+  if ((await getDoc(doc(db, "organik", email))).exists()) throw errKode("sudah-terdaftar");
+  const authUid = await ikatPerangkatOrganik(email);
+  if (authUid === "sudah") throw errKode("sudah-terdaftar");
+  const wilayahVal = d.level === "hq" ? "NASIONAL" : d[d.level];
+  const pub = Object.assign({
+    nama, nik, email, level: d.level,
+    area: d.area || "", regional: d.regional || "", branch: d.branch || "",
+    wilayahKey: d.level + "_" + wilayahVal, status: "review", createdAt: nowIso()
+  }, hitungCakupan(d.level, d[d.level]));
+  const b = writeBatch(db);
+  b.set(doc(db, "perangkat_organik", email), { authUid, waktu: nowIso() });
+  b.set(doc(db, "sesiAuth", authUid), { email, tipe: "organik" });
+  b.set(doc(db, "organik", email), pub);
+  await b.commit();
+  return email;
 }
 
 /* Petugas yang ID-nya tidak ada di data import: status review sampai disetujui Admin */
@@ -608,15 +684,25 @@ async function loadRank(force) {
 }
 
 /* ---------- data milik petugas (sekali muat, diperbarui setelah aksi) ---------- */
+/* Riwayat pribadi dibatasi 50 terbaru per jenis — bukan cuma hemat reads hari ini, tapi
+   supaya biayanya TIDAK terus naik seiring lama petugas aktif (tanpa limit, riwayat yang
+   menumpuk bertahun-tahun akan dibaca ulang PENUH setiap kali app dibuka).
+   "ledger" (Poin Saya) SENGAJA tidak ikut ditarik di sini — respons/hasil/redeem dibutuhkan
+   langsung di Beranda (status tugas & saldo tertahan), tapi ledger cuma dipakai di tab
+   "Poin Saya" sendiri, jadi baru ditarik saat tab itu benar-benar dibuka (lihat onTab & loadLedgerSaya). */
+const RIWAYAT_LIMIT = 50;
 async function loadSaya(userId) {
-  const nama = ["respons", "hasil", "redeem", "ledger"];
+  const nama = ["respons", "hasil", "redeem"];
   try {
     const hasil = await Promise.all([getDoc(doc(db, "petugas", userId))]
-      .concat(nama.map((n) => getDocs(query(col(n), where("userId", "==", userId))))));
+      .concat(nama.map((n) => getDocs(query(col(n), where("userId", "==", userId), orderBy("waktu", "desc"), limit(RIWAYAT_LIMIT))))));
     const pd = hasil[0];
     if (!pd.exists()) { keluarPetugas("Akun tidak ditemukan. Hubungi Admin."); return false; }
     S.profilSaya = Object.assign({ id: pd.id }, pd.data());
-    nama.forEach((n, i) => { C.mine[n] = rows(hasil[i + 1]).sort((a, b) => (a.waktu || "").localeCompare(b.waktu || "")); });
+    nama.forEach((n, i) => {
+      C.mine[n] = rows(hasil[i + 1]).sort((a, b) => (a.waktu || "").localeCompare(b.waktu || ""));
+      C.mine[n + "Penuh"] = hasil[i + 1].size < RIWAYAT_LIMIT; // false = kemungkinan masih ada yang lebih lama, belum ditampilkan
+    });
     C.mine.loaded = true;
     if (S.profilSaya.status === "nonaktif") { keluarPetugas("Akun dinonaktifkan. Hubungi Admin."); return false; }
   } catch (e) {
@@ -626,12 +712,132 @@ async function loadSaya(userId) {
   return true;
 }
 
+async function loadLedgerSaya(userId) {
+  if (C.mine.ledgerLoaded) return; // sekali per sesi — tab dibuka berkali-kali tidak menarik ulang
+  try {
+    const qs = await getDocs(query(col("ledger"), where("userId", "==", userId), orderBy("waktu", "desc"), limit(RIWAYAT_LIMIT)));
+    C.mine.ledger = rows(qs).sort((a, b) => (a.waktu || "").localeCompare(b.waktu || ""));
+    C.mine.ledgerPenuh = qs.size < RIWAYAT_LIMIT;
+    C.mine.ledgerLoaded = true;
+  } catch (e) { toast("no", "Gagal memuat riwayat poin: " + e.message); }
+  render();
+}
+
 function keluarPetugas(pesan) {
   S.me = null; S.profilSaya = null; S.view = "masuk"; S.tab = "home";
   S.gate = null; S.run = null; S.hasil = null; S.sambutanPoin = null;
   S.masuk.err = ""; S.masuk.info = pesan || "";
-  C.mine = { respons: [], hasil: [], redeem: [], ledger: [], loaded: false };
+  C.mine = { respons: [], hasil: [], redeem: [], ledger: [], loaded: false, ledgerLoaded: false };
   C.rank = null;
+  render();
+}
+
+/* ---------- Organik: ringkasan wilayah (lazy rebuild, cache 24 jam — bukan realtime) ----------
+   Cuma level Cluster yang query koleksi petugas langsung (kecil, puluhan orang per cluster).
+   Branch/Regional/Area dihitung dengan MENJUMLAHKAN ringkasan level di bawahnya (rekursif),
+   jadi biaya baca TIDAK pernah sebesar "semua petugas di 1 area sekaligus" dalam satu query —
+   dan sekali di-cache, wilayah yang sama dipakai bersama oleh siapa pun yang membukanya
+   dalam 24 jam itu, terlepas berapa kali atau berapa Organik yang buka. */
+const RINGKASAN_BASI_JAM = 24;
+function jamSejak(iso) { return iso ? (Date.now() - new Date(iso).getTime()) / 3600000 : Infinity; }
+
+async function ringkasanCache(rid) {
+  try {
+    const d = await getDoc(doc(db, "ringkasan", rid));
+    if (d.exists() && jamSejak(d.data().diperbarui) < RINGKASAN_BASI_JAM) return d.data();
+  } catch (e) {}
+  return null;
+}
+
+function kosongGrup() {
+  const g = {};
+  Object.keys(GRP_FIELD).forEach((k) => { g[k] = { total: 0, aktif: 0 }; });
+  return g;
+}
+
+function anakWilayah(childLevel, level, value) {
+  const baris = level === "hq" ? C.wilayah : C.wilayah.filter((r) => r[level] === value);
+  return baris.map((r) => r[childLevel]).filter((v, i, a) => v && a.indexOf(v) === i);
+}
+
+/* Branch = leaf sekarang (HQ menggantikan Cluster sebagai level teratas) — satu-satunya level
+   yang query petugas langsung. Anggota disimpan LENGKAP (bukan top-N) karena 1 branch masih
+   realistis ukurannya (puluhan-ratusan orang) — dokumennya tetap jauh di bawah batas 1 MB. */
+async function rebuildBranch(branchName) {
+  const qs = await getDocs(query(col("petugas"), where("branch", "==", branchName), where("status", "in", ["belum_lengkap", "aktif"])));
+  const anggota = {};
+  const grup = kosongGrup();
+  let total = 0;
+  qs.forEach((docSnap) => {
+    const p = docSnap.data();
+    if (!grup[p.group]) return; // grup di luar 3 yang dikenal — dilewati dari agregat
+    grup[p.group].total++;
+    if (p.status === "aktif") grup[p.group].aktif++;
+    anggota[docSnap.id] = { nama: namaTampil(Object.assign({ id: docSnap.id }, p)), group: p.group, kode: p.kode || "", poin: p.poinPeringkat || 0 };
+    total += p.poinPeringkat || 0;
+  });
+  const data = { level: "branch", wilayah: branchName, grup, total_poin: total, jumlah_anggota: qs.size, anggota, diperbarui: nowIso() };
+  await setDoc(doc(db, "ringkasan", "branch_" + branchName), data);
+  return data;
+}
+
+/* Regional/Area/HQ: JUMLAHKAN ringkasan level-di-bawahnya (rekursif) — tidak pernah query petugas
+   langsung, supaya biayanya tidak pernah sebesar "semua orang di 1 area/nasional sekaligus".
+   Daftar anggota dibatasi top-50 di level ini (leaderboard-style) — beda dari Branch yang lengkap,
+   supaya dokumen Area/HQ (bisa menggabungkan ribuan orang) tidak membengkak. */
+async function rebuildRollup(level, value) {
+  const childLevel = { area: "regional", regional: "branch", hq: "area" }[level];
+  let total = 0, jumlah = 0, gabungan = [];
+  const grup = kosongGrup();
+  for (const nv of anakWilayah(childLevel, level, value)) {
+    const d = await muatAtauRebuild(childLevel, nv);
+    total += d.total_poin || 0;
+    jumlah += d.jumlah_anggota || 0;
+    Object.keys(grup).forEach((g) => {
+      grup[g].total += (d.grup && d.grup[g] ? d.grup[g].total : 0);
+      grup[g].aktif += (d.grup && d.grup[g] ? d.grup[g].aktif : 0);
+    });
+    gabungan = gabungan.concat(d.anggota ? Object.keys(d.anggota).map((id) => Object.assign({ id }, d.anggota[id])) : (d.top || []));
+  }
+  gabungan.sort((a, b) => (b.poin || 0) - (a.poin || 0));
+  const data = { level, wilayah: value, grup, total_poin: total, jumlah_anggota: jumlah, top: gabungan.slice(0, 50), diperbarui: nowIso() };
+  await setDoc(doc(db, "ringkasan", level + "_" + value), data);
+  return data;
+}
+
+/* Pintu masuk tunggal: pakai cache kalau masih segar (<24 jam), rebuild kalau basi/belum ada. */
+async function muatAtauRebuild(level, value) {
+  const cache = await ringkasanCache(level + "_" + value);
+  if (cache) return cache;
+  return level === "branch" ? rebuildBranch(value) : rebuildRollup(level, value);
+}
+
+async function loadOrganikSaya(email) {
+  try {
+    const d = await getDoc(doc(db, "organik", email));
+    if (!d.exists()) { keluarOrganik("Akun tidak ditemukan. Hubungi Admin."); return false; }
+    S.organikProfil = Object.assign({ id: d.id }, d.data());
+    if (S.organikProfil.status === "nonaktif") { keluarOrganik("Akun dinonaktifkan. Hubungi Admin."); return false; }
+    render();
+    if (S.organikProfil.status === "aktif") {
+      if (!C.wilayahLoaded) await loadWilayah();
+      const p = S.organikProfil;
+      S.ringkasanOrg = await muatAtauRebuild(p.level, p[p.level]);
+      render();
+    }
+  } catch (e) { toast("no", "Gagal memuat ringkasan: " + e.message); }
+  return true;
+}
+
+function mulaiSesiOrganik(email) {
+  S.me = email; S.view = "organikApp"; S.organikProfil = null; S.ringkasanOrg = null;
+  render();
+  loadOrganikSaya(email);
+}
+
+function keluarOrganik(pesan) {
+  S.me = null; S.organikProfil = null; S.ringkasanOrg = null; S.view = "masukOrganik";
+  S.masukOrg.err = ""; S.masukOrg.info = pesan || "";
   render();
 }
 
@@ -687,6 +893,9 @@ async function simpanFotoAktivitas(p, tujuan, foto, meta) {
   return ref.id;
 }
 
+/* Poin Organik TIDAK ditulis di sini — lihat blok "Organik: ringkasan wilayah (lazy rebuild)"
+   di bawah. Dashboard Organik dihitung on-demand & di-cache 24 jam, bukan menumpang di tiap
+   kejadian poin — supaya beban tulis tidak ikut membengkak seiring total aktivitas nasional. */
 function tambahPoinKe(b, p, delta, ledgerId) {
   const upd = { poinPeringkat: increment(delta), saldo: increment(delta), lastLedger: ledgerId };
   upd[GRP_FIELD[p.group]] = increment(delta);
@@ -1368,6 +1577,7 @@ function vMasuk() {
     '<button style="background:none;border:none;color:var(--red);font-weight:700;cursor:pointer;padding:0;" data-do="keDaftar">Daftar sebagai petugas baru</button></div>' +
     "</div>" +
     '<div class="note">Akun terhubung ke <b>1 HP</b>. Selalu buka DEBY dari <b>Chrome</b>, lalu pilih menu &#8942; &rarr; <b>Tambahkan ke layar utama</b>. Membuka dari browser lain (misalnya langsung dari WhatsApp) dianggap HP berbeda.</div>' +
+    '<div style="text-align:center;margin-top:6px;"><button style="background:none;border:none;color:var(--ink-dim);font-size:12.5px;font-weight:600;cursor:pointer;" data-do="ke" data-v="masukOrganik">Masuk sebagai Tim Internal (Organik)</button></div>' +
     '<div style="text-align:center;"><button style="background:none;border:none;color:var(--ink-faint);font-size:12px;cursor:pointer;" data-do="ke" data-v="admLogin">Masuk sebagai Super Admin</button></div>' +
     "</div></div>";
 }
@@ -1412,6 +1622,101 @@ function vDaftar() {
     '<button class="btn btn-primary btn-block" data-do="daftar" ' + (d.busy ? "disabled" : "") + ">" + (d.busy ? "Mendaftarkan…" : "Daftar & Hubungkan HP Ini") + "</button>" +
     '<button class="btn btn-ghost btn-block" data-do="ke" data-v="masuk">Kembali ke Masuk</button>' +
     "</div></div>";
+}
+
+/* ============ Organik: daftar, masuk, tunggu verifikasi, dashboard ============ */
+const LEVEL_LABEL = { hq: "HQ &middot; Nasional", area: "Area", regional: "Regional", branch: "Branch" };
+
+function vDaftarOrganik() {
+  const d = S.daftarOrg;
+  function sel(nama, label, opsi, aktif) {
+    const kosong = aktif ? "Pilih " + label : (C.wilayahLoaded ? "Pilih induk dulu" : "Memuat&hellip;");
+    return '<div class="field"><label class="req">' + label + '</label><select data-in="daftarOrg.' + nama + '" ' + (aktif ? "" : "disabled") + ">" +
+      '<option value="">' + kosong + "</option>" +
+      opsi.map((o) => '<option value="' + esc(o) + '" ' + (d[nama] === o ? "selected" : "") + ">" + esc(o) + "</option>").join("") + "</select></div>";
+  }
+  const areas = opsiWilayah("area", d);
+  let wilayahFields = "";
+  if (d.level === "area") wilayahFields = sel("area", "Nama Area", areas, true);
+  else if (d.level === "regional") wilayahFields = sel("area", "Nama Area", areas, true) + sel("regional", "Nama Regional", d.area ? opsiWilayah("regional", d) : [], !!d.area);
+  else if (d.level === "branch") wilayahFields = sel("area", "Nama Area", areas, true) + sel("regional", "Nama Regional", d.area ? opsiWilayah("regional", d) : [], !!d.area) + sel("branch", "Nama Branch", d.regional ? opsiWilayah("branch", d) : [], !!d.regional);
+  else if (d.level === "hq") wilayahFields = '<div class="note">Level HQ melihat rekap seluruh Indonesia &mdash; tidak perlu pilih wilayah.</div>';
+  return '<div class="wrap-plain">' +
+    '<div class="hero" style="border-radius:0 0 18px 18px;"><div class="eyebrow">Registrasi Organik</div><h1>Daftar Akun Organik Telkomsel</h1>' +
+    "<p>Pilih level pemantauan &amp; wilayah kerja. Wilayah terkunci setelah submit.</p></div>" +
+    '<div class="pad stack"><div class="card">' +
+      '<div class="field"><label class="req">Nama Lengkap</label><input type="text" value="' + esc(d.nama) + '" data-in="daftarOrg.nama" placeholder="cth. Budi Santoso"></div>' +
+      '<div class="field"><label class="req">Email Telkomsel</label><input type="email" class="mono" value="' + esc(d.email) + '" data-in="daftarOrg.email" placeholder="nama@telkomsel.co.id"></div>' +
+      '<div class="field"><label class="req">NIK Telkomsel</label><input type="text" class="mono" value="' + esc(d.nik) + '" data-in="daftarOrg.nik" placeholder="NIK internal"></div>' +
+    "</div>" +
+    '<div class="card"><div class="card-title">Level &amp; Wilayah Kerja</div>' +
+      '<div class="field"><label class="req">Level Pemantauan</label><div class="seg">' +
+        Object.keys(LEVEL_LABEL).map((lv) => '<button class="' + (d.level === lv ? "on" : "") + '" data-do="setLevelOrg" data-v="' + lv + '">' + LEVEL_LABEL[lv].split(" ")[0] + "</button>").join("") + "</div></div>" +
+      wilayahFields +
+    "</div>" +
+    (d.err ? '<div class="err">' + d.err + "</div>" : "") +
+    '<button class="btn btn-primary btn-block" data-do="daftarOrganik" ' + (d.busy ? "disabled" : "") + ">" + (d.busy ? "Mendaftarkan&hellip;" : "Daftar Akun") + "</button>" +
+    '<div style="text-align:center;margin-top:6px;font-size:13px;color:var(--ink-dim);">Sudah punya akun? <button style="background:none;border:none;color:var(--red);font-weight:700;cursor:pointer;padding:0;" data-do="ke" data-v="masukOrganik">Masuk di sini</button></div>' +
+    "</div></div>";
+}
+
+function vMasukOrganik() {
+  const m = S.masukOrg;
+  return '<div class="wrap-plain">' +
+    '<div class="hero" style="border-radius:0 0 18px 18px;"><div class="eyebrow">Masuk Organik</div><h1>Masuk Akun Organik Telkomsel</h1>' +
+    "<p>Khusus tim internal yang sudah terdaftar &amp; disetujui Admin.</p></div>" +
+    '<div class="pad stack"><div class="card lift">' +
+      '<div class="field"><label class="req">NIK Telkomsel</label><input type="text" class="mono" value="' + esc(m.nik) + '" data-in="masukOrg.nik" placeholder="NIK internal"></div>' +
+      '<div class="field"><label class="req">Email Telkomsel</label><input type="email" class="mono" value="' + esc(m.email) + '" data-in="masukOrg.email" placeholder="nama@telkomsel.co.id"></div>' +
+      (m.info ? '<div class="note" style="margin-top:12px;">' + esc(m.info) + "</div>" : "") +
+      (m.err ? '<div class="err" style="margin-top:12px;">' + m.err + "</div>" : "") +
+      '<button class="btn btn-primary btn-block" style="margin-top:16px;" data-do="masukOrganik" ' + (m.busy ? "disabled" : "") + ">" + (m.busy ? "Memeriksa&hellip;" : "Masuk sebagai Akun Organik Telkomsel") + "</button>" +
+      '<div style="text-align:center;margin-top:14px;font-size:13px;color:var(--ink-dim);">Belum punya akun? <button style="background:none;border:none;color:var(--red);font-weight:700;cursor:pointer;padding:0;" data-do="keDaftarOrg">Daftar di sini</button></div>' +
+    "</div>" +
+    '<button class="btn btn-ghost btn-block" data-do="ke" data-v="masuk">Bukan tim Organik? Kembali ke login Petugas</button>' +
+    "</div></div>";
+}
+
+function vOrganikTunggu() {
+  const o = S.organikProfil;
+  const baris = (l, v) => '<div class="field"><label>' + l + "</label><input type=\"text\" value=\"" + esc(v || "-") + '" disabled></div>';
+  const wilayah = o.level === "hq" ? "Nasional" : [o.area, o.regional, o.branch].filter(Boolean).join(" &middot; ");
+  return '<div class="wrap-plain">' +
+    '<div class="hero" style="border-radius:0 0 18px 18px;"><div class="eyebrow">Status Pendaftaran</div><h1>Menunggu Verifikasi Admin</h1>' +
+    "<p>Pendaftaran akun Organik Anda sudah terkirim. Admin akan meninjau data &amp; wilayah kerja sebelum akun dapat digunakan.</p></div>" +
+    '<div class="pad stack"><div class="card">' +
+      baris("Nama", o.nama) + baris("Level", LEVEL_LABEL[o.level]) + baris("Wilayah", wilayah) +
+      '<div class="field"><label>Status</label><div style="margin-top:2px;"><span class="pill pill-neutral">MENUNGGU VERIFIKASI</span></div></div>' +
+    "</div>" +
+    '<div class="note">Tunggu hingga 3&times;24 jam untuk Verifikasi Admin.</div>' +
+    '<button class="btn btn-primary btn-block" data-do="cobaMasukOrganik">Coba Masuk Lagi</button>' +
+    '<button class="btn btn-ghost btn-block" data-do="keluarOrganik">Keluar</button>' +
+    "</div></div>";
+}
+
+function vOrganikHome() {
+  const o = S.organikProfil, r = S.ringkasanOrg;
+  const wilayah = o.level === "hq" ? "NASIONAL" : (o[o.level] || "").toUpperCase();
+  const bulan = new Date().toLocaleDateString("id-ID", { month: "long", year: "numeric" }).toUpperCase();
+  if (!r) return hero(LEVEL_LABEL[o.level].toUpperCase() + " " + wilayah, "Halo, " + esc(o.nama) + "!", "Memuat ringkasan wilayah&hellip;") + '<div class="pad"></div>';
+  const grupBaris = Object.keys(r.grup || {}).map((g) => {
+    const v = r.grup[g];
+    return '<div class="stat lift"><div class="lbl">' + esc(g).toUpperCase() + '</div><div class="n mono">' + fmtNum(v.total) + '</div>' +
+      '<div class="k lbl" style="color:var(--ink-dim);">aktif ' + fmtNum(v.aktif) + "</div></div>";
+  }).join("");
+  const daftar = r.anggota ? Object.keys(r.anggota).map((id) => Object.assign({ id }, r.anggota[id])).sort((a, b) => (b.poin || 0) - (a.poin || 0)) : (r.top || []);
+  return hero(LEVEL_LABEL[o.level].toUpperCase() + " " + wilayah + " &middot; " + bulan, "Halo, " + esc(o.nama) + "!", "") +
+    '<div class="pad stack" style="margin-top:-14px;">' +
+    '<div style="text-align:right;"><button class="btn btn-ghost btn-sm" data-do="keluarOrganik">Keluar</button></div>' +
+    '<div class="sec-head"><h2>Total Tim</h2></div>' +
+    '<div class="note" style="margin-top:-6px;">Jumlah &amp; anggota aktif per grup di wilayah Anda</div>' +
+    '<div style="display:grid;grid-template-columns:repeat(' + Object.keys(r.grup || {}).length + ',1fr);gap:10px;margin-top:10px;">' + grupBaris + "</div>" +
+    '<div class="sec-head"><h2>Daftar Anggota</h2><span class="pill pill-neutral">' + fmtNum(r.jumlah_anggota) + " ORANG</span></div>" +
+    '<div class="card">' + (daftar.length ? daftar.map((a, i) => '<div class="lb-row"><div class="lb-rank">' + (i + 1) + '</div>' +
+      '<div class="grow"><div class="lb-name">' + esc(a.nama) + '</div><div class="lb-sub">' + esc(a.group) + " &middot; " + esc(a.kode || "-") + "</div></div>" +
+      '<div class="lb-pts">' + fmtNum(a.poin) + "</div></div>").join("") : '<div class="empty">Belum ada anggota.</div>') + "</div>" +
+    '<div class="note">Data diperbarui otomatis dari aktivitas tim Direct Sales, YPCR, dan Buddies di wilayah Anda &middot; ringkasan ' + (r.diperbarui ? "per " + fmtTgl(r.diperbarui) : "") + ".</div>" +
+    "</div>";
 }
 
 /* ============ lengkapi profil (petugas hasil import, pertama kali masuk) ============ */
@@ -1646,12 +1951,15 @@ function vPoin() {
       '<div style="font-size:40px;font-weight:800;color:var(--red);" class="mono">' + fmtNum(saldoSaya()) + "</div>" +
       '<div class="lbl" style="color:var(--ink-dim);">Tersedia untuk ditukar: ' + fmtNum(tersediaSaya()) + "</div></div>" +
     '<div class="card"><div class="card-title">Point Ledger</div>' +
-    (!led.length ? '<div class="empty">Belum ada transaksi poin.</div>' : led.map((l) => {
+    (!C.mine.ledgerLoaded ? '<div class="empty">Memuat riwayat&hellip;</div>' :
+     !led.length ? '<div class="empty">Belum ada transaksi poin.</div>' : led.map((l) => {
       const row = '<div class="led"><span class="ld">' + fmtTgl(l.waktu) + '</span><span class="grow" style="font-size:13px;">' + esc(l.aktivitas) + "</span>" +
         '<span class="lv ' + (l.delta >= 0 ? "pos" : "neg") + '">' + (l.delta >= 0 ? "+" : "") + l.delta + '</span><span class="lb2">' + fmtNum(run) + "</span></div>";
       run -= (l.delta || 0);
       return row;
-    }).join("")) + "</div></div>";
+    }).join("")) + "</div>" +
+    (C.mine.ledgerPenuh === false ? '<div class="note">Menampilkan ' + RIWAYAT_LIMIT + ' transaksi terbaru. Butuh riwayat lebih lama? Hubungi Admin.</div>' : "") +
+    "</div>";
 }
 
 function vProfil() {
@@ -2121,6 +2429,13 @@ function render() {
   } else if (S.view === "boot") html = layarMuat("Membuka DEBY&hellip;");
   else if (S.view === "daftar") html = vDaftar();
   else if (S.view === "admLogin") html = vAdmLogin();
+  else if (S.view === "masukOrganik") html = vMasukOrganik();
+  else if (S.view === "daftarOrganik") html = vDaftarOrganik();
+  else if (S.view === "organikApp") {
+    html = !S.organikProfil ? layarMuat("Memuat akun&hellip;")
+      : S.organikProfil.status !== "aktif" ? vOrganikTunggu()
+      : vOrganikHome();
+  }
   else if (!S.me || S.view === "masuk") html = vMasuk();
   else if (!S.profilSaya) html = layarMuat("Memuat akun&hellip;");
   else if (S.profilSaya.status === "belum_lengkap") html = vLengkapi();
@@ -2151,6 +2466,7 @@ function onTab(v) {
   if (v === "tugas" || v === "knowledge") loadKatalog();
   if (v === "leaderboard") { loadLeaderboard(); loadRank(); }
   if (v === "hadiah") loadHadiah();
+  if (v === "poin") loadLedgerSaya(S.me);
 }
 function onAdmMenu(v) {
   if (v === "dashboard" && !C.adm.stats) loadAdminStats();
@@ -2200,10 +2516,27 @@ function pesanMasuk(e) {
   return "Gagal: " + esc(e && e.message ? e.message : e);
 }
 
+const PESAN_MASUK_ORG = Object.assign({}, PESAN_MASUK, {
+  "format-id": "Email wajib diisi.",
+  "username-kosong": "NIK Telkomsel wajib diisi.",
+  "tidak-terdaftar": "Email belum terdaftar. Pilih <b>Daftar sebagai Tim Internal</b> di bawah.",
+  "username-salah": "NIK tidak cocok dengan email tersebut.",
+  "sudah-terdaftar": "Email ini sudah terdaftar. Kembali ke layar Masuk dan pakai NIK &amp; Email.",
+  "hp-akun-lain": "HP/browser ini sudah terhubung ke akun Organik lain. Satu HP hanya untuk satu akun.",
+  "terikat-hp-lain": "Akun ini sudah terhubung ke HP atau browser lain. Kalau memang ganti HP, minta Admin menekan <b>Reset HP</b> di data Organik-mu."
+});
+function pesanMasukOrg(e) {
+  if (e && PESAN_MASUK_ORG[e.kode]) return PESAN_MASUK_ORG[e.kode];
+  return pesanMasuk(e);
+}
+
 /* ============ aksi ============ */
 const DO = {
-  ke(v) { S.view = v; S.masuk.err = ""; S.daftar.err = ""; S.admLogin.err = ""; render(); },
+  ke(v) { S.view = v; S.masuk.err = ""; S.daftar.err = ""; S.admLogin.err = ""; S.masukOrg.err = ""; S.daftarOrg.err = "";
+    if (v === "masukOrganik" || v === "daftarOrganik") { if (!C.wilayahLoaded) loadWilayah(); }
+    render(); },
   keDaftar() { S.view = "daftar"; S.daftar.err = ""; if (!C.wilayahLoaded) loadWilayah(); render(); },
+  keDaftarOrg() { S.view = "daftarOrganik"; S.daftarOrg.err = ""; if (!C.wilayahLoaded) loadWilayah(); render(); },
   tab(v) { S.view = "app"; S.tab = v; S.gate = null; S.run = null; render(); onTab(v); },
   setGroup(v) { S.daftar.group = v; render(); },
   lbFilter(v) { S.lbFilter = v; render(); },
@@ -2267,6 +2600,48 @@ const DO = {
   },
 
   keluar() { keluarPetugas(); },
+
+  async masukOrganik() {
+    const m = S.masukOrg;
+    if (m.busy) return;
+    m.err = ""; m.busy = true; render();
+    try {
+      const email = await masukOrganik(m.nik, m.email);
+      S.masukOrg = { nik: "", email: "", err: "", busy: false };
+      mulaiSesiOrganik(email);
+    } catch (e) { m.busy = false; m.err = pesanMasukOrg(e); render(); }
+  },
+
+  async daftarOrganik() {
+    const d = S.daftarOrg;
+    const err = (t) => { d.err = t; render(); };
+    if (d.busy) return;
+    if (d.nama.trim().length < 2) return err("Nama wajib diisi.");
+    if (d.nik.trim().length < 4) return err("NIK Telkomsel wajib diisi.");
+    if (!/^[^@]+@[^@]+\.[^@]+$/.test(normEmail(d.email))) return err("Format email tidak sesuai.");
+    if (!d.level) return err("Pilih level pemantauan.");
+    if (d.level !== "hq" && !d[d.level]) return err("Pilih wilayah sesuai level yang dipilih.");
+    d.busy = true; d.err = ""; render();
+    try {
+      const email = await daftarOrganik(d);
+      S.daftarOrg = { nama: "", nik: "", email: "", level: "", area: "", regional: "", branch: "", err: "", busy: false };
+      mulaiSesiOrganik(email);
+      toast("ok", "Terdaftar. Akunmu menunggu verifikasi Admin.");
+    } catch (e) { d.busy = false; err(pesanMasukOrg(e)); }
+  },
+
+  setLevelOrg(v) {
+    const d = S.daftarOrg;
+    d.level = v; d.area = ""; d.regional = ""; d.branch = ""; d.err = "";
+    render();
+  },
+
+  keluarOrganik() { keluarOrganik(); },
+
+  async cobaMasukOrganik() {
+    if (!S.organikProfil) return;
+    await loadOrganikSaya(S.organikProfil.email || S.me);
+  },
 
   async mulai(v, el) {
     const t = el.getAttribute("data-t");
@@ -2998,16 +3373,18 @@ onAuthStateChanged(auth, (u) => {
   if (S.mode === "admin") {
     stop("admin"); stop("redeem");
     S.adminUser = null; S.adminOk = false; S.adminCek = false;
-    S.mode = "petugas"; S.view = S.me ? "app" : "masuk";
+    S.mode = "petugas";
+    S.view = S.organikProfil ? "organikApp" : S.me ? "app" : "masuk";
     render();
   }
 });
 
 (async function mulai() {
   render();
-  const userId = await sesiPerangkat();
+  const sesi = await sesiPerangkat();
   if (S.mode === "admin") return;
-  if (userId) mulaiSesi(userId);
+  if (sesi && sesi.tipe === "organik") mulaiSesiOrganik(sesi.email);
+  else if (sesi && sesi.tipe === "petugas") mulaiSesi(sesi.userId);
   else { S.view = "masuk"; render(); }
 })();
 </script>
