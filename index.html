@@ -247,8 +247,19 @@ tr:last-child td{border-bottom:none;}
   .adm-side{position:static;height:auto;}
   .adm-side .a-nav{display:grid;grid-template-columns:repeat(2,1fr);gap:6px;}
   .adm-main{padding:20px 16px 50px;}
+  .wgrid{grid-template-columns:1fr !important;}
 }
 .pager{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;font-size:12.5px;color:var(--ink-dim);}
+.wgrid{display:grid;grid-template-columns:1fr 300px;gap:18px;align-items:start;}
+.wpanel{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px;position:sticky;top:14px;}
+.wnode{border-radius:9px;overflow:hidden;margin-bottom:4px;}
+.wnode-h{display:flex;align-items:center;gap:8px;padding:8px 6px;cursor:pointer;font-size:13px;}
+.wnode-h:hover{background:var(--surface-2);}
+.wnode-h .wc{width:14px;color:var(--ink-faint);font-size:11px;transition:transform .15s;}
+.wnode-h.on .wc{transform:rotate(90deg);}
+.wnode-nama{flex:1;font-weight:600;}
+.wnode-n{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--ink-dim);white-space:nowrap;}
+.wnode-kids{padding-left:16px;border-left:1px solid var(--border);margin-left:13px;}
 .skel{color:var(--ink-faint);font-size:13px;padding:14px 0;text-align:center;}
 .rank-note{font-size:11.5px;color:var(--ink-dim);margin-top:4px;}
 [hidden]{display:none!important;}
@@ -391,9 +402,11 @@ const S = {
   run: null,
   hasil: null,
   lbFilter: "semua",
+  lbWilayah: { area: "", regional: "" },
   profil: { nomor: "", foto: null, wajah: null },
   admLogin: { email: "", pass: "", err: "" },
   fPetugas: { group: "", status: "", q: "", area: "", regional: "", branch: "", cluster: "" },
+  wilayahBuka: { area: "", regional: "" },
   fRedeem: "pending",
   draftModul: { kuesioner: kosongModul(), posttest: kosongModul() },
   draftSoal: { teks: "", opsi: ["", "", "", ""], kunci: 0 },
@@ -424,7 +437,8 @@ const C = {
     redeem: [], redeemLoaded: false,
     ledger: [], ledgerLoaded: false,
     kunci: {}, peserta: {}, fotoCache: {}, peringatan: [],
-    fotoBersih: null
+    fotoBersih: null,
+    ringkasanWilayah: {}
   }
 };
 
@@ -760,34 +774,57 @@ function anakWilayah(childLevel, level, value) {
   return baris.map((r) => r[childLevel]).filter((v, i, a) => v && a.indexOf(v) === i);
 }
 
+/* Gabungkan topGrup {group: [...]} jadi 1 daftar campuran, diurutkan poin — dipakai untuk tampilan
+   "Semua Group". 100% akurat karena top-N campuran pasti bagian dari gabungan top-N tiap grup. */
+function gabungTopGrup(topGrup) {
+  if (!topGrup) return [];
+  return Object.values(topGrup).flat().sort((a, b) => (b.poin || 0) - (a.poin || 0));
+}
+/* Top-N per group dari satu daftar anggota {id,nama,group,kode,poin} — dipakai baik di Branch
+   (dari anggota lengkap) maupun di rollup (dari gabungan topGrup anak-anaknya). */
+function topGrupDari(anggotaArr, n) {
+  const out = {};
+  Object.keys(GRP_FIELD).forEach((g) => {
+    out[g] = anggotaArr.filter((a) => a.group === g).sort((a, b) => (b.poin || 0) - (a.poin || 0)).slice(0, n || 20);
+  });
+  return out;
+}
+
 /* Branch = leaf sekarang (HQ menggantikan Cluster sebagai level teratas) — satu-satunya level
    yang query petugas langsung. Anggota disimpan LENGKAP (bukan top-N) karena 1 branch masih
-   realistis ukurannya (puluhan-ratusan orang) — dokumennya tetap jauh di bawah batas 1 MB. */
+   realistis ukurannya (puluhan-ratusan orang) — dokumennya tetap jauh di bawah batas 1 MB.
+   topGrup (top 20 per group) dihitung SEKALIAN dari data yang sama, tanpa baca tambahan —
+   dipakai bareng oleh Leaderboard per Wilayah (Admin) & Daftar Anggota (Organik). */
 async function rebuildBranch(branchName) {
   const qs = await getDocs(query(col("petugas"), where("branch", "==", branchName), where("status", "in", ["belum_lengkap", "aktif"])));
   const anggota = {};
   const grup = kosongGrup();
   let total = 0;
+  const daftar = [];
   qs.forEach((docSnap) => {
     const p = docSnap.data();
     if (!grup[p.group]) return; // grup di luar 3 yang dikenal — dilewati dari agregat
     grup[p.group].total++;
     if (p.status === "aktif") grup[p.group].aktif++;
-    anggota[docSnap.id] = { nama: namaTampil(Object.assign({ id: docSnap.id }, p)), group: p.group, kode: p.kode || "", poin: p.poinPeringkat || 0 };
+    const orang = { id: docSnap.id, nama: namaTampil(Object.assign({ id: docSnap.id }, p)), group: p.group, kode: p.kode || "", poin: p.poinPeringkat || 0, branch: branchName };
+    anggota[docSnap.id] = { nama: orang.nama, group: p.group, kode: p.kode || "", poin: orang.poin };
+    daftar.push(orang);
     total += p.poinPeringkat || 0;
   });
-  const data = { level: "branch", wilayah: branchName, grup, total_poin: total, jumlah_anggota: qs.size, anggota, diperbarui: nowIso() };
+  const data = { level: "branch", wilayah: branchName, grup, total_poin: total, jumlah_anggota: qs.size, anggota, topGrup: topGrupDari(daftar, 20), diperbarui: nowIso() };
   await setDoc(doc(db, "ringkasan", "branch_" + branchName), data);
   return data;
 }
 
 /* Regional/Area/HQ: JUMLAHKAN ringkasan level-di-bawahnya (rekursif) — tidak pernah query petugas
    langsung, supaya biayanya tidak pernah sebesar "semua orang di 1 area/nasional sekaligus".
-   Daftar anggota dibatasi top-50 di level ini (leaderboard-style) — beda dari Branch yang lengkap,
-   supaya dokumen Area/HQ (bisa menggabungkan ribuan orang) tidak membengkak. */
+   topGrup digabung dari topGrup anak-anaknya lalu di-top-20-kan ulang (bukan gabung SEMUA anggota) —
+   ini tetap 100% akurat: top-20 gabungan sebuah grup pasti bagian dari gabungan top-20 tiap anaknya. */
 async function rebuildRollup(level, value) {
   const childLevel = { area: "regional", regional: "branch", hq: "area" }[level];
-  let total = 0, jumlah = 0, gabungan = [];
+  let total = 0, jumlah = 0;
+  const calonPerGrup = {};
+  Object.keys(GRP_FIELD).forEach((g) => { calonPerGrup[g] = []; });
   const grup = kosongGrup();
   for (const nv of anakWilayah(childLevel, level, value)) {
     const d = await muatAtauRebuild(childLevel, nv);
@@ -796,11 +833,12 @@ async function rebuildRollup(level, value) {
     Object.keys(grup).forEach((g) => {
       grup[g].total += (d.grup && d.grup[g] ? d.grup[g].total : 0);
       grup[g].aktif += (d.grup && d.grup[g] ? d.grup[g].aktif : 0);
+      calonPerGrup[g] = calonPerGrup[g].concat((d.topGrup && d.topGrup[g]) || []);
     });
-    gabungan = gabungan.concat(d.anggota ? Object.keys(d.anggota).map((id) => Object.assign({ id }, d.anggota[id])) : (d.top || []));
   }
-  gabungan.sort((a, b) => (b.poin || 0) - (a.poin || 0));
-  const data = { level, wilayah: value, grup, total_poin: total, jumlah_anggota: jumlah, top: gabungan.slice(0, 50), diperbarui: nowIso() };
+  const topGrup = {};
+  Object.keys(calonPerGrup).forEach((g) => { topGrup[g] = calonPerGrup[g].sort((a, b) => (b.poin || 0) - (a.poin || 0)).slice(0, 20); });
+  const data = { level, wilayah: value, grup, total_poin: total, jumlah_anggota: jumlah, topGrup, diperbarui: nowIso() };
   await setDoc(doc(db, "ringkasan", level + "_" + value), data);
   return data;
 }
@@ -810,6 +848,25 @@ async function muatAtauRebuild(level, value) {
   const cache = await ringkasanCache(level + "_" + value);
   if (cache) return cache;
   return level === "branch" ? rebuildBranch(value) : rebuildRollup(level, value);
+}
+
+/* ---------- ringkasan wilayah untuk Admin (pakai ulang cache ringkasan milik Organik) ----------
+   Admin melihat SEMUA wilayah (bukan cuma cakupan sendiri), tapi tetap lewat muatAtauRebuild()
+   yang sama supaya cache 24 jam-nya dipakai bersama — kalau Organik sudah pernah membuka wilayah
+   yang sama hari itu, Admin tinggal baca cache-nya, tidak query petugas lagi. */
+async function muatRingkasanWilayah(level, value, paksa) {
+  const key = level + "_" + value;
+  if (!paksa && C.adm.ringkasanWilayah[key]) return C.adm.ringkasanWilayah[key];
+  try {
+    const data = paksa ? await (level === "branch" ? rebuildBranch(value) : rebuildRollup(level, value)) : await muatAtauRebuild(level, value);
+    C.adm.ringkasanWilayah[key] = data;
+    render();
+    return data;
+  } catch (e) { toast("no", "Gagal memuat ringkasan " + value + ": " + e.message); return null; }
+}
+function muatRingkasanArea() {
+  const areas = C.wilayah.map((w) => w.area).filter((v, i, a) => v && a.indexOf(v) === i).sort();
+  areas.forEach((a) => muatRingkasanWilayah("area", a));
 }
 
 async function loadOrganikSaya(email) {
@@ -1540,7 +1597,7 @@ function barisLb(arr, meId) {
     const cls = i === 0 ? "r1" : i === 1 ? "r2" : i === 2 ? "r3" : "";
     return '<div class="lb-row ' + (p.id === meId ? "me" : "") + '"><div class="lb-rank ' + cls + '">#' + (i + 1) + "</div>" +
       '<div class="grow"><div class="lb-name">' + esc(p.nama) + (p.id === meId ? " (Anda)" : "") + "</div>" +
-      '<div class="lb-sub">' + esc(p.group) + " &middot; " + esc(p.regional || p.area || "-") + "</div></div>" +
+      '<div class="lb-sub">' + esc(p.group) + " &middot; " + esc(p.regional || p.area || p.branch || "-") + "</div></div>" +
       '<div class="lb-pts">' + fmtNum(p.poin) + "</div></div>";
   }).join("");
 }
@@ -1704,7 +1761,9 @@ function vOrganikHome() {
     return '<div class="stat lift"><div class="lbl">' + esc(g).toUpperCase() + '</div><div class="n mono">' + fmtNum(v.total) + '</div>' +
       '<div class="k lbl" style="color:var(--ink-dim);">aktif ' + fmtNum(v.aktif) + "</div></div>";
   }).join("");
-  const daftar = r.anggota ? Object.keys(r.anggota).map((id) => Object.assign({ id }, r.anggota[id])).sort((a, b) => (b.poin || 0) - (a.poin || 0)) : (r.top || []);
+  const daftar = r.anggota
+    ? Object.keys(r.anggota).map((id) => Object.assign({ id }, r.anggota[id])).sort((a, b) => (b.poin || 0) - (a.poin || 0))
+    : gabungTopGrup(r.topGrup).slice(0, 50);
   return hero(LEVEL_LABEL[o.level].toUpperCase() + " " + wilayah + " &middot; " + bulan, "Halo, " + esc(o.nama) + "!", "") +
     '<div class="pad stack" style="margin-top:-14px;">' +
     '<div style="text-align:right;"><button class="btn btn-ghost btn-sm" data-do="keluarOrganik">Keluar</button></div>' +
@@ -2099,10 +2158,52 @@ function pilihWilayahFilter(prefix, f) {
     '<select data-in="' + prefix + '.cluster">' + opt(clusters, f.cluster, "Semua Cluster") + "</select>";
 }
 
+/* Baris satu node wilayah (Area/Regional/Branch) di panel Ringkasan — total & aktif dijumlahkan
+   dari semua group (Direct Sales/YPCR/Buddies) sekaligus, sesuai isi ringkasan cache-nya. */
+function wnodeBaris(level, value, childLevel, childList, buka, indent) {
+  const key = level + "_" + value;
+  const d = C.adm.ringkasanWilayah[key];
+  const grup = d && d.grup ? d.grup : null;
+  const total = grup ? Object.values(grup).reduce((s, g) => s + (g.total || 0), 0) : null;
+  const aktif = grup ? Object.values(grup).reduce((s, g) => s + (g.aktif || 0), 0) : null;
+  let html = '<div class="wnode" style="' + (indent ? "margin-left:0;" : "") + '">' +
+    '<div class="wnode-h ' + (buka ? "on" : "") + '" data-do="' + (level === "area" ? "bukaAreaAdm" : "bukaRegionalAdm") + '" data-v="' + esc(value) + '">' +
+      '<span class="wc">&#9656;</span><span class="wnode-nama">' + esc(value) + "</span>" +
+      '<span class="wnode-n">' + (d ? fmtNum(aktif) + "/" + fmtNum(total) : "&hellip;") + "</span>" +
+    "</div>";
+  if (buka) {
+    html += '<div class="wnode-kids">' +
+      (!childList.length ? '<div class="empty" style="padding:6px 0;font-size:12px;">Tidak ada ' + (childLevel === "regional" ? "regional" : "branch") + ".</div>" :
+        childList.map((v) => childLevel === "regional"
+          ? wnodeBaris("regional", v, "branch", S.wilayahBuka.regional === v ? anakWilayah("branch", "regional", v) : [], S.wilayahBuka.regional === v, true)
+          : branchBaris(v)).join("")) +
+      "</div>";
+  }
+  return html + "</div>";
+}
+function branchBaris(value) {
+  const d = C.adm.ringkasanWilayah["branch_" + value];
+  const grup = d && d.grup ? d.grup : null;
+  const total = grup ? Object.values(grup).reduce((s, g) => s + (g.total || 0), 0) : null;
+  const aktif = grup ? Object.values(grup).reduce((s, g) => s + (g.aktif || 0), 0) : null;
+  return '<div class="wnode-h" style="cursor:default;"><span class="wc" style="visibility:hidden;">&#9656;</span>' +
+    '<span class="wnode-nama" style="font-weight:400;">' + esc(value) + "</span>" +
+    '<span class="wnode-n">' + (d ? fmtNum(aktif) + "/" + fmtNum(total) : "&hellip;") + "</span></div>";
+}
+function panelRingkasanWilayah() {
+  const areas = C.wilayah.map((w) => w.area).filter((v, i, a) => v && a.indexOf(v) === i).sort();
+  return '<div class="wpanel"><div class="card-title" style="margin-bottom:2px;">Ringkasan Wilayah</div>' +
+    '<div class="note" style="margin:0 0 10px;padding:0;background:none;border:none;font-size:12px;color:var(--ink-dim);">Aktif / Total &middot; gabungan 3 group. Klik Area untuk buka Regional, lalu Branch.</div>' +
+    (!areas.length ? '<div class="empty" style="padding:10px 0;">Master wilayah belum dimuat.</div>' :
+      areas.map((a) => wnodeBaris("area", a, "regional", S.wilayahBuka.area === a ? anakWilayah("regional", "area", a) : [], S.wilayahBuka.area === a, false)).join("")) +
+    '<div class="note" style="margin-top:10px;padding:0;background:none;border:none;font-size:11px;color:var(--ink-faint);">Cache 24 jam, dipakai bersama dashboard Organik &mdash; tidak nambah beban baca kalau baru saja dibuka.</div></div>';
+}
+
 function aPetugas() {
   const f = S.fPetugas, P = C.adm.petugas;
   const opt = (arr, val, semua, label) => '<option value="">' + semua + "</option>" + arr.map((x) => '<option value="' + esc(x) + '" ' + (val === x ? "selected" : "") + ">" + esc(label ? label(x) : x) + "</option>").join("");
   return head("Data Petugas", (C.adm.stats ? fmtNum(C.adm.stats.total) + " akun &middot; " : "") + "dimuat per " + HALAMAN + " baris") +
+    '<div class="wgrid"><div>' +
     '<div class="filters" style="margin-bottom:14px;">' +
       '<input type="text" class="mono" placeholder="Cari ID / Username (persis)" value="' + esc(f.q) + '" data-in="fPetugas.q" style="min-width:230px;">' +
       '<button class="btn btn-ghost btn-sm" data-do="cariPetugas">Cari</button>' +
@@ -2119,7 +2220,8 @@ function aPetugas() {
         '<td><button class="btn btn-ghost btn-sm" data-do="detailPetugas" data-v="' + esc(p.id) + '">Detail</button></td></tr>').join("")) +
     "</tbody></table></div>" +
     '<div class="pager"><span>' + fmtNum(P.rows.length) + " baris dimuat</span>" +
-    (!P.habis ? '<button class="btn btn-ghost btn-sm" data-do="petugasLagi" ' + (P.loading ? "disabled" : "") + ">" + (P.loading ? "Memuat…" : "Muat " + HALAMAN + " lagi") + "</button>" : "<span>Semua sudah dimuat</span>") + "</div>";
+    (!P.habis ? '<button class="btn btn-ghost btn-sm" data-do="petugasLagi" ' + (P.loading ? "disabled" : "") + ">" + (P.loading ? "Memuat…" : "Muat " + HALAMAN + " lagi") + "</button>" : "<span>Semua sudah dimuat</span>") + "</div>" +
+    "</div>" + panelRingkasanWilayah() + "</div>";
 }
 
 /* ---------- target & jadwal ---------- */
@@ -2255,10 +2357,36 @@ function aKnowledge() {
         '<td><button class="btn btn-danger btn-sm" data-do="hapusKnowledge" data-v="' + k.id + '">Hapus</button></td></tr>').join("") + "</tbody></table></div>");
 }
 
+/* Cakupan leaderboard yang sedang dipilih: null = Nasional (sumber publik/leaderboard, tak berubah),
+   atau {level, value} kalau Admin sedang menyempitkan ke Area/Regional (sumber: ringkasan, dipakai
+   bareng Organik & panel Ringkasan Wilayah — tidak ada query baru sama sekali). */
+function cakupanLb() {
+  if (S.lbWilayah.regional) return { level: "regional", value: S.lbWilayah.regional };
+  if (S.lbWilayah.area) return { level: "area", value: S.lbWilayah.area };
+  return null;
+}
+function pilihWilayahLb() {
+  const areas = C.wilayah.map((w) => w.area).filter((v, i, a) => v && a.indexOf(v) === i).sort();
+  const regs = S.lbWilayah.area ? C.wilayah.filter((w) => w.area === S.lbWilayah.area).map((w) => w.regional).filter((v, i, a) => v && a.indexOf(v) === i).sort() : [];
+  return '<select data-in="lbWilayah.area"><option value="">Nasional (semua Area)</option>' +
+      areas.map((a) => '<option value="' + esc(a) + '" ' + (S.lbWilayah.area === a ? "selected" : "") + ">" + esc(a) + "</option>").join("") + "</select>" +
+    '<select data-in="lbWilayah.regional" ' + (S.lbWilayah.area ? "" : "disabled") + '><option value="">Semua Regional di Area ini</option>' +
+      regs.map((r) => '<option value="' + esc(r) + '" ' + (S.lbWilayah.regional === r ? "selected" : "") + ">" + esc(r) + "</option>").join("") + "</select>";
+}
+
 function aPoin() {
   const d = S.draftAdj;
   const chips = [["semua", "Semua"]].concat(GROUPS.map((g) => [g, g]));
-  const data = C.lb ? (C.lb[S.lbFilter] || []) : null;
+  const cak = cakupanLb();
+  let dataLb, judulLb, waktuLb;
+  if (!cak) {
+    dataLb = C.lb ? (C.lb[S.lbFilter] || []) : null;
+    judulLb = "Nasional"; waktuLb = C.lb && C.lb.diperbarui ? fmtWaktu(C.lb.diperbarui) : null;
+  } else {
+    const r = C.adm.ringkasanWilayah[cak.level + "_" + cak.value];
+    dataLb = r ? (S.lbFilter === "semua" ? gabungTopGrup(r.topGrup).slice(0, 20) : (r.topGrup[S.lbFilter] || [])) : null;
+    judulLb = cak.value; waktuLb = r ? fmtWaktu(r.diperbarui) : null;
+  }
   return head("Poin &amp; Leaderboard", "Point ledger &middot; semua perubahan poin tercatat untuk audit") +
     '<div class="card" style="margin-bottom:18px;"><div class="card-title">Manual Adjustment</div><div class="filters">' +
       '<input type="text" class="mono" placeholder="ID / Username" value="' + esc(d.id) + '" data-in="draftAdj.id" style="min-width:170px;">' +
@@ -2268,10 +2396,12 @@ function aPoin() {
       '<div class="note" style="margin-top:10px;">Wajib mencatat alasan; admin pelaksana tercatat otomatis. Mempengaruhi saldo dan leaderboard.</div></div>' +
     kartuUploadUmum("adjustment", "Upload Adjustment Poin dari Excel", "user_id, poin, alasan",
       "Kolom user_id boleh diisi ID Digipos atau Username. Poin boleh minus, misalnya <span class=\"mono\">-25</span>. Semua baris tercatat di ledger dengan alasannya. Diproses satu per satu, jadi file besar butuh waktu.") +
-    '<div class="sec-head"><h2>Leaderboard &mdash; Top 20</h2><button class="btn btn-ghost btn-sm" data-do="perbaruiLb">Perbarui sekarang</button></div>' +
-    '<div class="lbl" style="margin-bottom:10px;">' + (C.lb && C.lb.diperbarui ? "Diperbarui " + fmtWaktu(C.lb.diperbarui) : "Belum pernah diperbarui") + "</div>" +
+    '<div class="sec-head"><h2>Leaderboard &mdash; Top 20 &middot; ' + esc(judulLb) + '</h2><button class="btn btn-ghost btn-sm" data-do="perbaruiLb">Perbarui sekarang</button></div>' +
+    '<div class="filters" style="margin-bottom:10px;">' + pilihWilayahLb() + "</div>" +
+    '<div class="lbl" style="margin-bottom:10px;">' + (waktuLb ? "Diperbarui " + waktuLb : "Belum pernah diperbarui") +
+      (cak ? ' &middot; cache 24 jam, dipakai bareng dashboard Organik' : "") + "</div>" +
     '<div class="chips" style="margin-bottom:12px;">' + chips.map((c) => '<button class="chip ' + (S.lbFilter === c[0] ? "on" : "") + '" data-do="lbFilter" data-v="' + esc(c[0]) + '">' + esc(c[1]) + "</button>").join("") + "</div>" +
-    '<div class="card" style="margin-bottom:18px;">' + (C.lbLoading || !data ? '<div class="skel">Memuat&hellip;</div>' : barisLb(data, null)) + "</div>" +
+    '<div class="card" style="margin-bottom:18px;">' + ((cak ? !C.adm.ringkasanWilayah[cak.level + "_" + cak.value] : (C.lbLoading || !dataLb)) ? '<div class="skel">Memuat&hellip;</div>' : barisLb(dataLb, null)) + "</div>" +
     '<div class="sec-head"><h2>Point Ledger &mdash; 50 Terbaru</h2><button class="btn btn-ghost btn-sm" data-do="refreshLedger">Muat ulang</button></div>' +
     '<div class="tbl-wrap"><table><thead><tr><th>Waktu</th><th>ID</th><th>Nama</th><th>Aktivitas</th><th>In/Out</th><th>Oleh</th></tr></thead><tbody>' +
     (!C.adm.ledgerLoaded ? '<tr><td colspan="6"><div class="skel">Memuat&hellip;</div></td></tr>' : !C.adm.ledger.length ? '<tr><td colspan="6"><div class="empty">Belum ada transaksi.</div></td></tr>' :
@@ -2471,6 +2601,7 @@ function onTab(v) {
 function onAdmMenu(v) {
   if (v === "dashboard" && !C.adm.stats) loadAdminStats();
   if (v === "petugas" && !C.adm.petugas.rows.length) loadPetugasPage(true);
+  if (v === "petugas") { if (C.wilayahLoaded) muatRingkasanArea(); else loadWilayah().then(muatRingkasanArea); }
   if ((v === "kuesioner" || v === "posttest" || v === "knowledge" || v === "pengaturan") && !C.wilayahLoaded) loadWilayah();
   if (v === "posttest") loadKunciAdmin();
   if (v === "poin") { loadLeaderboard(); loadLedgerTerbaru(); }
@@ -2741,8 +2872,13 @@ const DO = {
   petugasLagi() { loadPetugasPage(false); },
   fRedeem(v) { S.fRedeem = v; subscribeAdminRedeem(); render(); },
   async perbaruiLb() {
-    try { toast("", "Memperbarui leaderboard…"); await rebuildLeaderboard(); toast("ok", "Leaderboard diperbarui."); }
-    catch (e) { toast("no", pesanGagal(e, "Gagal memperbarui leaderboard")); }
+    const cak = cakupanLb();
+    try {
+      toast("", "Memperbarui leaderboard…");
+      if (cak) await muatRingkasanWilayah(cak.level, cak.value, true);
+      else await rebuildLeaderboard();
+      toast("ok", "Leaderboard diperbarui.");
+    } catch (e) { toast("no", pesanGagal(e, "Gagal memperbarui leaderboard")); }
   },
   bersihkanFoto() { bersihkanFoto(true); },
 
@@ -2847,6 +2983,19 @@ const DO = {
     if (!cur.aktif && t === "posttest" && (C.adm.kunci[v] || []).length !== (cur.soal || []).length) return toast("no", "Jumlah kunci jawaban tidak sama dengan jumlah soal. Buka Kelola Soal lalu periksa.");
     try { await updateDoc(doc(db, t, v), { aktif: !cur.aktif }); jadwalkanRebuildKatalog(); }
     catch (e) { toast("no", pesanGagal(e, "Gagal")); }
+  },
+  bukaAreaAdm(v) {
+    const sudahBuka = S.wilayahBuka.area === v;
+    S.wilayahBuka.area = sudahBuka ? "" : v;
+    S.wilayahBuka.regional = "";
+    render();
+    if (!sudahBuka) anakWilayah("regional", "area", v).forEach((r) => muatRingkasanWilayah("regional", r));
+  },
+  bukaRegionalAdm(v) {
+    const sudahBuka = S.wilayahBuka.regional === v;
+    S.wilayahBuka.regional = sudahBuka ? "" : v;
+    render();
+    if (!sudahBuka) anakWilayah("branch", "regional", v).forEach((b) => muatRingkasanWilayah("branch", b));
   },
   async bukaSoal(v, el) {
     const t = el.getAttribute("data-t"), k = t + ":" + v;
@@ -3349,6 +3498,8 @@ root.addEventListener("change", async (e) => {
     if (path === "fPetugas.branch") S.fPetugas.cluster = "";
     if (/^fPetugas\.(group|status|area|regional|branch|cluster)$/.test(path)) { S.fPetugas.q = ""; loadPetugasPage(true); }
     if (path === "imp.group" && S.imp.raw) { const r = siapkanImport(S.imp.raw, S.imp.group); S.imp.valid = r.valid; S.imp.salah = r.salah; }
+    if (path === "lbWilayah.area") { S.lbWilayah.regional = ""; if (S.lbWilayah.area) muatRingkasanWilayah("area", S.lbWilayah.area); }
+    if (path === "lbWilayah.regional" && S.lbWilayah.regional) muatRingkasanWilayah("regional", S.lbWilayah.regional);
     return render();
   }
 
