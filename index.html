@@ -377,7 +377,7 @@ function namaTampil(p) { return (p && (p.nama || p.kode || p.id)) || "-"; }
 const kosongTarget = () => ({ group: "semua", area: "", regional: "" });
 /* Satu slot upload dipakai bergantian oleh knowledge / hadiah / adjustment */
 const kosongUmum = () => ({ jenis: "", namaFile: "", valid: [], salah: [], busy: false, log: [] });
-const MAKS_BARIS_UPLOAD = { knowledge: 200, hadiah: 100, adjustment: 300, wilayah: 2000 };
+const MAKS_BARIS_UPLOAD = { knowledge: 200, hadiah: 100, adjustment: 300, wilayah: 2000, panduan: 300 };
 const kosongModul = () => Object.assign({ judul: "", mulai: "", selesai: "" }, kosongTarget());
 
 const S = {
@@ -411,6 +411,9 @@ const S = {
   draftModul: { kuesioner: kosongModul(), posttest: kosongModul() },
   draftSoal: { teks: "", opsi: ["", "", "", ""], kunci: 0 },
   draftKn: Object.assign({ judul: "", tipe: "PDF", url: "" }, kosongTarget()),
+  draftPanduan: { pertanyaan: "", jawaban: "", kategori: "", petugas: true, organik: true },
+  organikTab: "beranda",
+  panduanCari: "",
   draftHd: { nama: "", poin: "", stok: "" },
   draftAdj: { id: "", poin: "", alasan: "" },
   bulkWilayah: "",
@@ -425,13 +428,13 @@ const S = {
 /* Cache kecil — petugas tidak pernah memuat seluruh koleksi besar */
 const C = {
   wilayah: [], wilayahLoaded: false,
-  katalog: { kuesioner: [], posttest: [], knowledge: [], diperbarui: null, loaded: false },
+  katalog: { kuesioner: [], posttest: [], knowledge: [], panduan: [], diperbarui: null, loaded: false },
   hadiah: {}, hadiahLoaded: false,
   mine: { respons: [], hasil: [], redeem: [], ledger: [], loaded: false, ledgerLoaded: false },
   lb: null, lbLoading: false,
   rank: null,
   adm: {
-    kuesioner: {}, posttest: {}, knowledge: {}, katalogLoaded: false,
+    kuesioner: {}, posttest: {}, knowledge: {}, panduan: {}, katalogLoaded: false,
     stats: null, reviewList: [],
     petugas: { rows: [], cursor: null, habis: false, loading: false, key: "" },
     redeem: [], redeemLoaded: false,
@@ -658,7 +661,7 @@ async function loadKatalog(force) {
   try {
     const d = await getDoc(doc(db, "publik", "katalog"));
     const k = d.exists() ? d.data() : {};
-    C.katalog = { kuesioner: k.kuesioner || [], posttest: k.posttest || [], knowledge: k.knowledge || [], diperbarui: k.diperbarui || null, loaded: true };
+    C.katalog = { kuesioner: k.kuesioner || [], posttest: k.posttest || [], knowledge: k.knowledge || [], panduan: k.panduan || [], diperbarui: k.diperbarui || null, loaded: true };
   } catch (e) { C.katalog.loaded = true; }
   render();
 }
@@ -887,7 +890,7 @@ async function loadOrganikSaya(email) {
 }
 
 function mulaiSesiOrganik(email) {
-  S.me = email; S.view = "organikApp"; S.organikProfil = null; S.ringkasanOrg = null;
+  S.me = email; S.view = "organikApp"; S.organikProfil = null; S.ringkasanOrg = null; S.organikTab = "beranda";
   render();
   loadOrganikSaya(email);
 }
@@ -1040,14 +1043,14 @@ async function ajukanRedeem(p, hadiahId, h, fotoId, wajah) {
 function subscribeAdminKatalog() {
   stop("admin");
   const seen = new Set();
-  ["kuesioner", "posttest", "knowledge", "hadiah"].forEach((name) => {
+  ["kuesioner", "posttest", "knowledge", "panduan", "hadiah"].forEach((name) => {
     unsubs.admin.push(onSnapshot(col(name), (qs) => {
       if (name === "hadiah") { C.hadiah = mapOf(qs); C.hadiahLoaded = true; }
       else C.adm[name] = mapOf(qs);
       seen.add(name);
-      if (seen.size === 4) C.adm.katalogLoaded = true;
+      if (seen.size === 5) C.adm.katalogLoaded = true;
       render();
-    }, () => { seen.add(name); if (seen.size === 4) C.adm.katalogLoaded = true; render(); }));
+    }, () => { seen.add(name); if (seen.size === 5) C.adm.katalogLoaded = true; render(); }));
   });
 }
 
@@ -1062,6 +1065,7 @@ async function rebuildKatalog() {
       kuesioner: aktif(C.adm.kuesioner).map((x) => ({ id: x.id, judul: x.judul, target: tgt(x), mulai: x.mulai || "", selesai: x.selesai || "", pertanyaan: x.pertanyaan || [] })),
       posttest: aktif(C.adm.posttest).map((x) => ({ id: x.id, judul: x.judul, target: tgt(x), mulai: x.mulai || "", selesai: x.selesai || "", soal: x.soal || [] })),
       knowledge: aktif(C.adm.knowledge).map((x) => ({ id: x.id, judul: x.judul, tipe: x.tipe, url: x.url, target: tgt(x) })),
+      panduan: aktif(C.adm.panduan).map((x) => ({ id: x.id, pertanyaan: x.pertanyaan, jawaban: x.jawaban, kategori: x.kategori || "Umum", audiens: x.audiens && x.audiens.length ? x.audiens : ["petugas", "organik"] })),
       diperbarui: nowIso()
     });
   } catch (e) { toast("no", "Gagal memperbarui daftar tugas petugas: " + e.message); }
@@ -1335,6 +1339,33 @@ async function simpanKnowledgeMassal(rows) {
 async function simpanHadiahMassal(rows) {
   const b = writeBatch(db), now = nowIso();
   rows.forEach((r) => b.set(doc(col("hadiah")), { nama: r.nama, poin: r.poin, stok: r.stok, aktif: true, createdAt: now }));
+  await b.commit();
+}
+
+function siapkanPanduan(data) {
+  const valid = [], salah = [];
+  data.forEach((r, i) => {
+    const baris = i + 2;
+    const pertanyaan = ambilKol(r, ["pertanyaan", "soal", "tanya", "question"]);
+    const jawaban = ambilKol(r, ["jawaban", "answer"]);
+    if (!pertanyaan && !jawaban) return;
+    const kategori = ambilKol(r, ["kategori", "kategory", "category", "grup"]) || "Umum";
+    const audRaw = ambilKol(r, ["audiens", "audience", "tampil"]).toLowerCase();
+    let alasan = "";
+    if (!pertanyaan) alasan = "pertanyaan kosong";
+    else if (!jawaban) alasan = "jawaban kosong";
+    else if (valid.length >= MAKS_BARIS_UPLOAD.panduan) alasan = "melebihi maksimal " + MAKS_BARIS_UPLOAD.panduan;
+    if (alasan) { salah.push({ baris, alasan }); return; }
+    const audiens = audRaw.includes("petugas") && !audRaw.includes("organik") ? ["petugas"]
+      : audRaw.includes("organik") && !audRaw.includes("petugas") ? ["organik"]
+      : ["petugas", "organik"];
+    valid.push({ pertanyaan, jawaban, kategori, audiens });
+  });
+  return { valid, salah };
+}
+async function simpanPanduanMassal(rows) {
+  const b = writeBatch(db), now = nowIso();
+  rows.forEach((r) => b.set(doc(col("panduan")), { pertanyaan: r.pertanyaan, jawaban: r.jawaban, kategori: r.kategori, audiens: r.audiens, aktif: true, createdAt: now }));
   await b.commit();
 }
 
@@ -2043,18 +2074,39 @@ function vProfil() {
     '<div class="note">Keluar tidak melepas HP ini dari akunmu. Mau pindah HP? Minta Admin menekan <b>Reset HP</b>.</div></div>';
 }
 
-function vBantuan() {
-  const faq = [
-    ["Kenapa akun saya terkunci ke 1 HP?", "Supaya akun tidak bisa dipakai orang lain yang tahu ID dan Username Digipos-mu. Ganti HP, pindah browser, atau hapus data browser? Minta Admin menekan Reset HP, lalu masuk lagi."],
-    ["Kenapa harus ambil foto tiap mau mulai?", "Foto jadi gerbang identitas supaya poin benar-benar dikumpulkan oleh petugas yang bersangkutan. Ini bukan absensi harian."],
-    ["Kenapa data identitas & wilayah tidak bisa diubah?", "ID, Username Digipos, dan wilayah dikunci supaya data tetap bersih saat digabung dengan data sales. Hubungi Admin bila ada koreksi."],
-    ["Berapa poin yang saya dapat?", "Kuesioner lengkap = " + POIN_KUESIONER + " poin. Post Test = " + POIN_PER_BENAR + " poin untuk tiap jawaban benar. Setiap modul hanya bisa dikerjakan sekali."],
-    ["Kenapa penukaran saya masih pending?", "Permintaan menunggu persetujuan Admin. Selama pending, poin ditahan. Kalau ditolak, poin dan kuota bulanan kembali."],
-    ["Kenapa leaderboard tidak langsung berubah?", "Leaderboard diperbarui berkala supaya aplikasi tetap gratis. Poinmu sendiri di Beranda selalu terbaru."]
-  ];
-  return hero("DEBY", "Bantuan", "Pertanyaan yang sering muncul") +
-    '<div class="pad stack">' + faq.map((x) => '<div class="card"><div style="font-weight:700;font-size:14.5px;margin-bottom:5px;">' + esc(x[0]) + '</div><div style="font-size:13.5px;color:var(--ink-dim);">' + esc(x[1]) + "</div></div>").join("") + "</div>";
+/* Isi awal sebelum Admin pernah menambah apa pun lewat menu Panduan — supaya halaman tidak kosong
+   sejak hari pertama deploy. Begitu Admin menambah 1 saja lewat menu Panduan, daftar ini tidak
+   dipakai lagi (katalog dari Firestore yang menang). Cuma untuk Petugas — Organik memang fitur baru. */
+const FAQ_AWAL = [
+  { pertanyaan: "Kenapa akun saya terkunci ke 1 HP?", jawaban: "Supaya akun tidak bisa dipakai orang lain yang tahu ID dan Username Digipos-mu. Ganti HP, pindah browser, atau hapus data browser? Minta Admin menekan Reset HP, lalu masuk lagi.", kategori: "Akun & Login", audiens: ["petugas"] },
+  { pertanyaan: "Kenapa harus ambil foto tiap mau mulai?", jawaban: "Foto jadi gerbang identitas supaya poin benar-benar dikumpulkan oleh petugas yang bersangkutan. Ini bukan absensi harian.", kategori: "Akun & Login", audiens: ["petugas"] },
+  { pertanyaan: "Kenapa data identitas & wilayah tidak bisa diubah?", jawaban: "ID, Username Digipos, dan wilayah dikunci supaya data tetap bersih saat digabung dengan data sales. Hubungi Admin bila ada koreksi.", kategori: "Akun & Login", audiens: ["petugas"] },
+  { pertanyaan: "Berapa poin yang saya dapat?", jawaban: "Kuesioner lengkap = " + POIN_KUESIONER + " poin. Post Test = " + POIN_PER_BENAR + " poin untuk tiap jawaban benar. Setiap modul hanya bisa dikerjakan sekali.", kategori: "Poin & Hadiah", audiens: ["petugas"] },
+  { pertanyaan: "Kenapa penukaran saya masih pending?", jawaban: "Permintaan menunggu persetujuan Admin. Selama pending, poin ditahan. Kalau ditolak, poin dan kuota bulanan kembali.", kategori: "Poin & Hadiah", audiens: ["petugas"] },
+  { pertanyaan: "Kenapa leaderboard tidak langsung berubah?", jawaban: "Leaderboard diperbarui berkala supaya aplikasi tetap gratis. Poinmu sendiri di Beranda selalu terbaru.", kategori: "Poin & Hadiah", audiens: ["petugas"] }
+];
+
+/* Dipakai bersama Petugas (tab Bantuan) & Organik (tab Panduan) — sumbernya SATU dokumen yang sama
+   (publik/katalog.panduan), disaring per audiens saat tampil, bukan 2 sistem terpisah. */
+/* Pencarian murni filter teks di HP — tidak ada pembacaan tambahan, dan tidak kehilangan fokus
+   ketik karena render() sudah preserve-focus untuk field data-in (lihat fungsi render()). */
+function vPanduan(audiens) {
+  const sumber = (C.katalog.panduan && C.katalog.panduan.length) ? C.katalog.panduan : (audiens === "petugas" ? FAQ_AWAL : []);
+  const q = S.panduanCari.trim().toLowerCase();
+  const list = sumber.filter((x) => !x.audiens || !x.audiens.length || x.audiens.includes(audiens))
+    .filter((x) => !q || (x.pertanyaan + " " + x.jawaban + " " + (x.kategori || "")).toLowerCase().includes(q));
+  const kategoriUrut = list.map((x) => x.kategori || "Umum").filter((v, i, a) => a.indexOf(v) === i);
+  const body = !list.length ? '<div class="empty">' + (q ? "Tidak ada panduan yang cocok dengan “" + esc(S.panduanCari) + "”." : "Belum ada panduan.") + "</div>" :
+    kategoriUrut.map((k) => '<div class="sec-head"><h2>' + esc(k) + "</h2></div>" +
+      list.filter((x) => (x.kategori || "Umum") === k).map((x) =>
+        '<div class="card"><div style="font-weight:700;font-size:14.5px;margin-bottom:5px;">' + esc(x.pertanyaan) + '</div><div style="font-size:13.5px;color:var(--ink-dim);">' + esc(x.jawaban) + "</div></div>").join("")
+    ).join("");
+  return hero("DEBY", "Panduan", "Ketik pertanyaanmu, atau jelajahi per kategori") +
+    '<div class="pad stack">' +
+    '<div class="field"><input type="text" placeholder="Cari, misal: pending, foto, hadiah…" value="' + esc(S.panduanCari) + '" data-in="panduanCari" autocomplete="off"></div>' +
+    body + "</div>";
 }
+function vBantuan() { return vPanduan("petugas"); }
 
 /* ============ ADMIN ============ */
 function vAdmLogin() {
@@ -2070,7 +2122,7 @@ function vAdmLogin() {
 
 const ADM_MENU = [
   ["dashboard", "Dashboard"], ["petugas", "Data Petugas"], ["kuesioner", "Kuesioner"], ["posttest", "Post Test"],
-  ["knowledge", "Knowledge"], ["poin", "Poin & Leaderboard"], ["redeem", "Hadiah & Redeem"], ["pengaturan", "Pengaturan"]
+  ["knowledge", "Knowledge"], ["panduan", "Panduan"], ["poin", "Poin & Leaderboard"], ["redeem", "Hadiah & Redeem"], ["pengaturan", "Pengaturan"]
 ];
 const STATUS_LABEL = { belum_lengkap: "belum lengkap", review: "menunggu verifikasi", aktif: "aktif", nonaktif: "nonaktif" };
 const STATUS_PILL = { belum_lengkap: "pill-neutral", review: "pill-warn", aktif: "pill-good", nonaktif: "pill-bad" };
@@ -2084,9 +2136,9 @@ function vAdmin() {
   const st = C.adm.stats;
   const cnt = {
     dashboard: st ? st.peringatan : null, petugas: st ? st.review : null, kuesioner: Object.keys(C.adm.kuesioner).length, posttest: Object.keys(C.adm.posttest).length,
-    knowledge: Object.keys(C.adm.knowledge).length, redeem: st ? st.pending : null
+    knowledge: Object.keys(C.adm.knowledge).length, panduan: Object.keys(C.adm.panduan).length, redeem: st ? st.pending : null
   };
-  const body = ({ dashboard: aDashboard, petugas: aPetugas, kuesioner: () => aModul("kuesioner"), posttest: () => aModul("posttest"), knowledge: aKnowledge, poin: aPoin, redeem: aRedeem, pengaturan: aPengaturan }[S.adminMenu] || aDashboard)();
+  const body = ({ dashboard: aDashboard, petugas: aPetugas, kuesioner: () => aModul("kuesioner"), posttest: () => aModul("posttest"), knowledge: aKnowledge, panduan: aPanduan, poin: aPoin, redeem: aRedeem, pengaturan: aPengaturan }[S.adminMenu] || aDashboard)();
   return '<div class="adm"><aside class="adm-side"><div class="a-brand"><b>DEBY</b><span>Super Admin</span></div><div class="a-nav">' +
     ADM_MENU.map((m) => '<button class="' + (S.adminMenu === m[0] ? "on" : "") + '" data-do="admMenu" data-v="' + m[0] + '"><span>' + m[1] + "</span>" +
       (cnt[m[0]] ? '<span class="cnt">' + fmtNum(cnt[m[0]]) + "</span>" : "") + "</button>").join("") + "</div>" +
@@ -2357,6 +2409,29 @@ function aKnowledge() {
         '<td><button class="btn btn-danger btn-sm" data-do="hapusKnowledge" data-v="' + k.id + '">Hapus</button></td></tr>').join("") + "</tbody></table></div>");
 }
 
+function aPanduan() {
+  const d = S.draftPanduan;
+  const arr = listOf(C.adm.panduan).sort((a, b) => (a.kategori || "").localeCompare(b.kategori || ""));
+  const audiensChip = (mana, label) => '<button class="chip ' + (d[mana] ? "on" : "") + '" data-do="toggleAudiensPanduan" data-v="' + mana + '">' + label + "</button>";
+  return head("Panduan", "FAQ tanya-jawab &middot; tampil di Petugas (tab Bantuan) dan Organik (tab Panduan) &middot; 0 pembacaan tambahan, numpang di katalog") +
+    '<div class="card" style="margin-bottom:18px;"><div class="card-title">Tambah Panduan</div>' +
+      '<div class="field"><label>Pertanyaan</label><input type="text" value="' + esc(d.pertanyaan) + '" data-in="draftPanduan.pertanyaan" placeholder="Kalau saya mau XXX, harus gimana?"></div>' +
+      '<div class="field" style="margin-top:9px;"><label>Jawaban</label><textarea rows="3" data-in="draftPanduan.jawaban" placeholder="Jawabannya...">' + esc(d.jawaban) + "</textarea></div>" +
+      '<div class="filters" style="margin-top:10px;">' +
+        '<input type="text" placeholder="Kategori (cth. Akun & Login)" value="' + esc(d.kategori) + '" data-in="draftPanduan.kategori" style="min-width:200px;">' +
+        '<span class="lbl">Tampil untuk:</span>' + audiensChip("petugas", "Petugas") + audiensChip("organik", "Organik") +
+      "</div>" +
+      '<button class="btn btn-primary btn-sm" style="margin-top:12px;" data-do="tambahPanduan">Tambah</button></div>' +
+    kartuUploadUmum("panduan", "Upload Panduan dari Excel", "pertanyaan, jawaban, kategori, audiens",
+      "Kolom audiens boleh diisi <span class=\"mono\">petugas</span>, <span class=\"mono\">organik</span>, atau <span class=\"mono\">keduanya</span> (kosong = keduanya). Panduan lama tidak dihapus, file ini menambah.") +
+    (!arr.length ? '<div class="card"><div class="empty">Belum ada panduan. Sementara Petugas masih melihat 6 FAQ bawaan.</div></div>' :
+      '<div class="tbl-wrap"><table><thead><tr><th>Kategori</th><th>Pertanyaan</th><th>Audiens</th><th>Status</th><th></th></tr></thead><tbody>' +
+      arr.map((x) => '<tr><td><span class="pill pill-neutral">' + esc(x.kategori || "Umum") + '</span></td><td style="font-weight:600;max-width:320px;">' + esc(x.pertanyaan) + "</td>" +
+        '<td style="font-size:12px;">' + (x.audiens && x.audiens.length ? x.audiens.map((a) => a === "petugas" ? "Petugas" : "Organik").join(" &amp; ") : "Petugas &amp; Organik") + "</td>" +
+        '<td><span class="pill ' + (x.aktif !== false ? "pill-good" : "pill-neutral") + '" style="cursor:pointer;" data-do="toggleAktifPanduan" data-v="' + x.id + '">' + (x.aktif !== false ? "Aktif" : "Nonaktif") + "</span></td>" +
+        '<td><button class="btn btn-danger btn-sm" data-do="hapusPanduan" data-v="' + x.id + '">Hapus</button></td></tr>').join("") + "</tbody></table></div>");
+}
+
 /* Cakupan leaderboard yang sedang dipilih: null = Nasional (sumber publik/leaderboard, tak berubah),
    atau {level, value} kalau Admin sedang menyempitkan ke Area/Regional (sumber: ringkasan, dipakai
    bareng Organik & panel Ringkasan Wilayah — tidak ada query baru sama sekali). */
@@ -2542,6 +2617,12 @@ function vAdmBelum() {
 }
 function layarMuat(teks) { return '<div class="wrap-plain"><div class="pad"><div class="empty">' + teks + "</div></div></div>"; }
 
+function vShellOrganik(inner) {
+  const nav = [["beranda", "HM", "Beranda"], ["panduan", "BT", "Panduan"]];
+  return '<div class="wrap-mobile">' + inner +
+    '<nav class="bnav" style="grid-template-columns:repeat(2,1fr);">' + nav.map((n) => '<button class="' + (S.organikTab === n[0] ? "on" : "") + '" data-do="organikTab" data-v="' + n[0] + '"><span class="bi">' + n[1] + '</span><span class="bt">' + n[2] + "</span></button>").join("") +
+    "</nav></div>";
+}
 function vShell(inner) {
   const nav = [["home", "HM", "Home"], ["tugas", "TG", "Tugas"], ["hadiah", "HD", "Hadiah"], ["profil", "PF", "Profil"]];
   const inFlow = S.view !== "app";
@@ -2564,7 +2645,7 @@ function render() {
   else if (S.view === "organikApp") {
     html = !S.organikProfil ? layarMuat("Memuat akun&hellip;")
       : S.organikProfil.status !== "aktif" ? vOrganikTunggu()
-      : vOrganikHome();
+      : vShellOrganik(S.organikTab === "panduan" ? vPanduan("organik") : vOrganikHome());
   }
   else if (!S.me || S.view === "masuk") html = vMasuk();
   else if (!S.profilSaya) html = layarMuat("Memuat akun&hellip;");
@@ -2668,9 +2749,10 @@ const DO = {
     render(); },
   keDaftar() { S.view = "daftar"; S.daftar.err = ""; if (!C.wilayahLoaded) loadWilayah(); render(); },
   keDaftarOrg() { S.view = "daftarOrganik"; S.daftarOrg.err = ""; if (!C.wilayahLoaded) loadWilayah(); render(); },
-  tab(v) { S.view = "app"; S.tab = v; S.gate = null; S.run = null; render(); onTab(v); },
+  tab(v) { S.view = "app"; S.tab = v; S.gate = null; S.run = null; S.panduanCari = ""; render(); onTab(v); },
   setGroup(v) { S.daftar.group = v; render(); },
   lbFilter(v) { S.lbFilter = v; render(); },
+  organikTab(v) { S.organikTab = v; S.panduanCari = ""; if (v === "panduan" && !C.katalog.loaded) loadKatalog(); render(); },
   tutupSambutan() { S.sambutanPoin = null; render(); },
   muatUlang() { if (!S.me) return; loadSaya(S.me); loadKatalog(true); loadLeaderboard(true); loadRank(true); toast("ok", "Data dimuat ulang."); },
   muatHadiah() { loadHadiah(true); },
@@ -3041,6 +3123,7 @@ const DO = {
     const tanya = jenis === "knowledge" ? "Tambahkan " + si.valid.length + " materi knowledge?"
       : jenis === "hadiah" ? "Tambahkan " + si.valid.length + " hadiah ke katalog?"
       : jenis === "wilayah" ? "Tambahkan sampai " + si.valid.length + " baris wilayah? Yang sudah ada otomatis dilewati."
+      : jenis === "panduan" ? "Tambahkan " + si.valid.length + " panduan?"
       : "Proses " + si.valid.length + " adjustment poin? Semua tercatat permanen di ledger.";
     if (!confirm(tanya)) return;
     si.busy = true; si.log = []; render();
@@ -3059,6 +3142,11 @@ const DO = {
       } else if (jenis === "wilayah") {
         const total = await simpanWilayahMassal(si.valid);
         toast("ok", "Master wilayah sekarang " + fmtNum(total) + " cluster.");
+        S.impUmum = kosongUmum();
+      } else if (jenis === "panduan") {
+        await simpanPanduanMassal(si.valid);
+        jadwalkanRebuildKatalog();
+        toast("ok", fmtNum(si.valid.length) + " panduan ditambahkan.");
         S.impUmum = kosongUmum();
       } else {
         const h = await jalankanAdjustmentMassal(si.valid, log);
@@ -3084,6 +3172,10 @@ const DO = {
         ? [["nama", "poin", "stok"], ["Voucher Pulsa 50rb", 500, 20], ["Kaos DEBY", 750, ""]]
         : jenis === "wilayah"
         ? [["area", "regional", "branch", "cluster"], ["JABOTABEK & JABAR", "EASTERN JABOTABEK", "KARAWANG", "BEKASI"], ["JABOTABEK & JABAR", "EASTERN JABOTABEK", "KARAWANG", "KARAWANG KOTA"]]
+        : jenis === "panduan"
+        ? [["pertanyaan", "jawaban", "kategori", "audiens"],
+           ["Kalau saya lupa username, harus gimana?", "Hubungi Admin wilayahmu, sertakan ID Digipos untuk dicek ulang.", "Akun & Login", "petugas"],
+           ["Bagaimana cara melihat ringkasan tim di wilayah saya?", "Buka tab Beranda setelah masuk sebagai akun Organik, data tampil otomatis.", "Ringkasan Tim", "organik"]]
         : [["user_id", "poin", "alasan"], ["5571191005", 50, "Juara lomba display"], ["AHA1927381_DS", -25, "Koreksi input ganda"]];
       const wb = X.utils.book_new();
       X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet(isi), jenis);
@@ -3174,6 +3266,28 @@ const DO = {
   async hapusKnowledge(v) {
     if (!confirm("Hapus materi ini?")) return;
     try { await deleteDoc(doc(db, "knowledge", v)); jadwalkanRebuildKatalog(); } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
+  },
+
+  toggleAudiensPanduan(v) { S.draftPanduan[v] = !S.draftPanduan[v]; render(); },
+  async tambahPanduan() {
+    const d = S.draftPanduan;
+    if (!d.pertanyaan.trim() || !d.jawaban.trim()) return toast("no", "Pertanyaan dan jawaban wajib diisi.");
+    if (!d.petugas && !d.organik) return toast("no", "Pilih minimal 1 audiens (Petugas / Organik).");
+    const audiens = [].concat(d.petugas ? ["petugas"] : [], d.organik ? ["organik"] : []);
+    try {
+      await addDoc(collection(db, "panduan"), { pertanyaan: d.pertanyaan.trim(), jawaban: d.jawaban.trim(), kategori: d.kategori.trim() || "Umum", audiens, aktif: true, createdAt: nowIso() });
+      S.draftPanduan = { pertanyaan: "", jawaban: "", kategori: "", petugas: true, organik: true };
+      jadwalkanRebuildKatalog();
+      toast("ok", "Panduan ditambahkan.");
+    } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
+  },
+  async toggleAktifPanduan(v) {
+    try { await updateDoc(doc(db, "panduan", v), { aktif: C.adm.panduan[v].aktif === false }); jadwalkanRebuildKatalog(); }
+    catch (e) { toast("no", pesanGagal(e, "Gagal")); }
+  },
+  async hapusPanduan(v) {
+    if (!confirm("Hapus panduan ini?")) return;
+    try { await deleteDoc(doc(db, "panduan", v)); jadwalkanRebuildKatalog(); } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
   },
 
   async tambahHadiah() {
@@ -3403,6 +3517,7 @@ root.addEventListener("input", (e) => {
   const el = e.target, path = el.getAttribute("data-in");
   if (!path || el.tagName === "SELECT") return;
   setPath(path, el.value);
+  if (path === "panduanCari") return render();
   if (!el.getAttribute("data-live")) return;
   const hint = root.querySelector('[data-hint="' + path.split(".")[1] + '"]');
   if (!hint) return;
@@ -3441,7 +3556,7 @@ root.addEventListener("change", async (e) => {
     render();
     try {
       const { data } = await bacaFileSoal(file);
-      const r = umumJenis === "knowledge" ? siapkanKnowledge(data) : umumJenis === "hadiah" ? siapkanHadiah(data) : umumJenis === "wilayah" ? siapkanWilayah(data) : siapkanAdjustment(data);
+      const r = umumJenis === "knowledge" ? siapkanKnowledge(data) : umumJenis === "hadiah" ? siapkanHadiah(data) : umumJenis === "wilayah" ? siapkanWilayah(data) : umumJenis === "panduan" ? siapkanPanduan(data) : siapkanAdjustment(data);
       S.impUmum.valid = r.valid; S.impUmum.salah = r.salah;
       if (!r.valid.length && !r.salah.length) toast("no", "Tidak ada baris terbaca. Periksa nama kolom di baris pertama.");
     } catch (err) {
