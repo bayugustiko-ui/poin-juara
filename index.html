@@ -415,6 +415,7 @@ const S = {
   draftPanduan: { pertanyaan: "", jawaban: "", kategori: "", petugas: true, organik: true },
   organikTab: "beranda",
   panduanCari: "",
+  previewSebagai: null,
   draftHd: { nama: "", poin: "", stok: "" },
   draftAdj: { id: "", poin: "", alasan: "" },
   bulkWilayah: "",
@@ -2179,6 +2180,11 @@ function vAdmin() {
     ADM_MENU.map((m) => '<button class="' + (S.adminMenu === m[0] ? "on" : "") + '" data-do="admMenu" data-v="' + m[0] + '"><span>' + m[1] + "</span>" +
       (cnt[m[0]] ? '<span class="cnt">' + fmtNum(cnt[m[0]]) + "</span>" : "") + "</button>").join("") + "</div>" +
     '<div style="margin-top:20px;padding:12px;border-radius:10px;background:rgba(255,255,255,.06);font-size:11.5px;color:rgba(255,255,255,.6);line-height:1.5;">Export CSV untuk join data sales: MVP 2.0. Struktur data sudah siap (ID, Username, wilayah per aktivitas).</div>' +
+    '<div style="margin-top:14px;padding:12px;border-radius:10px;border:1px dashed rgba(255,255,255,.25);">' +
+      '<div style="font-size:11px;color:rgba(255,255,255,.6);margin-bottom:8px;">Lihat tampilan tanpa bikin akun sungguhan</div>' +
+      '<button style="margin-bottom:6px;background:rgba(255,255,255,.08);" data-do="previewSebagai" data-v="petugas"><span>&#128065; Pratinjau Petugas</span></button>' +
+      '<button style="background:rgba(255,255,255,.08);" data-do="previewSebagai" data-v="organik"><span>&#128065; Pratinjau Organik</span></button>' +
+    "</div>" +
     '<button style="margin-top:16px;" data-do="admKeluar"><span>Keluar</span></button></aside>' +
     '<main class="adm-main">' + body + "</main></div>";
 }
@@ -2696,6 +2702,60 @@ function vAdmBelum() {
 }
 function layarMuat(teks) { return '<div class="wrap-plain"><div class="pad"><div class="empty">' + teks + "</div></div></div>"; }
 
+/* ============ Pratinjau Admin: lihat tampilan Petugas/Organik TANPA bikin akun sungguhan ============
+   Tidak ada dokumen Firestore yang dibuat sama sekali — profil, poin, riwayat, semuanya angka contoh
+   yang hanya hidup di memori browser. Jadi tidak pernah ikut kehitung di "1.748 akun" atau statistik
+   manapun. Aksi yang benar2 menulis (mulai kuesioner/post test, tukar hadiah, ajukan foto) sengaja
+   diblokir di sisi tampilan — dan sebagai lapisan kedua, security rules sendiri juga akan menolaknya
+   karena sesi Admin tidak terikat ke perangkat/{id} manapun (bukan sekadar UI, benar2 dicegah server). */
+function mockProfilPetugas() {
+  const w = C.wilayah[0] || {};
+  return {
+    id: "0000000000", kode: "PREVIEW_ADMIN", nama: "Pratinjau Admin", group: "Direct Sales",
+    area: w.area || "Contoh Area", regional: w.regional || "Contoh Regional", branch: w.branch || "Contoh Branch", cluster: w.cluster || "Contoh Cluster",
+    status: "aktif", poinPeringkat: 1250, saldo: 800, pDS: 1250
+  };
+}
+function mockMinePetugas() {
+  const w = nowIso();
+  return {
+    respons: [], hasil: [], loaded: true, ledgerLoaded: true,
+    redeem: [{ id: "preview_r1", hadiahNama: "Contoh Hadiah", poin: 500, status: "selesai", waktu: w, periode: periode() }],
+    ledger: [
+      { id: "p1", waktu: w, aktivitas: "Welcoming Bonus", delta: 100 },
+      { id: "p2", waktu: w, aktivitas: "Kuesioner lengkap: Contoh Survei", delta: 25 },
+      { id: "p3", waktu: w, aktivitas: "Post Test: Contoh Materi (8 benar)", delta: 40 },
+      { id: "p4", waktu: w, aktivitas: "Penukaran Contoh Hadiah", delta: -500 },
+      { id: "p5", waktu: w, aktivitas: "Penyesuaian Admin: contoh apresiasi", delta: 1585 }
+    ]
+  };
+}
+function mockProfilOrganik() {
+  return { id: "preview@telkomsel.co.id", email: "preview@telkomsel.co.id", nama: "Pratinjau Admin", level: "regional", area: "Contoh Area", regional: "Contoh Regional", status: "aktif" };
+}
+function mockRingkasanOrganik() {
+  return {
+    grup: { "Direct Sales": { total: 320, aktif: 290 }, "YPCR": { total: 85, aktif: 70 }, "Buddies": { total: 140, aktif: 120 } },
+    jumlah_anggota: 545,
+    topGrup: {
+      "Direct Sales": [{ id: "a", nama: "Contoh Petugas 1", group: "Direct Sales", kode: "CONTOH1", poin: 1250 }],
+      "YPCR": [{ id: "b", nama: "Contoh Petugas 2", group: "YPCR", kode: "CONTOH2", poin: 1180 }],
+      "Buddies": [{ id: "c", nama: "Contoh Petugas 3", group: "Buddies", kode: "CONTOH3", poin: 1095 }]
+    },
+    diperbarui: nowIso()
+  };
+}
+function bannerPreview() {
+  return '<div style="position:sticky;top:0;z-index:40;background:var(--ink);color:#fff;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12px;">' +
+    '<span>&#128065; <b>MODE PRATINJAU ADMIN</b> &middot; data contoh, tidak ada yang tersimpan</span>' +
+    '<button class="btn btn-sm" style="background:rgba(255,255,255,.16);color:#fff;border:none;flex:none;" data-do="keluarPreview">Kembali ke Admin</button></div>';
+}
+function vPreviewShell() {
+  if (S.previewSebagai === "organik") return bannerPreview() + vShellOrganik(S.organikTab === "panduan" ? vPanduan("organik") : vOrganikHome());
+  const fn = { home: vHome, tugas: vTugas, leaderboard: vLeaderboard, knowledge: vKnowledge, hadiah: vHadiah, poin: vPoin, profil: vProfil, bantuan: vBantuan }[S.tab] || vHome;
+  return bannerPreview() + vShell(fn());
+}
+
 function vShellOrganik(inner) {
   const nav = [["beranda", "HM", "Beranda"], ["panduan", "BT", "Panduan"]];
   return '<div class="wrap-mobile">' + inner +
@@ -2715,7 +2775,7 @@ function render() {
   const root = document.getElementById("app");
   let html;
   if (S.mode === "admin") {
-    html = !S.adminUser ? vAdmLogin() : !S.adminCek ? layarMuat("Memeriksa akses admin&hellip;") : S.adminOk ? vAdmin() : vAdmBelum();
+    html = !S.adminUser ? vAdmLogin() : !S.adminCek ? layarMuat("Memeriksa akses admin&hellip;") : !S.adminOk ? vAdmBelum() : S.previewSebagai ? vPreviewShell() : vAdmin();
   } else if (S.view === "boot") html = layarMuat("Membuka DEBY&hellip;");
   else if (S.view === "daftar") html = vDaftar();
   else if (S.view === "admLogin") html = vAdmLogin();
@@ -2833,6 +2893,26 @@ const DO = {
   setGroup(v) { S.daftar.group = v; render(); },
   lbFilter(v) { S.lbFilter = v; render(); },
   organikTab(v) { S.organikTab = v; S.panduanCari = ""; if (v === "panduan" && !C.katalog.loaded) loadKatalog(); render(); },
+  previewSebagai(v) {
+    S.previewSebagai = v;
+    if (v === "petugas") {
+      S.profilSaya = mockProfilPetugas();
+      C.mine = mockMinePetugas();
+      S.tab = "home"; S.view = "app";
+      loadKatalog(); loadHadiah(); loadLeaderboard();
+      if (!C.wilayahLoaded) loadWilayah().then(() => { S.profilSaya = mockProfilPetugas(); render(); });
+    } else {
+      S.organikProfil = mockProfilOrganik();
+      S.ringkasanOrg = mockRingkasanOrganik();
+      S.organikTab = "beranda";
+    }
+    render();
+  },
+  keluarPreview() {
+    S.previewSebagai = null; S.profilSaya = null; S.organikProfil = null; S.ringkasanOrg = null;
+    C.mine = { respons: [], hasil: [], redeem: [], ledger: [], loaded: false, ledgerLoaded: false };
+    render();
+  },
   tutupSambutan() { S.sambutanPoin = null; render(); },
   muatUlang() { if (!S.me) return; loadSaya(S.me); loadKatalog(true); loadLeaderboard(true); loadRank(true); toast("ok", "Data dimuat ulang."); },
   muatHadiah() { loadHadiah(true); },
@@ -2892,7 +2972,7 @@ const DO = {
     } catch (e) { l.busy = false; err(pesanGagal(e, "Gagal menyimpan")); }
   },
 
-  keluar() { keluarPetugas(); },
+  keluar() { if (S.previewSebagai) return DO.keluarPreview(); keluarPetugas(); },
 
   async masukOrganik() {
     const m = S.masukOrg;
@@ -2929,7 +3009,7 @@ const DO = {
     render();
   },
 
-  keluarOrganik() { keluarOrganik(); },
+  keluarOrganik() { if (S.previewSebagai) return DO.keluarPreview(); keluarOrganik(); },
 
   async cobaMasukOrganik() {
     if (!S.organikProfil) return;
@@ -2937,6 +3017,7 @@ const DO = {
   },
 
   async mulai(v, el) {
+    if (S.previewSebagai) return toast("", "Mode pratinjau: mengerjakan tugas sungguhan dinonaktifkan.");
     const t = el.getAttribute("data-t");
     if (!bolehBeraktivitas()) return toast("no", "Akun belum diverifikasi Admin.");
     if (t === "kuesioner" && sudahKuesioner(v)) return toast("no", "Kuesioner ini sudah kamu isi.");
@@ -2955,6 +3036,7 @@ const DO = {
     S.gate = { tujuan: t, refId: v, foto: null, busy: false }; S.view = "gate"; render();
   },
   mulaiRedeem(v) {
+    if (S.previewSebagai) return toast("", "Mode pratinjau: penukaran hadiah sungguhan dinonaktifkan.");
     if (!bolehBeraktivitas()) return toast("no", "Akun belum diverifikasi Admin.");
     S.gate = { tujuan: "redeem", refId: v, foto: null, busy: false }; S.view = "gate"; render();
   },
@@ -3007,6 +3089,7 @@ const DO = {
     catch (e) { toast("no", pesanGagal(e, "Gagal menyimpan")); }
   },
   async ajukanFoto() {
+    if (S.previewSebagai) return toast("", "Mode pratinjau: perubahan foto tidak disimpan.");
     if (!S.profil.foto) return;
     try {
       const b = writeBatch(db);
