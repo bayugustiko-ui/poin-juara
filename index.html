@@ -408,6 +408,7 @@ const S = {
   fPetugas: { group: "", status: "", q: "", area: "", regional: "", branch: "", cluster: "" },
   wilayahBuka: { area: "", regional: "" },
   fRedeem: "pending",
+  fOrganik: "review",
   draftModul: { kuesioner: kosongModul(), posttest: kosongModul() },
   draftSoal: { teks: "", opsi: ["", "", "", ""], kunci: 0 },
   draftKn: Object.assign({ judul: "", tipe: "PDF", url: "" }, kosongTarget()),
@@ -441,7 +442,8 @@ const C = {
     ledger: [], ledgerLoaded: false,
     kunci: {}, peserta: {}, fotoCache: {}, peringatan: [],
     fotoBersih: null,
-    ringkasanWilayah: {}
+    ringkasanWilayah: {},
+    organik: [], organikLoaded: false, organikReviewList: []
   }
 };
 
@@ -1086,7 +1088,7 @@ async function loadAdminStats() {
   const per = periode();
   const seminggu = new Date(Date.now() - 7 * 86400000).toISOString();
   const cnt = (q) => getCountFromServer(q).then((r) => r.data().count).catch(() => 0);
-  const [total, aktif, review, belum, baru, respPer, pending, grpTotals, grpResp, pt, rv, prCount, prList] = await Promise.all([
+  const [total, aktif, review, belum, baru, respPer, pending, grpTotals, grpResp, pt, rv, prCount, prList, orgReview] = await Promise.all([
     cnt(col("petugas")),
     cnt(query(col("petugas"), where("status", "==", "aktif"))),
     cnt(query(col("petugas"), where("status", "==", "review"))),
@@ -1099,7 +1101,8 @@ async function loadAdminStats() {
     getAggregateFromServer(col("hasil"), { rata: average("benar"), soal: average("total") }).then((r) => r.data()).catch(() => ({ rata: null, soal: null })),
     getDocs(query(col("petugas"), where("status", "==", "review"), limit(20))).then(rows).catch(() => []),
     cnt(query(col("peringatan"), where("status", "==", "baru"))),
-    getDocs(query(col("peringatan"), where("status", "==", "baru"), limit(20))).then(rows).catch(() => [])
+    getDocs(query(col("peringatan"), where("status", "==", "baru"), limit(20))).then(rows).catch(() => []),
+    getDocs(query(col("organik"), where("status", "==", "review"), limit(20))).then(rows).catch(() => [])
   ]);
   const kuAktif = listOf(C.adm.kuesioner).filter((k) => k.aktif);
   const perGroup = GROUPS.map((g, i) => {
@@ -1109,7 +1112,8 @@ async function loadAdminStats() {
   const targetAll = perGroup.reduce((s, x) => s + x.target, 0);
   C.adm.reviewList = rv;
   C.adm.peringatan = prList.sort((a, b) => (b.waktu || "").localeCompare(a.waktu || ""));
-  C.adm.stats = { total, aktif, review, belum, baru, respPer, pending, perGroup, peringatan: prCount, completion: targetAll ? Math.round(respPer / targetAll * 100) : 0, rataBenar: pt.rata, rataSoal: pt.soal, topSalah: null };
+  C.adm.organikReviewList = orgReview;
+  C.adm.stats = { total, aktif, review, belum, baru, respPer, pending, perGroup, peringatan: prCount, organikReview: orgReview.length, completion: targetAll ? Math.round(respPer / targetAll * 100) : 0, rataBenar: pt.rata, rataSoal: pt.soal, topSalah: null };
   render();
   loadSoalPalingSalah();
   loadLeaderboard().then(() => {
@@ -1530,6 +1534,38 @@ async function resetHp(userId) {
 
 async function setujuiPetugas(userId) {
   await updateDoc(doc(db, "petugas", userId), { status: "aktif", disetujuiAt: nowIso(), disetujuiOleh: S.adminUser ? S.adminUser.email : "admin" });
+}
+
+/* ---------- admin: akun Organik ---------- */
+async function loadOrganikAdmin(status) {
+  C.adm.organikLoaded = false; render();
+  try {
+    const cons = status && status !== "semua" ? [where("status", "==", status)] : [];
+    const qs = await getDocs(query(col("organik"), ...cons, limit(200)));
+    C.adm.organik = rows(qs).sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+  } catch (e) { C.adm.organik = []; toast("no", pesanGagal(e, "Gagal memuat akun Organik")); }
+  C.adm.organikLoaded = true; render();
+}
+async function setujuiOrganik(email) {
+  await updateDoc(doc(db, "organik", email), { status: "aktif", disetujuiAt: nowIso(), disetujuiOleh: S.adminUser ? S.adminUser.email : "admin" });
+}
+async function tolakOrganik(email) {
+  const b = writeBatch(db);
+  b.delete(doc(db, "organik", email));
+  b.delete(doc(db, "perangkat_organik", email));
+  await b.commit();
+}
+async function nonaktifkanOrganik(email, aktif) {
+  await updateDoc(doc(db, "organik", email), { status: aktif ? "aktif" : "nonaktif" });
+}
+async function resetHpOrganik(email) {
+  const hp = await getDoc(doc(db, "perangkat_organik", email));
+  if (!hp.exists()) return false;
+  const b = writeBatch(db);
+  b.delete(doc(db, "perangkat_organik", email));
+  b.delete(doc(db, "sesiAuth", hp.data().authUid));
+  await b.commit();
+  return true;
 }
 
 /* ---------- admin: redeem & ledger ---------- */
@@ -2121,7 +2157,7 @@ function vAdmLogin() {
 }
 
 const ADM_MENU = [
-  ["dashboard", "Dashboard"], ["petugas", "Data Petugas"], ["kuesioner", "Kuesioner"], ["posttest", "Post Test"],
+  ["dashboard", "Dashboard"], ["petugas", "Data Petugas"], ["organik", "Akun Organik"], ["kuesioner", "Kuesioner"], ["posttest", "Post Test"],
   ["knowledge", "Knowledge"], ["panduan", "Panduan"], ["poin", "Poin & Leaderboard"], ["redeem", "Hadiah & Redeem"], ["pengaturan", "Pengaturan"]
 ];
 const STATUS_LABEL = { belum_lengkap: "belum lengkap", review: "menunggu verifikasi", aktif: "aktif", nonaktif: "nonaktif" };
@@ -2135,10 +2171,10 @@ function pillStatus(s) { s = s || "aktif"; return '<span class="pill ' + (STATUS
 function vAdmin() {
   const st = C.adm.stats;
   const cnt = {
-    dashboard: st ? st.peringatan : null, petugas: st ? st.review : null, kuesioner: Object.keys(C.adm.kuesioner).length, posttest: Object.keys(C.adm.posttest).length,
+    dashboard: st ? st.peringatan : null, petugas: st ? st.review : null, organik: st ? st.organikReview : null, kuesioner: Object.keys(C.adm.kuesioner).length, posttest: Object.keys(C.adm.posttest).length,
     knowledge: Object.keys(C.adm.knowledge).length, panduan: Object.keys(C.adm.panduan).length, redeem: st ? st.pending : null
   };
-  const body = ({ dashboard: aDashboard, petugas: aPetugas, kuesioner: () => aModul("kuesioner"), posttest: () => aModul("posttest"), knowledge: aKnowledge, panduan: aPanduan, poin: aPoin, redeem: aRedeem, pengaturan: aPengaturan }[S.adminMenu] || aDashboard)();
+  const body = ({ dashboard: aDashboard, petugas: aPetugas, organik: aOrganik, kuesioner: () => aModul("kuesioner"), posttest: () => aModul("posttest"), knowledge: aKnowledge, panduan: aPanduan, poin: aPoin, redeem: aRedeem, pengaturan: aPengaturan }[S.adminMenu] || aDashboard)();
   return '<div class="adm"><aside class="adm-side"><div class="a-brand"><b>DEBY</b><span>Super Admin</span></div><div class="a-nav">' +
     ADM_MENU.map((m) => '<button class="' + (S.adminMenu === m[0] ? "on" : "") + '" data-do="admMenu" data-v="' + m[0] + '"><span>' + m[1] + "</span>" +
       (cnt[m[0]] ? '<span class="cnt">' + fmtNum(cnt[m[0]]) + "</span>" : "") + "</button>").join("") + "</div>" +
@@ -2182,6 +2218,12 @@ function aDashboard() {
         '<div class="aq-s"><span class="mono">' + esc(p.id) + " / " + esc(p.kode) + "</span> &middot; " + esc(p.regional) + " / " + esc(p.cluster) + " &middot; daftar " + fmtTgl(p.createdAt) + "</div></div>" +
         '<button class="btn btn-ghost btn-sm" data-do="detailPetugas" data-v="' + esc(p.id) + '">Lihat foto</button>' +
         '<button class="btn btn-ok btn-sm" data-do="setujuiPetugas" data-v="' + esc(p.id) + '">Setujui</button></div>').join("")) +
+    '<div class="sec-head"><h2>Verifikasi Organik Baru</h2><span class="lbl">' + fmtNum(s.organikReview) + " menunggu</span></div>" +
+    (!C.adm.organikReviewList.length ? '<div class="card"><div class="empty" style="padding:16px;">Tidak ada akun Organik yang menunggu verifikasi.</div></div>' :
+      C.adm.organikReviewList.map((o) => '<div class="aq"><div class="grow"><div class="aq-n">' + esc(o.nama) + " &middot; " + esc(LEVEL_LABEL[o.level] || o.level) + "</div>" +
+        '<div class="aq-s"><span class="mono">' + esc(o.email) + "</span> &middot; " + ringkasWilayahOrganik(o) + " &middot; cakupan " + fmtNum((o.cakupanBranch || []).length) + " branch &middot; daftar " + fmtTgl(o.createdAt) + "</div></div>" +
+        '<button class="btn btn-ghost btn-sm" data-do="detailOrganik" data-v="' + esc(o.email) + '">Lihat detail</button>' +
+        '<button class="btn btn-ok btn-sm" data-do="setujuiOrganikAdm" data-v="' + esc(o.email) + '">Setujui</button></div>').join("")) +
     '<div class="sec-head"><h2>Action Queue</h2></div>' +
     aq("Monitor", false, "Kuesioner", fmtNum(s.respPer) + " respons &middot; completion " + s.completion + "% dari target aktif", tombolMenu("kuesioner")) +
     aq("Analyze", !!s.topSalah, "Post Test — rata benar " + rata + " dari " + (s.rataSoal == null ? "-" : Math.round(s.rataSoal)) + " soal", s.topSalah ? esc(s.topSalah.teks) + " &mdash; " + s.topSalah.n + " dari " + s.topSalah.dari + " peserta salah" : "Belum ada pola kesalahan", tombolMenu("posttest")) +
@@ -2387,6 +2429,43 @@ function kartuModul(m, tipe) {
       "</div>";
   }
   return html + "</div>";
+}
+
+function ringkasWilayahOrganik(o) {
+  return o.level === "hq" ? "Nasional" : [o.area, o.regional, o.branch].filter(Boolean).join(" / ");
+}
+
+function aOrganik() {
+  const chips = [["review", "Menunggu"], ["aktif", "Aktif"], ["nonaktif", "Nonaktif"], ["semua", "Semua"]];
+  return head("Akun Organik", "Tim internal Telkomsel &middot; verifikasi & kelola akses read-only per wilayah") +
+    '<div class="chips" style="margin-bottom:14px;">' + chips.map((c) => '<button class="chip ' + (S.fOrganik === c[0] ? "on" : "") + '" data-do="fOrganik" data-v="' + c[0] + '">' + c[1] + "</button>").join("") + "</div>" +
+    (!C.adm.organikLoaded ? '<div class="skel">Memuat&hellip;</div>' : !C.adm.organik.length ? '<div class="card"><div class="empty">Tidak ada akun pada filter ini.</div></div>' :
+      C.adm.organik.map((o) => '<div class="aq"><div class="grow"><div class="aq-n">' + esc(o.nama) + " &middot; " + esc(LEVEL_LABEL[o.level] || o.level) + "</div>" +
+        '<div class="aq-s"><span class="mono">' + esc(o.email) + "</span> &middot; " + ringkasWilayahOrganik(o) + " &middot; cakupan " + fmtNum((o.cakupanBranch || []).length) + " branch &middot; daftar " + fmtTgl(o.createdAt) + "</div></div>" +
+        pillStatus(o.status) +
+        '<button class="btn btn-ghost btn-sm" data-do="detailOrganik" data-v="' + esc(o.email) + '">Detail</button>' +
+        (o.status === "review" ? '<button class="btn btn-ok btn-sm" data-do="setujuiOrganikAdm" data-v="' + esc(o.email) + '">Setujui</button>' : "") +
+        "</div>").join("")) +
+    "</div>";
+}
+
+function modalOrganik(o) {
+  const badge = (n, v) => '<div class="stat"><div class="lbl">' + n + '</div><div class="n mono">' + fmtNum(v) + "</div></div>";
+  return '<div class="modal-bd" data-do="tutupModal"><div class="modal" data-stop="1">' +
+    '<div class="card-title">Detail Akun Organik</div><h2 style="font-size:20px;">' + esc(o.nama) + "</h2>" +
+    '<div class="row" style="margin:6px 0 14px;gap:8px;flex-wrap:wrap;"><span class="lbl" style="color:var(--ink-dim);">' + esc(o.email) + "</span>" + pillStatus(o.status) + "</div>" +
+    (o.status === "review" ? '<div class="note" style="margin-bottom:12px;">Akun baru mendaftar. Periksa cakupan wilayahnya di bawah sebelum menyetujui &mdash; kalau levelnya Branch tapi cakupannya besar, itu tanda ada yang tidak beres. <button class="btn btn-ok btn-sm" data-do="setujuiOrganikAdm" data-v="' + esc(o.email) + '">Setujui</button> <button class="btn btn-danger btn-sm" data-do="tolakOrganikAdm" data-v="' + esc(o.email) + '">Tolak &amp; Hapus</button></div>' : "") +
+    '<div class="card" style="background:var(--surface-2);margin-bottom:12px;">' +
+      '<div class="lbl">NIK Telkomsel</div><div class="mono" style="font-size:13.5px;">' + esc(o.nik) + "</div>" +
+      '<div class="lbl" style="margin-top:10px;">Level Pemantauan</div><div style="font-size:13.5px;">' + esc(LEVEL_LABEL[o.level] || o.level) + "</div>" +
+      '<div class="lbl" style="margin-top:10px;">Wilayah</div><div style="font-size:13.5px;">' + esc(ringkasWilayahOrganik(o) || "Nasional") + "</div>" +
+      '<div class="lbl" style="margin-top:10px;">Daftar</div><div style="font-size:13.5px;">' + fmtWaktu(o.createdAt) + "</div></div>" +
+    '<div class="card-title">Cakupan Wilayah (dihitung otomatis saat daftar)</div>' +
+    '<div class="stat-grid" style="margin-bottom:14px;">' + badge("Area", (o.cakupanArea || []).length) + badge("Regional", (o.cakupanRegional || []).length) + badge("Branch", (o.cakupanBranch || []).length) + "</div>" +
+    '<div class="row" style="margin-top:6px;flex-wrap:wrap;">' +
+      (o.status !== "review" ? '<button class="btn btn-ghost btn-sm" data-do="resetHpOrganikAdm" data-v="' + esc(o.email) + '">Reset HP</button>' +
+        '<button class="btn ' + (o.status === "aktif" ? "btn-danger" : "btn-ok") + ' btn-sm" data-do="toggleOrganikAktif" data-v="' + esc(o.email) + '">' + (o.status === "aktif" ? "Nonaktifkan" : "Aktifkan") + "</button>" : "") +
+      '<button class="btn btn-ghost btn-sm" data-do="tutupModal">Tutup</button></div></div></div>';
 }
 
 function aKnowledge() {
@@ -2687,6 +2766,7 @@ function onAdmMenu(v) {
   if (v === "posttest") loadKunciAdmin();
   if (v === "poin") { loadLeaderboard(); loadLedgerTerbaru(); }
   if (v === "redeem") subscribeAdminRedeem();
+  if (v === "organik") loadOrganikAdmin(S.fOrganik);
 }
 function mulaiSesi(userId) {
   S.me = userId; S.view = "app"; S.tab = "home"; S.profilSaya = null;
@@ -3027,6 +3107,58 @@ const DO = {
       if (C.adm.stats) C.adm.stats.review = Math.max(0, C.adm.stats.review - 1);
       toast("ok", "Petugas disetujui dan sekarang aktif.");
       if (S.modal) DO.detailPetugas(v); else render();
+    } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
+  },
+
+  fOrganik(v) { S.fOrganik = v; loadOrganikAdmin(v); render(); },
+  async detailOrganik(v) {
+    const o = C.adm.organikReviewList.find((x) => x.email === v) || C.adm.organik.find((x) => x.email === v);
+    if (o) { S.modal = modalOrganik(o); return render(); }
+    S.modal = '<div class="modal-bd" data-do="tutupModal"><div class="modal" data-stop="1"><div class="empty">Memuat&hellip;</div></div></div>';
+    render();
+    try {
+      const d = await getDoc(doc(db, "organik", v));
+      if (!d.exists()) { S.modal = null; return toast("no", "Akun tidak ditemukan."); }
+      S.modal = modalOrganik(Object.assign({ email: d.id }, d.data()));
+    } catch (e) { S.modal = null; toast("no", pesanGagal(e, "Gagal")); }
+    render();
+  },
+  async setujuiOrganikAdm(v) {
+    try {
+      await setujuiOrganik(v);
+      C.adm.organikReviewList = C.adm.organikReviewList.filter((o) => o.email !== v);
+      if (C.adm.stats) C.adm.stats.organikReview = Math.max(0, C.adm.stats.organikReview - 1);
+      toast("ok", "Akun Organik disetujui dan sekarang aktif.");
+      if (S.modal) DO.detailOrganik(v); else render();
+      if (S.adminMenu === "organik") loadOrganikAdmin(S.fOrganik);
+    } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
+  },
+  async tolakOrganikAdm(v) {
+    if (!confirm("Tolak dan hapus pendaftaran akun Organik " + v + "? Email ini bisa dipakai daftar ulang setelahnya.")) return;
+    try {
+      await tolakOrganik(v);
+      C.adm.organikReviewList = C.adm.organikReviewList.filter((o) => o.email !== v);
+      C.adm.organik = C.adm.organik.filter((o) => o.email !== v);
+      if (C.adm.stats) C.adm.stats.organikReview = Math.max(0, C.adm.stats.organikReview - 1);
+      S.modal = null;
+      toast("ok", "Pendaftaran ditolak dan dihapus.");
+    } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
+  },
+  async toggleOrganikAktif(v) {
+    const o = C.adm.organik.find((x) => x.email === v);
+    const aktif = !(o && o.status === "aktif");
+    try {
+      await nonaktifkanOrganik(v, aktif);
+      if (o) o.status = aktif ? "aktif" : "nonaktif";
+      toast("ok", aktif ? "Akun diaktifkan." : "Akun dinonaktifkan.");
+      if (S.modal) DO.detailOrganik(v); else render();
+    } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
+  },
+  async resetHpOrganikAdm(v) {
+    if (!confirm("Lepaskan HP dari akun Organik " + v + "? Bisa masuk lagi dari HP/browser baru.")) return;
+    try {
+      const ok = await resetHpOrganik(v);
+      toast(ok ? "ok" : "", ok ? "HP dilepas dari akun." : "Akun ini belum pernah terhubung ke HP.");
     } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
   },
   async resetHp(v) {
