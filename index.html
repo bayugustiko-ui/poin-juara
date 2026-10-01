@@ -549,11 +549,14 @@ async function ikatPerangkatOrganik(email) {
 }
 
 async function masukOrganik(nikInput, emailInput) {
+  await pastikanAnon();
   const email = normEmail(emailInput);
   const nik = String(nikInput || "").trim();
   if (!email) throw errKode("format-id");
   if (!nik) throw errKode("username-kosong");
-  const d = await getDoc(doc(db, "organik", email));
+  let d;
+  try { d = await getDoc(doc(db, "organik", email)); }
+  catch (e) { if (e.code === "permission-denied") throw errKode("terikat-hp-lain"); throw e; }
   if (!d.exists()) throw errKode("tidak-terdaftar");
   const o = d.data();
   if (String(o.nik || "").trim() !== nik) throw errKode("username-salah");
@@ -584,11 +587,17 @@ function hitungCakupan(level, value) {
 }
 
 async function daftarOrganik(d) {
+  /* Login anonim DULU: cek email sudah terdaftar di bawah butuh request.auth */
+  await pastikanAnon();
   const email = normEmail(d.email);
   const nama = d.nama.trim();
   const nik = String(d.nik || "").trim();
   if (!email || !nama || !nik) throw errKode("format-id");
-  if ((await getDoc(doc(db, "organik", email))).exists()) throw errKode("sudah-terdaftar");
+  /* Email yang belum ada selalu boleh dicek (rules: resource == null); ditolak = sudah ada & terikat HP lain */
+  let ada;
+  try { ada = (await getDoc(doc(db, "organik", email))).exists(); }
+  catch (e) { if (e.code === "permission-denied") throw errKode("sudah-terdaftar"); throw e; }
+  if (ada) throw errKode("sudah-terdaftar");
   const authUid = await ikatPerangkatOrganik(email);
   if (authUid === "sudah") throw errKode("sudah-terdaftar");
   const wilayahVal = d.level === "hq" ? "NASIONAL" : d[d.level];
@@ -607,6 +616,8 @@ async function daftarOrganik(d) {
 
 /* Petugas yang ID-nya tidak ada di data import: status review sampai disetujui Admin */
 async function daftarBaru(d) {
+  /* Login anonim DULU: cek ID & username dobel di bawah butuh request.auth (lihat rules petugas list) */
+  await pastikanAnon();
   const userId = normUserId(d.userId);
   const kode = normKode(d.kode);
   if ((await getDoc(doc(db, "petugas", userId))).exists()) throw errKode("sudah-terdaftar");
