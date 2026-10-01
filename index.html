@@ -844,8 +844,9 @@ async function rebuildRollup(level, value) {
   const calonPerGrup = {};
   Object.keys(GRP_FIELD).forEach((g) => { calonPerGrup[g] = []; });
   const grup = kosongGrup();
-  for (const nv of anakWilayah(childLevel, level, value)) {
-    const d = await muatAtauRebuild(childLevel, nv);
+  /* Anak-anak dimuat paralel (bukan satu per satu) — HQ punya puluhan branch di bawahnya */
+  const anak = await Promise.all(anakWilayah(childLevel, level, value).map((nv) => muatAtauRebuild(childLevel, nv)));
+  for (const d of anak) {
     total += d.total_poin || 0;
     jumlah += d.jumlah_anggota || 0;
     Object.keys(grup).forEach((g) => {
