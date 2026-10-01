@@ -416,6 +416,7 @@ const S = {
   organikTab: "beranda",
   panduanCari: "",
   previewSebagai: null,
+  orgModal: null, editOrg: null,
   draftHd: { nama: "", poin: "", stok: "" },
   draftAdj: { id: "", poin: "", alasan: "" },
   bulkWilayah: "",
@@ -2237,7 +2238,7 @@ function aDashboard() {
         '<button class="btn btn-ok btn-sm" data-do="setujuiPetugas" data-v="' + esc(p.id) + '">Setujui</button></div>').join("")) +
     '<div class="sec-head"><h2>Verifikasi Organik Baru</h2><span class="lbl">' + fmtNum(s.organikReview) + " menunggu</span></div>" +
     (!C.adm.organikReviewList.length ? '<div class="card"><div class="empty" style="padding:16px;">Tidak ada akun Organik yang menunggu verifikasi.</div></div>' :
-      C.adm.organikReviewList.map((o) => '<div class="aq"><div class="grow"><div class="aq-n">' + esc(o.nama) + " &middot; " + esc(LEVEL_LABEL[o.level] || o.level) + "</div>" +
+      C.adm.organikReviewList.map((o) => '<div class="aq"><div class="grow"><div class="aq-n">' + esc(o.nama) + " &middot; " + (LEVEL_LABEL[o.level] || esc(o.level)) + "</div>" +
         '<div class="aq-s"><span class="mono">' + esc(o.email) + "</span> &middot; " + ringkasWilayahOrganik(o) + " &middot; cakupan " + fmtNum((o.cakupanBranch || []).length) + " branch &middot; daftar " + fmtTgl(o.createdAt) + "</div></div>" +
         '<button class="btn btn-ghost btn-sm" data-do="detailOrganik" data-v="' + esc(o.email) + '">Lihat detail</button>' +
         '<button class="btn btn-ok btn-sm" data-do="setujuiOrganikAdm" data-v="' + esc(o.email) + '">Setujui</button></div>').join("")) +
@@ -2457,13 +2458,35 @@ function aOrganik() {
   return head("Akun Organik", "Tim internal Telkomsel &middot; verifikasi & kelola akses read-only per wilayah") +
     '<div class="chips" style="margin-bottom:14px;">' + chips.map((c) => '<button class="chip ' + (S.fOrganik === c[0] ? "on" : "") + '" data-do="fOrganik" data-v="' + c[0] + '">' + c[1] + "</button>").join("") + "</div>" +
     (!C.adm.organikLoaded ? '<div class="skel">Memuat&hellip;</div>' : !C.adm.organik.length ? '<div class="card"><div class="empty">Tidak ada akun pada filter ini.</div></div>' :
-      C.adm.organik.map((o) => '<div class="aq"><div class="grow"><div class="aq-n">' + esc(o.nama) + " &middot; " + esc(LEVEL_LABEL[o.level] || o.level) + "</div>" +
+      C.adm.organik.map((o) => '<div class="aq"><div class="grow"><div class="aq-n">' + esc(o.nama) + " &middot; " + (LEVEL_LABEL[o.level] || esc(o.level)) + "</div>" +
         '<div class="aq-s"><span class="mono">' + esc(o.email) + "</span> &middot; " + ringkasWilayahOrganik(o) + " &middot; cakupan " + fmtNum((o.cakupanBranch || []).length) + " branch &middot; daftar " + fmtTgl(o.createdAt) + "</div></div>" +
         pillStatus(o.status) +
         '<button class="btn btn-ghost btn-sm" data-do="detailOrganik" data-v="' + esc(o.email) + '">Detail</button>' +
         (o.status === "review" ? '<button class="btn btn-ok btn-sm" data-do="setujuiOrganikAdm" data-v="' + esc(o.email) + '">Setujui</button>' : "") +
         "</div>").join("")) +
     "</div>";
+}
+
+/* Admin mengoreksi level & wilayah Organik (mis. yang ngaku HQ padahal Branch). Cakupan dihitung
+   ulang dari Master Wilayah, jadi aksesnya langsung menyempit/melebar sesuai wilayah baru. */
+function editorWilayahOrg(o) {
+  const e = S.editOrg;
+  if (!e || e.email !== o.email) return '<button class="btn btn-ghost btn-sm btn-block" style="margin-bottom:12px;" data-do="mulaiEditOrg">Ubah Level &amp; Wilayah</button>';
+  const sel = (nama, label, opsi, aktif) => '<div class="field" style="margin-top:9px;"><label>' + label + '</label><select data-in="editOrg.' + nama + '" ' + (aktif ? "" : "disabled") + ">" +
+    '<option value="">' + (aktif ? "Pilih " + label : "Pilih induk dulu") + "</option>" +
+    opsi.map((x) => '<option value="' + esc(x) + '" ' + (e[nama] === x ? "selected" : "") + ">" + esc(x) + "</option>").join("") + "</select></div>";
+  let f = "";
+  if (e.level !== "hq") f += sel("area", "Area", opsiWilayah("area", e), true);
+  if (e.level === "regional" || e.level === "branch") f += sel("regional", "Regional", e.area ? opsiWilayah("regional", e) : [], !!e.area);
+  if (e.level === "branch") f += sel("branch", "Branch", e.regional ? opsiWilayah("branch", e) : [], !!e.regional);
+  const siap = e.level === "hq" || !!e[e.level];
+  const c = siap ? hitungCakupan(e.level, e.level === "hq" ? "NASIONAL" : e[e.level]) : null;
+  return '<div class="card" style="background:var(--surface-2);margin-bottom:12px;"><div class="card-title">Ubah Level &amp; Wilayah</div>' +
+    '<div class="seg">' + Object.keys(LEVEL_LABEL).map((lv) => '<button class="' + (e.level === lv ? "on" : "") + '" data-do="setLevelEditOrg" data-v="' + lv + '">' + LEVEL_LABEL[lv].split(" ")[0] + "</button>").join("") + "</div>" +
+    f +
+    (c ? '<div class="note" style="margin-top:10px;">Cakupan baru: ' + c.cakupanArea.length + " area &middot; " + c.cakupanRegional.length + " regional &middot; " + c.cakupanBranch.length + " branch</div>" : "") +
+    '<div class="row" style="margin-top:10px;"><button class="btn btn-primary btn-sm" data-do="simpanWilayahOrg"' + (siap ? "" : " disabled") + ">Simpan</button>" +
+    '<button class="btn btn-ghost btn-sm" data-do="batalEditOrg">Batal</button></div></div>';
 }
 
 function modalOrganik(o) {
@@ -2474,11 +2497,12 @@ function modalOrganik(o) {
     (o.status === "review" ? '<div class="note" style="margin-bottom:12px;">Akun baru mendaftar. Periksa cakupan wilayahnya di bawah sebelum menyetujui &mdash; kalau levelnya Branch tapi cakupannya besar, itu tanda ada yang tidak beres. <button class="btn btn-ok btn-sm" data-do="setujuiOrganikAdm" data-v="' + esc(o.email) + '">Setujui</button> <button class="btn btn-danger btn-sm" data-do="tolakOrganikAdm" data-v="' + esc(o.email) + '">Tolak &amp; Hapus</button></div>' : "") +
     '<div class="card" style="background:var(--surface-2);margin-bottom:12px;">' +
       '<div class="lbl">NIK Telkomsel</div><div class="mono" style="font-size:13.5px;">' + esc(o.nik) + "</div>" +
-      '<div class="lbl" style="margin-top:10px;">Level Pemantauan</div><div style="font-size:13.5px;">' + esc(LEVEL_LABEL[o.level] || o.level) + "</div>" +
+      '<div class="lbl" style="margin-top:10px;">Level Pemantauan</div><div style="font-size:13.5px;">' + (LEVEL_LABEL[o.level] || esc(o.level)) + "</div>" +
       '<div class="lbl" style="margin-top:10px;">Wilayah</div><div style="font-size:13.5px;">' + esc(ringkasWilayahOrganik(o) || "Nasional") + "</div>" +
       '<div class="lbl" style="margin-top:10px;">Daftar</div><div style="font-size:13.5px;">' + fmtWaktu(o.createdAt) + "</div></div>" +
     '<div class="card-title">Cakupan Wilayah (dihitung otomatis saat daftar)</div>' +
     '<div class="stat-grid" style="margin-bottom:14px;">' + badge("Area", (o.cakupanArea || []).length) + badge("Regional", (o.cakupanRegional || []).length) + badge("Branch", (o.cakupanBranch || []).length) + "</div>" +
+    editorWilayahOrg(o) +
     '<div class="row" style="margin-top:6px;flex-wrap:wrap;">' +
       (o.status !== "review" ? '<button class="btn btn-ghost btn-sm" data-do="resetHpOrganikAdm" data-v="' + esc(o.email) + '">Reset HP</button>' +
         '<button class="btn ' + (o.status === "aktif" ? "btn-danger" : "btn-ok") + ' btn-sm" data-do="toggleOrganikAktif" data-v="' + esc(o.email) + '">' + (o.status === "aktif" ? "Nonaktifkan" : "Aktifkan") + "</button>" : "") +
@@ -3206,16 +3230,54 @@ const DO = {
 
   fOrganik(v) { S.fOrganik = v; loadOrganikAdmin(v); render(); },
   async detailOrganik(v) {
+    S.editOrg = null;
     const o = C.adm.organikReviewList.find((x) => x.email === v) || C.adm.organik.find((x) => x.email === v);
-    if (o) { S.modal = modalOrganik(o); return render(); }
+    if (o) { S.orgModal = o; S.modal = modalOrganik(o); return render(); }
     S.modal = '<div class="modal-bd" data-do="tutupModal"><div class="modal" data-stop="1"><div class="empty">Memuat&hellip;</div></div></div>';
     render();
     try {
       const d = await getDoc(doc(db, "organik", v));
       if (!d.exists()) { S.modal = null; return toast("no", "Akun tidak ditemukan."); }
-      S.modal = modalOrganik(Object.assign({ email: d.id }, d.data()));
+      S.orgModal = Object.assign({ email: d.id }, d.data());
+      S.modal = modalOrganik(S.orgModal);
     } catch (e) { S.modal = null; toast("no", pesanGagal(e, "Gagal")); }
     render();
+  },
+  mulaiEditOrg() {
+    const o = S.orgModal;
+    if (!o) return;
+    S.editOrg = { email: o.email, level: o.level, area: o.area || "", regional: o.regional || "", branch: o.branch || "" };
+    S.modal = modalOrganik(o); render();
+  },
+  setLevelEditOrg(v) {
+    if (!S.editOrg) return;
+    S.editOrg.level = v;
+    if (v === "hq") { S.editOrg.area = ""; S.editOrg.regional = ""; S.editOrg.branch = ""; }
+    if (v === "area") { S.editOrg.regional = ""; S.editOrg.branch = ""; }
+    if (v === "regional") S.editOrg.branch = "";
+    S.modal = modalOrganik(S.orgModal); render();
+  },
+  batalEditOrg() { S.editOrg = null; S.modal = modalOrganik(S.orgModal); render(); },
+  async simpanWilayahOrg() {
+    const o = S.orgModal, e = S.editOrg;
+    if (!o || !e) return;
+    if (e.level !== "hq" && !e[e.level]) return toast("no", "Lengkapi wilayah sesuai level yang dipilih.");
+    const val = e.level === "hq" ? "NASIONAL" : e[e.level];
+    const upd = Object.assign({
+      level: e.level,
+      area: e.level === "hq" ? "" : e.area,
+      regional: e.level === "regional" || e.level === "branch" ? e.regional : "",
+      branch: e.level === "branch" ? e.branch : "",
+      wilayahKey: e.level + "_" + val,
+      diubahAt: nowIso(), diubahOleh: S.adminUser ? S.adminUser.email : "admin"
+    }, hitungCakupan(e.level, val));
+    if (!confirm("Ubah " + o.nama + " menjadi " + LEVEL_LABEL[e.level].replace("&middot;", "·") + (e.level === "hq" ? "" : " — " + val) + "?")) return;
+    try {
+      await updateDoc(doc(db, "organik", o.email), upd);
+      Object.assign(o, upd);
+      S.editOrg = null; S.modal = modalOrganik(o);
+      toast("ok", "Level & wilayah diperbarui. Berlaku saat akun itu membuka DEBY berikutnya.");
+    } catch (err) { toast("no", pesanGagal(err, "Gagal")); }
   },
   async setujuiOrganikAdm(v) {
     try {
@@ -3841,6 +3903,11 @@ root.addEventListener("change", async (e) => {
     if (path === "imp.group" && S.imp.raw) { const r = siapkanImport(S.imp.raw, S.imp.group); S.imp.valid = r.valid; S.imp.salah = r.salah; }
     if (path === "lbWilayah.area") { S.lbWilayah.regional = ""; if (S.lbWilayah.area) muatRingkasanWilayah("area", S.lbWilayah.area); }
     if (path === "lbWilayah.regional" && S.lbWilayah.regional) muatRingkasanWilayah("regional", S.lbWilayah.regional);
+    if (/^editOrg\./.test(path) && S.editOrg) {
+      if (path === "editOrg.area") { S.editOrg.regional = ""; S.editOrg.branch = ""; }
+      if (path === "editOrg.regional") S.editOrg.branch = "";
+      S.modal = modalOrganik(S.orgModal);
+    }
     return render();
   }
 
