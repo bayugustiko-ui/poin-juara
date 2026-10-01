@@ -898,7 +898,8 @@ async function loadOrganikSaya(email) {
     if (S.organikProfil.status === "aktif") {
       if (!C.wilayahLoaded) await loadWilayah();
       const p = S.organikProfil;
-      S.ringkasanOrg = await muatAtauRebuild(p.level, p[p.level]);
+      /* HQ tidak punya field wilayah — nilainya selalu NASIONAL (lihat wilayahKey 'hq_NASIONAL') */
+      S.ringkasanOrg = await muatAtauRebuild(p.level, p.level === "hq" ? "NASIONAL" : p[p.level]);
       render();
     }
   } catch (e) { toast("no", "Gagal memuat ringkasan: " + e.message); }
@@ -1823,7 +1824,7 @@ function vOrganikTunggu() {
     '<div class="hero" style="border-radius:0 0 18px 18px;"><div class="eyebrow">Status Pendaftaran</div><h1>Menunggu Verifikasi Admin</h1>' +
     "<p>Pendaftaran akun Organik Anda sudah terkirim. Admin akan meninjau data &amp; wilayah kerja sebelum akun dapat digunakan.</p></div>" +
     '<div class="pad stack"><div class="card">' +
-      baris("Nama", o.nama) + baris("Level", LEVEL_LABEL[o.level]) + baris("Wilayah", wilayah) +
+      baris("Nama", o.nama) + baris("Level", (LEVEL_LABEL[o.level] || o.level).replace("&middot;", "·")) + baris("Wilayah", wilayah) +
       '<div class="field"><label>Status</label><div style="margin-top:2px;"><span class="pill pill-neutral">MENUNGGU VERIFIKASI</span></div></div>' +
     "</div>" +
     '<div class="note">Tunggu hingga 3&times;24 jam untuk Verifikasi Admin.</div>' +
@@ -1834,9 +1835,10 @@ function vOrganikTunggu() {
 
 function vOrganikHome() {
   const o = S.organikProfil, r = S.ringkasanOrg;
-  const wilayah = o.level === "hq" ? "NASIONAL" : (o[o.level] || "").toUpperCase();
+  /* LEVEL_LABEL berisi entitas HTML (&middot;) — jangan di-toUpperCase langsung, nanti jadi "&MIDDOT;" */
+  const wilayah = o.level === "hq" ? "HQ &middot; NASIONAL" : esc(LEVEL_LABEL[o.level].toUpperCase() + " " + (o[o.level] || "").toUpperCase());
   const bulan = new Date().toLocaleDateString("id-ID", { month: "long", year: "numeric" }).toUpperCase();
-  if (!r) return hero(LEVEL_LABEL[o.level].toUpperCase() + " " + wilayah, "Halo, " + esc(o.nama) + "!", "Memuat ringkasan wilayah&hellip;") + '<div class="pad"></div>';
+  if (!r) return hero(wilayah, "Halo, " + esc(o.nama) + "!", "Memuat ringkasan wilayah&hellip;") + '<div class="pad"></div>';
   const grupBaris = Object.keys(r.grup || {}).map((g) => {
     const v = r.grup[g];
     return '<div class="stat lift"><div class="lbl">' + esc(g).toUpperCase() + '</div><div class="n mono">' + fmtNum(v.total) + '</div>' +
@@ -1845,7 +1847,7 @@ function vOrganikHome() {
   const daftar = r.anggota
     ? Object.keys(r.anggota).map((id) => Object.assign({ id }, r.anggota[id])).sort((a, b) => (b.poin || 0) - (a.poin || 0))
     : gabungTopGrup(r.topGrup).slice(0, 50);
-  return hero(LEVEL_LABEL[o.level].toUpperCase() + " " + wilayah + " &middot; " + bulan, "Halo, " + esc(o.nama) + "!", "") +
+  return hero(wilayah + " &middot; " + bulan, "Halo, " + esc(o.nama) + "!", "") +
     '<div class="pad stack" style="margin-top:-14px;">' +
     '<div style="text-align:right;"><button class="btn btn-ghost btn-sm" data-do="keluarOrganik">Keluar</button></div>' +
     '<div class="sec-head"><h2>Total Tim</h2></div>' +
