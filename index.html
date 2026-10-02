@@ -819,17 +819,22 @@ async function rebuildBranch(branchName) {
   const grup = kosongGrup();
   let total = 0;
   const daftar = [];
+  const anak = {}; // rincian per cluster {total, aktif} — untuk tampilan ringkasan Organik
   qs.forEach((docSnap) => {
     const p = docSnap.data();
     if (!grup[p.group]) return; // grup di luar 3 yang dikenal — dilewati dari agregat
     grup[p.group].total++;
     if (p.status === "aktif") grup[p.group].aktif++;
+    const cl = p.cluster || "(Tanpa cluster)";
+    if (!anak[cl]) anak[cl] = { total: 0, aktif: 0 };
+    anak[cl].total++;
+    if (p.status === "aktif") anak[cl].aktif++;
     const orang = { id: docSnap.id, nama: namaTampil(Object.assign({ id: docSnap.id }, p)), group: p.group, kode: p.kode || "", poin: p.poinPeringkat || 0, branch: branchName };
     anggota[docSnap.id] = { nama: orang.nama, group: p.group, kode: p.kode || "", poin: orang.poin };
     daftar.push(orang);
     total += p.poinPeringkat || 0;
   });
-  const data = { level: "branch", wilayah: branchName, grup, total_poin: total, jumlah_anggota: qs.size, anggota, topGrup: topGrupDari(daftar, 20), diperbarui: nowIso() };
+  const data = { level: "branch", wilayah: branchName, grup, total_poin: total, jumlah_anggota: qs.size, anggota, topGrup: topGrupDari(daftar, 20), anak, diperbarui: nowIso() };
   await setDoc(doc(db, "ringkasan", "branch_" + branchName), data);
   return data;
 }
@@ -845,19 +850,25 @@ async function rebuildRollup(level, value) {
   Object.keys(GRP_FIELD).forEach((g) => { calonPerGrup[g] = []; });
   const grup = kosongGrup();
   /* Anak-anak dimuat paralel (bukan satu per satu) — HQ punya puluhan branch di bawahnya */
-  const anak = await Promise.all(anakWilayah(childLevel, level, value).map((nv) => muatAtauRebuild(childLevel, nv)));
-  for (const d of anak) {
+  const namaAnak = anakWilayah(childLevel, level, value);
+  const docAnak = await Promise.all(namaAnak.map((nv) => muatAtauRebuild(childLevel, nv)));
+  const anak = {}; // rincian per wilayah anak {total, aktif} — untuk tampilan ringkasan Organik
+  docAnak.forEach((d, i) => {
     total += d.total_poin || 0;
     jumlah += d.jumlah_anggota || 0;
+    const rinci = { total: 0, aktif: 0 };
     Object.keys(grup).forEach((g) => {
       grup[g].total += (d.grup && d.grup[g] ? d.grup[g].total : 0);
       grup[g].aktif += (d.grup && d.grup[g] ? d.grup[g].aktif : 0);
+      rinci.total += (d.grup && d.grup[g] ? d.grup[g].total : 0);
+      rinci.aktif += (d.grup && d.grup[g] ? d.grup[g].aktif : 0);
       calonPerGrup[g] = calonPerGrup[g].concat((d.topGrup && d.topGrup[g]) || []);
     });
-  }
+    anak[namaAnak[i]] = rinci;
+  });
   const topGrup = {};
   Object.keys(calonPerGrup).forEach((g) => { topGrup[g] = calonPerGrup[g].sort((a, b) => (b.poin || 0) - (a.poin || 0)).slice(0, 20); });
-  const data = { level, wilayah: value, grup, total_poin: total, jumlah_anggota: jumlah, topGrup, diperbarui: nowIso() };
+  const data = { level, wilayah: value, grup, total_poin: total, jumlah_anggota: jumlah, topGrup, anak, diperbarui: nowIso() };
   await setDoc(doc(db, "ringkasan", level + "_" + value), data);
   return data;
 }
@@ -899,7 +910,12 @@ async function loadOrganikSaya(email) {
       if (!C.wilayahLoaded) await loadWilayah();
       const p = S.organikProfil;
       /* HQ tidak punya field wilayah — nilainya selalu NASIONAL (lihat wilayahKey 'hq_NASIONAL') */
-      S.ringkasanOrg = await muatAtauRebuild(p.level, p.level === "hq" ? "NASIONAL" : p[p.level]);
+      const nilai = p.level === "hq" ? "NASIONAL" : p[p.level];
+      let r = await muatAtauRebuild(p.level, nilai);
+      /* Cache versi lama belum punya rincian "anak" — hitung ulang sekali (cuma level ini,
+         anak-anaknya tetap pakai cache karena yang dibutuhkan hanya angka grup mereka) */
+      if (!r.anak) r = p.level === "branch" ? await rebuildBranch(nilai) : await rebuildRollup(p.level, nilai);
+      S.ringkasanOrg = r;
       render();
     }
   } catch (e) { toast("no", "Gagal memuat ringkasan: " + e.message); }
@@ -1839,25 +1855,35 @@ function vOrganikHome() {
   const wilayah = o.level === "hq" ? "HQ &middot; NASIONAL" : esc(LEVEL_LABEL[o.level].toUpperCase() + " " + (o[o.level] || "").toUpperCase());
   const bulan = new Date().toLocaleDateString("id-ID", { month: "long", year: "numeric" }).toUpperCase();
   if (!r) return hero(wilayah, "Halo, " + esc(o.nama) + "!", "Memuat ringkasan wilayah&hellip;") + '<div class="pad"></div>';
-  const grupBaris = Object.keys(r.grup || {}).map((g) => {
-    const v = r.grup[g];
-    return '<div class="stat lift"><div class="lbl">' + esc(g).toUpperCase() + '</div><div class="n mono">' + fmtNum(v.total) + '</div>' +
-      '<div class="k lbl" style="color:var(--ink-dim);">aktif ' + fmtNum(v.aktif) + "</div></div>";
-  }).join("");
-  const daftar = r.anggota
-    ? Object.keys(r.anggota).map((id) => Object.assign({ id }, r.anggota[id])).sort((a, b) => (b.poin || 0) - (a.poin || 0))
-    : gabungTopGrup(r.topGrup).slice(0, 50);
+  const pct = (a, t) => (t ? Math.round((a / t) * 100) : 0);
+  let tTotal = 0, tAktif = 0;
+  Object.values(r.grup || {}).forEach((v) => { tTotal += v.total || 0; tAktif += v.aktif || 0; });
+  const kartu = (lbl, n, sub) => '<div class="stat lift" style="padding:12px;"><div class="lbl">' + lbl + '</div>' +
+    '<div class="n mono" style="font-size:22px;">' + n + "</div>" + (sub ? '<div class="k lbl" style="color:var(--ink-dim);">' + sub + "</div>" : "") + "</div>";
+  const barisBar = (nama, aktif, total, ekor) => '<div style="margin-bottom:12px;">' +
+    '<div style="display:flex;justify-content:space-between;gap:10px;font-size:13px;"><span style="font-weight:600;">' + esc(nama) + "</span>" +
+    '<span class="mono" style="font-weight:700;">' + pct(aktif, total) + "%</span></div>" +
+    '<div class="prog"><i style="width:' + pct(aktif, total) + '%;"></i></div>' +
+    '<div style="font-size:12px;color:var(--ink-dim);margin-top:4px;">' + fmtNum(aktif) + " aktif / " + fmtNum(total) + ekor + "</div></div>";
+  const grupHtml = Object.keys(r.grup || {}).map((g) => barisBar(g, r.grup[g].aktif || 0, r.grup[g].total || 0, "")).join("");
+  /* Rincian ke level di bawahnya: HQ→Area, Area→Regional, Regional→Branch, Branch→Cluster.
+     Diurutkan dari % aktivasi terendah supaya yang perlu didorong ada di atas. */
+  const labelAnak = { hq: "Area", area: "Regional", regional: "Branch", branch: "Cluster" }[o.level];
+  const anak = Object.keys(r.anak || {}).map((n) => ({ nama: n, total: r.anak[n].total || 0, aktif: r.anak[n].aktif || 0 }))
+    .sort((a, b) => pct(a.aktif, a.total) - pct(b.aktif, b.total) || b.total - a.total);
+  const anakHtml = anak.length ? anak.map((a) => barisBar(a.nama, a.aktif, a.total, " dari total tim lapangan")).join("") : '<div class="empty">Belum ada data.</div>';
   return hero(wilayah + " &middot; " + bulan, "Halo, " + esc(o.nama) + "!", "") +
     '<div class="pad stack" style="margin-top:-14px;">' +
     '<div style="text-align:right;"><button class="btn btn-ghost btn-sm" data-do="keluarOrganik">Keluar</button></div>' +
-    '<div class="sec-head"><h2>Total Tim</h2></div>' +
-    '<div class="note" style="margin-top:-6px;">Jumlah &amp; anggota aktif per grup di wilayah Anda</div>' +
-    '<div style="display:grid;grid-template-columns:repeat(' + Object.keys(r.grup || {}).length + ',1fr);gap:10px;margin-top:10px;">' + grupBaris + "</div>" +
-    '<div class="sec-head"><h2>Daftar Anggota</h2><span class="pill pill-neutral">' + fmtNum(r.jumlah_anggota) + " ORANG</span></div>" +
-    '<div class="card">' + (daftar.length ? daftar.map((a, i) => '<div class="lb-row"><div class="lb-rank">' + (i + 1) + '</div>' +
-      '<div class="grow"><div class="lb-name">' + esc(a.nama) + '</div><div class="lb-sub">' + esc(a.group) + " &middot; " + esc(a.kode || "-") + "</div></div>" +
-      '<div class="lb-pts">' + fmtNum(a.poin) + "</div></div>").join("") : '<div class="empty">Belum ada anggota.</div>') + "</div>" +
-    '<div class="note">Data diperbarui otomatis dari aktivitas tim Direct Sales, YPCR, dan Buddies di wilayah Anda &middot; ringkasan ' + (r.diperbarui ? "per " + fmtTgl(r.diperbarui) : "") + ".</div>" +
+    '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;">' +
+      kartu("Total Tim Lapangan", fmtNum(tTotal), "") +
+      kartu("Aktif", fmtNum(tAktif), pct(tAktif, tTotal) + "% sudah aktivasi") +
+      kartu("Total Poin", fmtNum(r.total_poin || 0), "") + "</div>" +
+    '<div class="sec-head"><h2>Aktivasi per Group</h2></div>' +
+    '<div class="card">' + grupHtml + "</div>" +
+    '<div class="sec-head"><h2>Per ' + labelAnak + "</h2></div>" +
+    '<div class="card">' + anakHtml + "</div>" +
+    '<div class="note" style="text-align:center;">Diperbarui otomatis tiap 24 jam &middot; ringkasan ' + (r.diperbarui ? "per " + fmtTgl(r.diperbarui) : "") + "</div>" +
     "</div>";
 }
 
@@ -2774,7 +2800,8 @@ function mockProfilOrganik() {
 function mockRingkasanOrganik() {
   return {
     grup: { "Direct Sales": { total: 320, aktif: 290 }, "YPCR": { total: 85, aktif: 70 }, "Buddies": { total: 140, aktif: 120 } },
-    jumlah_anggota: 545,
+    jumlah_anggota: 545, total_poin: 8420,
+    anak: { "Contoh Branch A": { total: 140, aktif: 2 }, "Contoh Branch B": { total: 120, aktif: 5 }, "Contoh Branch C": { total: 285, aktif: 64 } },
     topGrup: {
       "Direct Sales": [{ id: "a", nama: "Contoh Petugas 1", group: "Direct Sales", kode: "CONTOH1", poin: 1250 }],
       "YPCR": [{ id: "b", nama: "Contoh Petugas 2", group: "YPCR", kode: "CONTOH2", poin: 1180 }],
