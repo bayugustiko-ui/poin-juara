@@ -377,7 +377,7 @@ function namaTampil(p) { return (p && (p.nama || p.kode || p.id)) || "-"; }
 const kosongTarget = () => ({ group: "semua", area: "", regional: "" });
 /* Satu slot upload dipakai bergantian oleh knowledge / hadiah / adjustment */
 const kosongUmum = () => ({ jenis: "", namaFile: "", valid: [], salah: [], busy: false, log: [] });
-const MAKS_BARIS_UPLOAD = { knowledge: 200, hadiah: 100, adjustment: 300, wilayah: 2000, panduan: 300 };
+const MAKS_BARIS_UPLOAD = { knowledge: 200, hadiah: 100, adjustment: 300, wilayah: 2000, panduan: 300, group: 2000 };
 const kosongModul = () => Object.assign({ judul: "", mulai: "", selesai: "" }, kosongTarget());
 
 const S = {
@@ -1501,6 +1501,79 @@ async function cariUserId(input) {
   return qs.empty ? null : qs.docs[0].id;
 }
 
+function filterPetugas(f) {
+  const cons = [];
+  if (f.group) cons.push(where("group", "==", f.group));
+  if (f.status) cons.push(where("status", "==", f.status));
+  if (f.area) cons.push(where("area", "==", f.area));
+  if (f.regional) cons.push(where("regional", "==", f.regional));
+  if (f.branch) cons.push(where("branch", "==", f.branch));
+  if (f.cluster) cons.push(where("cluster", "==", f.cluster));
+  return cons;
+}
+
+/* Unduh Excel sesuai filter Data Petugas. Kolom group_baru sengaja kosong: isi hanya untuk yang
+   salah group, lalu upload file yang sama di "Koreksi Group" — baris kosong dilewati tanpa baca. */
+async function unduhPetugasExcel(f) {
+  const X = await muatSheetJS();
+  const qs = await getDocs(query(col("petugas"), ...filterPetugas(f)));
+  const data = rows(qs).sort((a, b) => (a.area || "").localeCompare(b.area || "") || (a.regional || "").localeCompare(b.regional || "") ||
+    (a.branch || "").localeCompare(b.branch || "") || (a.cluster || "").localeCompare(b.cluster || "") || (a.nama || "").localeCompare(b.nama || ""));
+  const isi = [["user_id", "username_digipos", "nama", "group", "group_baru", "status", "area", "regional", "branch", "cluster", "asal", "poin_peringkat", "saldo"]]
+    .concat(data.map((p) => [p.id, p.kode || "", p.nama || "", p.group || "", "", STATUS_LABEL[p.status] || p.status || "",
+      p.area || "", p.regional || "", p.branch || "", p.cluster || "", p.sumber === "daftar" ? "Daftar mandiri" : "Import", p.poinPeringkat || 0, p.saldo || 0]));
+  const ws = X.utils.aoa_to_sheet(isi);
+  ws["!cols"] = [12, 22, 26, 13, 13, 14, 20, 20, 20, 24, 15, 13, 10].map((w) => ({ wch: w }));
+  const wb = X.utils.book_new();
+  X.utils.book_append_sheet(wb, ws, "petugas");
+  const label = [f.status ? STATUS_LABEL[f.status] : "semua-status", f.group, f.area, f.regional, f.branch, f.cluster].filter(Boolean).join("_");
+  X.writeFile(wb, ("petugas_" + label + "_" + new Date().toISOString().slice(0, 10) + ".xlsx").replace(/[^\w.\-]+/g, "-"));
+  return data.length;
+}
+
+/* "DS", "direct sales", "BUD", "buddy" dst. → nama group resmi */
+function normGroup(s) {
+  const t = String(s || "").trim().toLowerCase().replace(/[^a-z]/g, "");
+  if (!t) return "";
+  if (t === "ds" || t.indexOf("direct") === 0) return "Direct Sales";
+  if (t === "ypcr" || t.indexOf("ypc") === 0) return "YPCR";
+  if (t.indexOf("bud") === 0) return "Buddies";
+  return null;
+}
+function siapkanGroup(data) {
+  const valid = [], salah = [];
+  data.forEach((r, i) => {
+    const baris = i + 2;
+    const id = ambilKol(r, ["user_id", "userid", "id", "id_digipos", "username_digipos", "username", "kode", "code"]);
+    const baruRaw = ambilKol(r, ["group_baru", "grup_baru", "group baru", "groupbaru", "new_group"]);
+    if (!baruRaw) return; // tidak diisi = tidak diubah
+    const baru = normGroup(baruRaw);
+    let alasan = "";
+    if (!id) alasan = "ID / Username kosong";
+    else if (!baru) alasan = "group_baru \"" + baruRaw + "\" tidak dikenal (pakai Direct Sales / YPCR / Buddies)";
+    else if (normGroup(ambilKol(r, ["group", "grup"])) === baru) return; // sama dengan group sekarang di file
+    else if (valid.length >= MAKS_BARIS_UPLOAD.group) alasan = "melebihi maksimal " + MAKS_BARIS_UPLOAD.group;
+    if (alasan) { salah.push({ baris, alasan }); return; }
+    valid.push({ baris, id, group: baru });
+  });
+  return { valid, salah };
+}
+async function jalankanGroupMassal(rowsIn, log) {
+  let berhasil = 0, sama = 0;
+  const gagal = [];
+  for (let i = 0; i < rowsIn.length; i++) {
+    const r = rowsIn[i];
+    try {
+      const userId = await cariUserId(r.id);
+      if (!userId) gagal.push({ baris: r.baris, alasan: "ID / Username tidak ditemukan" });
+      else if (await ubahGroupPetugas(userId, r.group)) berhasil++;
+      else sama++;
+    } catch (e) { gagal.push({ baris: r.baris, alasan: e.message || "gagal menyimpan" }); }
+    if ((i + 1) % 10 === 0 || i === rowsIn.length - 1) log(fmtNum(i + 1) + " dari " + fmtNum(rowsIn.length) + " baris diproses…");
+  }
+  return { berhasil, sama, gagal };
+}
+
 async function loadPetugasPage(reset) {
   const f = S.fPetugas, P = C.adm.petugas;
   const key = [f.group, f.status, f.area, f.regional, f.branch, f.cluster, f.q].join("|");
@@ -1516,13 +1589,7 @@ async function loadPetugasPage(reset) {
     } else {
       /* Semua filter di bawah adalah equality (==) murni: Firestore memakai index otomatis
          gabungan tanpa perlu composite index manual, selama tidak ada orderBy di field lain. */
-      const cons = [];
-      if (f.group) cons.push(where("group", "==", f.group));
-      if (f.status) cons.push(where("status", "==", f.status));
-      if (f.area) cons.push(where("area", "==", f.area));
-      if (f.regional) cons.push(where("regional", "==", f.regional));
-      if (f.branch) cons.push(where("branch", "==", f.branch));
-      if (f.cluster) cons.push(where("cluster", "==", f.cluster));
+      const cons = filterPetugas(f);
       if (P.cursor) cons.push(startAfter(P.cursor));
       cons.push(limit(HALAMAN));
       const qs = await getDocs(query(col("petugas"), ...cons));
@@ -2418,6 +2485,11 @@ function aPetugas() {
     "</tbody></table></div>" +
     '<div class="pager"><span>' + fmtNum(P.rows.length) + " baris dimuat</span>" +
     (!P.habis ? '<button class="btn btn-ghost btn-sm" data-do="petugasLagi" ' + (P.loading ? "disabled" : "") + ">" + (P.loading ? "Memuat…" : "Muat " + HALAMAN + " lagi") + "</button>" : "<span>Semua sudah dimuat</span>") + "</div>" +
+    '<div class="card" style="margin:18px 0;"><div class="card-title">Unduh Data Petugas (Excel)</div>' +
+      '<div style="font-size:13px;color:var(--ink-dim);margin-bottom:10px;">Mengikuti filter di atas (Group, Status, wilayah). Untuk cek grouping: pilih Status <b>Aktif</b>, unduh, isi kolom <span class="mono">group_baru</span> hanya untuk yang salah, lalu upload file yang sama di kartu Koreksi Group di bawah. Biaya baca = jumlah baris yang diunduh.</div>' +
+      '<button class="btn btn-primary btn-sm" data-do="unduhPetugas"' + (S.unduhBusy ? " disabled" : "") + ">" + (S.unduhBusy ? "Menyiapkan&hellip;" : "Unduh Excel sesuai filter") + "</button></div>" +
+    kartuUploadUmum("group", "Koreksi Group dari Excel", "user_id, group, group_baru",
+      "Isi <span class=\"mono\">group_baru</span> dengan Direct Sales / YPCR / Buddies (DS &amp; BUD juga dikenali). Baris yang group_baru-nya kosong atau sama dengan group sekarang dilewati. Poin group ikut dipindah; total poin &amp; saldo tidak berubah.") +
     "</div>" + panelRingkasanWilayah() + "</div>";
 }
 
@@ -3336,6 +3408,15 @@ const DO = {
     } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
   },
 
+  async unduhPetugas() {
+    const f = S.fPetugas;
+    if (S.unduhBusy) return;
+    if (!f.status && !f.group && !f.area && !confirm("Tanpa filter, SEMUA petugas akan diunduh (" + (C.adm.stats ? fmtNum(C.adm.stats.total) : "ribuan") + " baris = sebanyak itu reads). Lanjut?\n\nTip: pilih Status Aktif dulu.")) return;
+    S.unduhBusy = true; render();
+    try { const n = await unduhPetugasExcel(f); toast("ok", fmtNum(n) + " petugas diunduh."); }
+    catch (e) { toast("no", pesanGagal(e, "Gagal mengunduh")); }
+    S.unduhBusy = false; render();
+  },
   async cekWelcome() {
     C.adm.welcome = { loading: true, list: [] }; render();
     try { C.adm.welcome = { loading: false, list: await cariBelumWelcome() }; }
@@ -3539,6 +3620,7 @@ const DO = {
       : jenis === "hadiah" ? "Tambahkan " + si.valid.length + " hadiah ke katalog?"
       : jenis === "wilayah" ? "Tambahkan sampai " + si.valid.length + " baris wilayah? Yang sudah ada otomatis dilewati."
       : jenis === "panduan" ? "Tambahkan " + si.valid.length + " panduan?"
+      : jenis === "group" ? "Ubah group " + si.valid.length + " petugas? Poin group ikut dipindah, total poin & saldo tidak berubah."
       : "Proses " + si.valid.length + " adjustment poin? Semua tercatat permanen di ledger.";
     if (!confirm(tanya)) return;
     si.busy = true; si.log = []; render();
@@ -3563,6 +3645,13 @@ const DO = {
         jadwalkanRebuildKatalog();
         toast("ok", fmtNum(si.valid.length) + " panduan ditambahkan.");
         S.impUmum = kosongUmum();
+      } else if (jenis === "group") {
+        const h = await jalankanGroupMassal(si.valid, log);
+        si.busy = false;
+        si.valid = []; si.salah = h.gagal;
+        log("Selesai: " + fmtNum(h.berhasil) + " diubah" + (h.sama ? ", " + fmtNum(h.sama) + " sudah benar (dilewati)" : "") + ", " + fmtNum(h.gagal.length) + " gagal.");
+        loadPetugasPage(true);
+        toast(h.gagal.length ? "" : "ok", fmtNum(h.berhasil) + " petugas diubah group-nya.");
       } else {
         const h = await jalankanAdjustmentMassal(si.valid, log);
         si.busy = false;
@@ -3591,6 +3680,8 @@ const DO = {
         ? [["pertanyaan", "jawaban", "kategori", "audiens"],
            ["Kalau saya lupa username, harus gimana?", "Hubungi Admin wilayahmu, sertakan ID Digipos untuk dicek ulang.", "Akun & Login", "petugas"],
            ["Bagaimana cara melihat ringkasan tim di wilayah saya?", "Buka tab Beranda setelah masuk sebagai akun Organik, data tampil otomatis.", "Ringkasan Tim", "organik"]]
+        : jenis === "group"
+        ? [["user_id", "group", "group_baru"], ["5571191005", "Direct Sales", "Buddies"], ["AHA1927381_DS", "YPCR", "Buddies"], ["5571191006", "Direct Sales", ""]]
         : [["user_id", "poin", "alasan"], ["5571191005", 50, "Juara lomba display"], ["AHA1927381_DS", -25, "Koreksi input ganda"]];
       const wb = X.utils.book_new();
       X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet(isi), jenis);
@@ -3988,7 +4079,7 @@ root.addEventListener("change", async (e) => {
     render();
     try {
       const { data } = await bacaFileSoal(file);
-      const r = umumJenis === "knowledge" ? siapkanKnowledge(data) : umumJenis === "hadiah" ? siapkanHadiah(data) : umumJenis === "wilayah" ? siapkanWilayah(data) : umumJenis === "panduan" ? siapkanPanduan(data) : siapkanAdjustment(data);
+      const r = umumJenis === "knowledge" ? siapkanKnowledge(data) : umumJenis === "hadiah" ? siapkanHadiah(data) : umumJenis === "wilayah" ? siapkanWilayah(data) : umumJenis === "panduan" ? siapkanPanduan(data) : umumJenis === "group" ? siapkanGroup(data) : siapkanAdjustment(data);
       S.impUmum.valid = r.valid; S.impUmum.salah = r.salah;
       if (!r.valid.length && !r.salah.length) toast("no", "Tidak ada baris terbaca. Periksa nama kolom di baris pertama.");
     } catch (err) {
