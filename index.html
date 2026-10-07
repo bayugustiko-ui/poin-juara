@@ -287,7 +287,7 @@ import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
   collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, addDoc,
   query, where, orderBy, limit, startAfter, onSnapshot, writeBatch,
-  increment, deleteField, getCountFromServer, getAggregateFromServer, average
+  increment, deleteField, getCountFromServer, getAggregateFromServer, average, runTransaction
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 import { getAuth, signInWithEmailAndPassword, signInAnonymously, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 
@@ -1563,8 +1563,64 @@ async function resetHp(userId) {
   return true;
 }
 
+/* Koreksi group salah input (mis. DS → Buddies). Poin per-group (pDS/pYPCR/pBUD) ikut dipindah ke
+   field group baru supaya leaderboard group tetap benar; total poin & saldo tidak berubah.
+   Riwayat aktivitas lama (respons/hasil/ledger) sengaja tidak diubah — itu snapshot saat kejadian. */
+async function ubahGroupPetugas(userId, baru) {
+  const d = await getDoc(doc(db, "petugas", userId));
+  if (!d.exists()) throw new Error("Petugas tidak ditemukan.");
+  const p = d.data();
+  if (!GRP_FIELD[baru] || p.group === baru) return null;
+  const fLama = GRP_FIELD[p.group], fBaru = GRP_FIELD[baru];
+  const upd = { group: baru, groupLama: p.group || "", groupDiubahAt: nowIso(), groupDiubahOleh: S.adminUser ? S.adminUser.email : "admin" };
+  upd[fBaru] = (p[fBaru] || 0) + (fLama ? p[fLama] || 0 : 0);
+  if (fLama) upd[fLama] = 0;
+  await updateDoc(doc(db, "petugas", userId), upd);
+  return Object.assign({}, p, upd);
+}
+
+/* Welcoming Bonus versi Admin — untuk petugas daftar mandiri (saat disetujui) dan yang terlewat.
+   Pakai ID ledger yang SAMA dengan jalur lengkapi profil ('wel_'+uid) dan dicek di dalam transaksi,
+   jadi tiap orang maksimal dapat sekali walaupun tombolnya ditekan berkali-kali. Rules tidak perlu
+   diubah: Admin memang boleh menulis petugas & ledger. */
+const POIN_WELCOME = 100;
 async function setujuiPetugas(userId) {
-  await updateDoc(doc(db, "petugas", userId), { status: "aktif", disetujuiAt: nowIso(), disetujuiOleh: S.adminUser ? S.adminUser.email : "admin" });
+  return runTransaction(db, async (tx) => {
+    const pRef = doc(db, "petugas", userId), lRef = doc(db, "ledger", "wel_" + userId);
+    const [pd, ld] = [await tx.get(pRef), await tx.get(lRef)];
+    if (!pd.exists()) throw new Error("Petugas tidak ditemukan.");
+    const oleh = S.adminUser ? S.adminUser.email : "admin";
+    tx.update(pRef, { status: "aktif", disetujuiAt: nowIso(), disetujuiOleh: oleh });
+    if (ld.exists()) return false;
+    tulisWelcome(tx, Object.assign({ id: userId }, pd.data()), oleh);
+    return true;
+  });
+}
+function tulisWelcome(tx, p, oleh) {
+  const lid = "wel_" + p.id;
+  tx.set(doc(db, "ledger", lid), Object.assign(snap(p), {
+    delta: POIN_WELCOME, jenis: "welcome", ref: "", aktivitas: "Welcoming Bonus", waktu: nowIso(), oleh
+  }));
+  tambahPoinKe(tx, p, POIN_WELCOME, lid);
+}
+async function beriWelcome(userId) {
+  return runTransaction(db, async (tx) => {
+    const pRef = doc(db, "petugas", userId), lRef = doc(db, "ledger", "wel_" + userId);
+    const [pd, ld] = [await tx.get(pRef), await tx.get(lRef)];
+    if (!pd.exists() || ld.exists() || pd.data().status !== "aktif") return false;
+    tulisWelcome(tx, Object.assign({ id: userId }, pd.data()), S.adminUser ? S.adminUser.email : "admin");
+    return true;
+  });
+}
+/* Cari petugas aktif yang belum punya ledger welcome: 1 query petugas aktif + 1 query ledger welcome,
+   dicocokkan di memori (tanpa cek satu-satu). Sekali jalan saat tombol ditekan. */
+async function cariBelumWelcome() {
+  const [ps, ws] = await Promise.all([
+    getDocs(query(col("petugas"), where("status", "==", "aktif"))),
+    getDocs(query(col("ledger"), where("jenis", "==", "welcome")))
+  ]);
+  const sudah = new Set(ws.docs.map((d) => d.data().userId));
+  return rows(ps).filter((p) => !sudah.has(p.id));
 }
 
 /* ---------- admin: akun Organik ---------- */
@@ -2598,6 +2654,23 @@ function pilihWilayahLb() {
       regs.map((r) => '<option value="' + esc(r) + '" ' + (S.lbWilayah.regional === r ? "selected" : "") + ">" + esc(r) + "</option>").join("") + "</select>";
 }
 
+function kartuWelcome() {
+  const w = C.adm.welcome;
+  let isi;
+  if (!w) isi = '<button class="btn btn-ghost btn-sm" data-do="cekWelcome">Cek siapa yang belum dapat</button>';
+  else if (w.loading) isi = '<div class="skel">Mengecek&hellip;</div>';
+  else if (!w.list.length) isi = '<div class="note">Semua petugas aktif sudah mendapat Welcoming Bonus.</div> <button class="btn btn-ghost btn-sm" data-do="cekWelcome">Cek ulang</button>';
+  else if (w.jalan) isi = '<div class="note">Memproses ' + w.selesai + " / " + w.list.length + "&hellip; jangan tutup halaman.</div>" +
+    '<div class="prog"><i style="width:' + Math.round((w.selesai / w.list.length) * 100) + '%;"></i></div>';
+  else isi = '<div class="note" style="margin-bottom:10px;"><b>' + fmtNum(w.list.length) + " petugas aktif</b> belum mendapat Welcoming Bonus:</div>" +
+    '<div class="tbl-wrap" style="max-height:260px;overflow:auto;margin-bottom:10px;"><table><thead><tr><th>ID</th><th>Nama</th><th>Group</th><th>Asal</th></tr></thead><tbody>' +
+    w.list.map((p) => '<tr><td class="mono">' + esc(p.id) + "</td><td>" + esc(p.nama || "—") + "</td><td>" + grpTag(p.group) + '</td><td style="font-size:12px;color:var(--ink-dim);">' + (p.sumber === "daftar" ? "Daftar mandiri" : "Import") + "</td></tr>").join("") +
+    "</tbody></table></div>" +
+    '<button class="btn btn-primary btn-sm" data-do="beriWelcomeSemua">Beri +' + POIN_WELCOME + " ke " + fmtNum(w.list.length) + " petugas</button>";
+  return '<div class="card" style="margin-bottom:18px;"><div class="card-title">Welcoming Bonus Terlewat</div>' +
+    '<div class="note" style="margin-bottom:10px;">Petugas daftar mandiri kini otomatis dapat +' + POIN_WELCOME + " saat Anda klik Setujui. Untuk yang sudah aktif sebelumnya, cek &amp; beri di sini. Kebal dobel: tiap orang maksimal sekali.</div>" + isi + "</div>";
+}
+
 function aPoin() {
   const d = S.draftAdj;
   const chips = [["semua", "Semua"]].concat(GROUPS.map((g) => [g, g]));
@@ -2620,6 +2693,7 @@ function aPoin() {
       '<div class="note" style="margin-top:10px;">Wajib mencatat alasan; admin pelaksana tercatat otomatis. Mempengaruhi saldo dan leaderboard.</div></div>' +
     kartuUploadUmum("adjustment", "Upload Adjustment Poin dari Excel", "user_id, poin, alasan",
       "Kolom user_id boleh diisi ID Digipos atau Username. Poin boleh minus, misalnya <span class=\"mono\">-25</span>. Semua baris tercatat di ledger dengan alasannya. Diproses satu per satu, jadi file besar butuh waktu.") +
+    kartuWelcome() +
     '<div class="sec-head"><h2>Leaderboard &mdash; Top 20 &middot; ' + esc(judulLb) + '</h2><button class="btn btn-ghost btn-sm" data-do="perbaruiLb">Perbarui sekarang</button></div>' +
     '<div class="filters" style="margin-bottom:10px;">' + pilihWilayahLb() + "</div>" +
     '<div class="lbl" style="margin-bottom:10px;">' + (waktuLb ? "Diperbarui " + waktuLb : "Belum pernah diperbarui") +
@@ -2718,6 +2792,10 @@ function modalDetail(d) {
     (priv.fotoPending ? '<div class="note" style="margin-bottom:12px;"><div style="margin-bottom:8px;">Pengajuan ganti foto baseline:</div><img src="' + priv.fotoPending + '" style="width:120px;border-radius:8px;display:block;margin-bottom:8px;">' +
       '<button class="btn btn-ok btn-sm" data-do="setujuiFoto" data-v="' + esc(v) + '">Setujui</button> <button class="btn btn-danger btn-sm" data-do="tolakFoto" data-v="' + esc(v) + '">Tolak</button></div>' : "") +
     '<div class="card" style="background:var(--surface-2);margin-bottom:12px;">' +
+      '<div class="lbl">Group &middot; ubah bila salah input</div>' +
+      '<select data-grup="' + esc(v) + '" style="width:100%;margin:4px 0 10px;padding:9px;border-radius:9px;border:1px solid var(--border-strong);font-size:13.5px;">' +
+        Object.keys(GRP_FIELD).map((g) => '<option value="' + esc(g) + '" ' + (p.group === g ? "selected" : "") + ">" + esc(g) + "</option>").join("") + "</select>" +
+      (p.groupLama ? '<div class="note" style="margin:-4px 0 10px;">Sebelumnya ' + esc(p.groupLama) + " &middot; diubah " + fmtTgl(p.groupDiubahAt) + "</div>" : "") +
       '<div class="lbl">Area</div><div style="font-size:13.5px;">' + esc(p.area || "-") + "</div>" +
       '<div class="lbl" style="margin-top:10px;">Regional</div><div style="font-size:13.5px;">' + esc(p.regional || "-") + "</div>" +
       '<div class="lbl" style="margin-top:10px;">Branch</div><div style="font-size:13.5px;">' + esc(p.branch || "-") + "</div>" +
@@ -3250,12 +3328,31 @@ const DO = {
   },
   async setujuiPetugas(v) {
     try {
-      await setujuiPetugas(v);
+      const bonus = await setujuiPetugas(v);
       C.adm.reviewList = C.adm.reviewList.filter((p) => p.id !== v);
       if (C.adm.stats) C.adm.stats.review = Math.max(0, C.adm.stats.review - 1);
-      toast("ok", "Petugas disetujui dan sekarang aktif.");
+      toast("ok", "Petugas disetujui dan sekarang aktif." + (bonus ? " Welcoming Bonus +" + POIN_WELCOME + " diberikan." : ""));
       if (S.modal) DO.detailPetugas(v); else render();
     } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
+  },
+
+  async cekWelcome() {
+    C.adm.welcome = { loading: true, list: [] }; render();
+    try { C.adm.welcome = { loading: false, list: await cariBelumWelcome() }; }
+    catch (e) { C.adm.welcome = null; toast("no", pesanGagal(e, "Gagal mengecek")); }
+    render();
+  },
+  async beriWelcomeSemua() {
+    const w = C.adm.welcome;
+    if (!w || !w.list.length || w.jalan) return;
+    if (!confirm("Beri Welcoming Bonus +" + POIN_WELCOME + " ke " + w.list.length + " petugas?\nYang sudah pernah dapat otomatis dilewati.")) return;
+    w.jalan = true; w.selesai = 0; w.diberi = 0; render();
+    for (const p of w.list.slice()) {
+      try { if (await beriWelcome(p.id)) w.diberi++; } catch (e) { w.gagal = (w.gagal || 0) + 1; }
+      w.selesai++; render();
+    }
+    toast("ok", "Selesai: " + w.diberi + " petugas mendapat Welcoming Bonus" + (w.gagal ? ", " + w.gagal + " gagal (coba ulang)." : "."));
+    C.adm.welcome = null; render();
   },
 
   fOrganik(v) { S.fOrganik = v; loadOrganikAdmin(v); render(); },
@@ -3859,6 +3956,23 @@ root.addEventListener("keydown", (e) => {
 });
 root.addEventListener("change", async (e) => {
   const el = e.target;
+
+  const grpId = el.getAttribute("data-grup");
+  if (grpId) {
+    const baris = P.rows.find((r) => r.id === grpId);
+    const lama = baris ? baris.group : "";
+    if (!confirm("Ubah group " + grpId + (lama ? " dari " + lama : "") + " ke " + el.value + "?\nPoin group ikut dipindah, total poin & saldo tidak berubah.")) {
+      if (lama) el.value = lama;
+      return;
+    }
+    try {
+      const hasil = await ubahGroupPetugas(grpId, el.value);
+      if (hasil && baris) Object.assign(baris, hasil);
+      toast("ok", hasil ? "Group diubah ke " + el.value + "." : "Group sudah " + el.value + ".");
+      DO.detailPetugas(grpId);
+    } catch (err) { toast("no", pesanGagal(err, "Gagal ubah group")); }
+    return;
+  }
 
   const stId = el.getAttribute("data-status");
   if (stId) {
