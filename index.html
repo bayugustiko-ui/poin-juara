@@ -642,6 +642,48 @@ async function daftarBaru(d) {
   return userId;
 }
 
+/* ---------- kontak/{branch}: nomor aktif TANPA foto, untuk Organik Branch & Regional ----------
+   Hanya boleh berisi field nomor & oleh (rules mengecek ini untuk tulisan petugas). */
+function tulisKontak(b, p, nomor) {
+  if (!p.branch || !nomor) return;
+  const isi = {}; isi[p.id] = nomor;
+  b.set(doc(db, "kontak", p.branch), { nomor: isi, oleh: p.id }, { merge: true });
+}
+/* Admin: bangun ulang semua dokumen kontak dari petugas aktif + petugas_cek. Aman diulang. */
+async function bangunKontak(log) {
+  log("Membaca petugas aktif & nomor…");
+  const [ps, cs] = await Promise.all([getDocs(query(col("petugas"), where("status", "==", "aktif"))), getDocs(col("petugas_cek"))]);
+  const nomorDari = {};
+  cs.forEach((d) => { const n = d.data().nomor; if (n) nomorDari[d.id] = String(n).trim(); });
+  const perBranch = {};
+  let jumlah = 0, tanpaNomor = 0;
+  ps.forEach((d) => {
+    const p = d.data();
+    if (!p.branch) return;
+    if (!nomorDari[d.id]) { tanpaNomor++; return; }
+    (perBranch[p.branch] = perBranch[p.branch] || {})[d.id] = nomorDari[d.id];
+    jumlah++;
+  });
+  const branches = Object.keys(perBranch);
+  log("Menulis " + branches.length + " dokumen branch…");
+  for (let i = 0; i < branches.length; i += 400) {
+    const b = writeBatch(db);
+    branches.slice(i, i + 400).forEach((br) => b.set(doc(db, "kontak", br), { nomor: perBranch[br], oleh: "admin" }));
+    await b.commit();
+  }
+  return { jumlah, branch: branches.length, tanpaNomor, dibaca: ps.size + cs.size };
+}
+/* Admin ubah nomor 1 petugas: petugas_cek + kontak branch-nya sekaligus */
+async function ubahNomorAdmin(userId, nomor) {
+  const pd = await getDoc(doc(db, "petugas", userId));
+  if (!pd.exists()) throw new Error("Petugas tidak ditemukan.");
+  const p = Object.assign({ id: userId }, pd.data());
+  const b = writeBatch(db);
+  b.set(doc(db, "petugas_cek", userId), { nomor }, { merge: true });
+  if (p.status === "aktif") tulisKontak(b, p, nomor);
+  await b.commit();
+}
+
 /* Petugas hasil import melengkapi profil saat pertama masuk → langsung aktif */
 /* Bonus Welcoming +100: lengkapi profil sekaligus nambah poin, divalidasi 1 ledger baru khusus ('wel_'+uid) —
    lihat firestore.rules match /petugas/{uid} allow update, cabang ketiga. */
@@ -659,6 +701,9 @@ async function lengkapiProfil(p, l) {
   b.set(doc(db, "petugas_cek", p.id), { nomor: l.nomor.trim(), foto: l.foto });
   if (wajahBermasalah(l.wajah)) b.set(doc(col("peringatan")), dokPeringatan(Object.assign({}, p, { nama: l.nama.trim() }), "lengkapi", l.wajah, ""));
   await b.commit();
+  /* Kontak untuk Organik ditulis TERPISAH setelah profil tersimpan — kalau gagal (mis. rules belum
+     diperbarui), profil & bonus tetap aman; Admin bisa melengkapinya lewat "Bangun data kontak". */
+  try { const k = writeBatch(db); tulisKontak(k, p, l.nomor.trim()); await k.commit(); } catch (e) {}
 }
 
 /* ---------- master & ringkasan (sekali muat per sesi) ---------- */
@@ -830,7 +875,7 @@ async function rebuildBranch(branchName) {
     anak[cl].total++;
     if (p.status === "aktif") anak[cl].aktif++;
     const orang = { id: docSnap.id, nama: namaTampil(Object.assign({ id: docSnap.id }, p)), group: p.group, kode: p.kode || "", poin: p.poinPeringkat || 0, branch: branchName };
-    anggota[docSnap.id] = { nama: orang.nama, group: p.group, kode: p.kode || "", poin: orang.poin };
+    anggota[docSnap.id] = { nama: orang.nama, group: p.group, kode: p.kode || "", poin: orang.poin, cluster: p.cluster || "", status: p.status };
     daftar.push(orang);
     total += p.poinPeringkat || 0;
   });
@@ -871,6 +916,18 @@ async function rebuildRollup(level, value) {
   const data = { level, wilayah: value, grup, total_poin: total, jumlah_anggota: jumlah, topGrup, anak, diperbarui: nowIso() };
   await setDoc(doc(db, "ringkasan", level + "_" + value), data);
   return data;
+}
+
+/* Cache branch versi lama: anggota belum punya cluster & status → perlu dihitung ulang sekali */
+function anggotaLengkap(r) {
+  const a = r && r.anggota ? Object.values(r.anggota) : [];
+  return !a.length || a[0].status !== undefined;
+}
+/* Daftar tim 1 branch untuk Organik level Regional — dimuat saat baris branch dibuka (1 read, cache 24 jam) */
+async function muatTimBranch(branch) {
+  let r = await muatAtauRebuild("branch", branch);
+  if (!anggotaLengkap(r)) r = await rebuildBranch(branch);
+  return r;
 }
 
 /* Pintu masuk tunggal: pakai cache kalau masih segar (<24 jam), rebuild kalau basi/belum ada. */
@@ -914,7 +971,7 @@ async function loadOrganikSaya(email) {
       let r = await muatAtauRebuild(p.level, nilai);
       /* Cache versi lama belum punya rincian "anak" — hitung ulang sekali (cuma level ini,
          anak-anaknya tetap pakai cache karena yang dibutuhkan hanya angka grup mereka) */
-      if (!r.anak) r = p.level === "branch" ? await rebuildBranch(nilai) : await rebuildRollup(p.level, nilai);
+      if (!r.anak || (p.level === "branch" && !anggotaLengkap(r))) r = p.level === "branch" ? await rebuildBranch(nilai) : await rebuildRollup(p.level, nilai);
       S.ringkasanOrg = r;
       render();
     }
@@ -923,7 +980,7 @@ async function loadOrganikSaya(email) {
 }
 
 function mulaiSesiOrganik(email) {
-  S.me = email; S.view = "organikApp"; S.organikProfil = null; S.ringkasanOrg = null; S.organikTab = "beranda";
+  S.me = email; S.view = "organikApp"; S.organikProfil = null; S.ringkasanOrg = null; S.organikTab = "beranda"; S.orgBuka = {}; S.orgNode = {}; S.orgKontak = {};
   render();
   loadOrganikSaya(email);
 }
@@ -1654,10 +1711,11 @@ const POIN_WELCOME = 100;
 async function setujuiPetugas(userId) {
   return runTransaction(db, async (tx) => {
     const pRef = doc(db, "petugas", userId), lRef = doc(db, "ledger", "wel_" + userId);
-    const [pd, ld] = [await tx.get(pRef), await tx.get(lRef)];
+    const [pd, ld, cd] = [await tx.get(pRef), await tx.get(lRef), await tx.get(doc(db, "petugas_cek", userId))];
     if (!pd.exists()) throw new Error("Petugas tidak ditemukan.");
     const oleh = S.adminUser ? S.adminUser.email : "admin";
     tx.update(pRef, { status: "aktif", disetujuiAt: nowIso(), disetujuiOleh: oleh });
+    if (cd.exists() && cd.data().nomor) tulisKontak(tx, Object.assign({ id: userId }, pd.data()), String(cd.data().nomor).trim());
     if (ld.exists()) return false;
     tulisWelcome(tx, Object.assign({ id: userId }, pd.data()), oleh);
     return true;
@@ -1972,6 +2030,8 @@ function vOrganikTunggu() {
     "</div></div>";
 }
 
+const ANAK_ORG = { hq: "area", area: "regional", regional: "branch", branch: "cluster" };
+const LABEL_ANAK_ORG = { hq: "Area", area: "Regional", regional: "Branch", branch: "Cluster" };
 function vOrganikHome() {
   const o = S.organikProfil, r = S.ringkasanOrg;
   /* LEVEL_LABEL berisi entitas HTML (&middot;) — jangan di-toUpperCase langsung, nanti jadi "&MIDDOT;" */
@@ -1991,10 +2051,51 @@ function vOrganikHome() {
   const grupHtml = Object.keys(r.grup || {}).map((g) => barisBar(g, r.grup[g].aktif || 0, r.grup[g].total || 0, "")).join("");
   /* Rincian ke level di bawahnya: HQ→Area, Area→Regional, Regional→Branch, Branch→Cluster.
      Diurutkan dari % aktivasi terendah supaya yang perlu didorong ada di atas. */
-  const labelAnak = { hq: "Area", area: "Regional", regional: "Branch", branch: "Cluster" }[o.level];
-  const anak = Object.keys(r.anak || {}).map((n) => ({ nama: n, total: r.anak[n].total || 0, aktif: r.anak[n].aktif || 0 }))
-    .sort((a, b) => pct(a.aktif, a.total) - pct(b.aktif, b.total) || b.total - a.total);
-  const anakHtml = anak.length ? anak.map((a) => barisBar(a.nama, a.aktif, a.total, " dari total tim lapangan")).join("") : '<div class="empty">Belum ada data.</div>';
+  const labelAnak = LABEL_ANAK_ORG[o.level];
+  /* Rincian bertingkat sampai daftar nama: HQ→Area→Regional→Branch→nama, Area→Regional→Branch→nama,
+     Regional→Branch→nama, Branch→Cluster→nama. Tiap tingkat yang dibuka = 1 read (cache ringkasan 24 jam).
+     Nomor aktif hanya untuk Organik Branch & Regional (dokumen kontak, dijaga rules di server). */
+  const lihatNomor = o.level === "branch" || o.level === "regional";
+  const buka = S.orgBuka || {}, node = S.orgNode || {}, kontak = S.orgKontak || {};
+  const daftarTim = (tim, branch) => {
+    if (!tim.length) return '<div class="empty" style="padding:10px;">Belum ada anggota.</div>';
+    const km = lihatNomor ? kontak[branch] : null;
+    tim.sort((a, b) => (a.status === "aktif" ? 0 : 1) - (b.status === "aktif" ? 0 : 1) || (b.poin || 0) - (a.poin || 0) || (a.nama || "").localeCompare(b.nama || ""));
+    return '<div style="border:1px solid var(--border);border-radius:11px;margin:4px 0 14px;padding:2px 10px;">' +
+      (lihatNomor && km === undefined ? '<div class="lbl" style="padding:8px 0 0;">Memuat nomor&hellip;</div>' : "") + tim.map((x) => {
+        const nomor = km && km[x.id];
+        return '<div class="lb-row" style="padding:9px 0;' + (x.status === "aktif" ? "" : "opacity:.6;") + '"><div class="grow" style="min-width:0;">' +
+          '<div class="lb-name" style="font-size:13px;">' + esc(x.nama || x.kode || "-") + "</div>" +
+          '<div class="lb-sub">' + esc(x.group || "-") + " &middot; " + esc(x.kode || "-") + " &middot; " + (x.status === "aktif" ? "Sudah aktivasi" : "Belum aktivasi") + "</div>" +
+          (nomor ? '<a class="mono" href="tel:' + esc(nomor.replace(/[^0-9+]/g, "")) + '" style="font-size:12.5px;color:var(--red);text-decoration:none;">&#9742; ' + esc(nomor) + "</a>" : "") +
+          '</div><div class="lb-pts" style="font-size:13px;">' + fmtNum(x.poin || 0) + "</div></div>";
+      }).join("") + "</div>";
+  };
+  const anggotaArr = (d) => Object.keys((d && d.anggota) || {}).map((id) => Object.assign({ id }, d.anggota[id]));
+  const rincian = (level, d, dalam) => {
+    const anakLv = ANAK_ORG[level];
+    const items = Object.keys(d.anak || {}).map((n) => ({ nama: n, total: d.anak[n].total || 0, aktif: d.anak[n].aktif || 0 }))
+      .sort((a, b) => pct(a.aktif, a.total) - pct(b.aktif, b.total) || b.total - a.total);
+    if (!items.length) return '<div class="empty">Belum ada data.</div>';
+    return items.map((a) => {
+      const key = anakLv + ":" + a.nama, terbuka = !!buka[key];
+      const keNama = anakLv === "cluster" || anakLv === "branch";
+      let isi = "";
+      if (terbuka) {
+        if (anakLv === "cluster") isi = daftarTim(anggotaArr(d).filter((x) => (x.cluster || "(Tanpa cluster)") === a.nama), d.wilayah);
+        else {
+          const nd = node[anakLv + "_" + a.nama];
+          isi = !nd ? '<div class="skel" style="margin:6px 0 12px;">Memuat&hellip;</div>'
+            : anakLv === "branch" ? daftarTim(anggotaArr(nd), a.nama)
+            : '<div style="border-left:2px solid var(--border);padding-left:10px;margin:2px 0 14px;">' + rincian(anakLv, nd, true) + "</div>";
+        }
+      }
+      return barisBar(a.nama, a.aktif, a.total, " dari total tim lapangan") +
+        '<div style="margin:-6px 0 10px;"><button class="btn btn-ghost btn-sm" data-do="bukaTimOrg" data-v="' + esc(key) + '">' +
+          (terbuka ? "Tutup" : keNama ? "Lihat daftar tim (" + fmtNum(a.total) + ")" : "Lihat per " + LABEL_ANAK_ORG[anakLv]) + "</button></div>" + isi;
+    }).join("");
+  };
+  const anakHtml = rincian(o.level, r, false);
   return hero(wilayah + " &middot; " + bulan, "Halo, " + esc(o.nama) + "!", "") +
     '<div class="pad stack" style="margin-top:-14px;">' +
     '<div style="text-align:right;"><button class="btn btn-ghost btn-sm" data-do="keluarOrganik">Keluar</button></div>' +
@@ -2488,6 +2589,14 @@ function aPetugas() {
     '<div class="card" style="margin:18px 0;"><div class="card-title">Unduh Data Petugas (Excel)</div>' +
       '<div style="font-size:13px;color:var(--ink-dim);margin-bottom:10px;">Mengikuti filter di atas (Group, Status, wilayah). Untuk cek grouping: pilih Status <b>Aktif</b>, unduh, isi kolom <span class="mono">group_baru</span> hanya untuk yang salah, lalu upload file yang sama di kartu Koreksi Group di bawah. Biaya baca = jumlah baris yang diunduh.</div>' +
       '<button class="btn btn-primary btn-sm" data-do="unduhPetugas"' + (S.unduhBusy ? " disabled" : "") + ">" + (S.unduhBusy ? "Menyiapkan&hellip;" : "Unduh Excel sesuai filter") + "</button></div>" +
+    (function () {
+      const k = C.adm.kontak || { log: [] };
+      return '<div class="card" style="margin-bottom:18px;"><div class="card-title">Data Kontak untuk Organik</div>' +
+        '<div style="font-size:13px;color:var(--ink-dim);margin-bottom:10px;">Nomor aktif petugas (tanpa foto) yang bisa dilihat Organik level Branch &amp; Regional di wilayahnya. HQ &amp; Area tidak bisa melihat nomor. ' +
+        "Jalankan sekali setelah update ini; setelahnya otomatis terisi saat petugas lengkapi profil, ganti nomor, atau disetujui. Jalankan ulang bila ada yang terlewat.</div>" +
+        '<button class="btn btn-primary btn-sm" data-do="bangunKontakAdm"' + (k.busy ? " disabled" : "") + ">" + (k.busy ? "Memproses&hellip;" : "Bangun data kontak") + "</button>" +
+        (k.log.length ? '<div class="note mono" style="margin-top:12px;white-space:pre-wrap;">' + k.log.map(esc).join("\n") + "</div>" : "") + "</div>";
+    })() +
     kartuUploadUmum("group", "Koreksi Group dari Excel", "user_id, group, group_baru",
       "Isi <span class=\"mono\">group_baru</span> dengan Direct Sales / YPCR / Buddies (DS &amp; BUD juga dikenali). Baris yang group_baru-nya kosong atau sama dengan group sekarang dilewati. Poin group ikut dipindah; total poin &amp; saldo tidak berubah.") +
     "</div>" + panelRingkasanWilayah() + "</div>";
@@ -2872,7 +2981,9 @@ function modalDetail(d) {
       '<div class="lbl" style="margin-top:10px;">Regional</div><div style="font-size:13.5px;">' + esc(p.regional || "-") + "</div>" +
       '<div class="lbl" style="margin-top:10px;">Branch</div><div style="font-size:13.5px;">' + esc(p.branch || "-") + "</div>" +
       '<div class="lbl" style="margin-top:10px;">Cluster</div><div style="font-size:13.5px;">' + esc(p.cluster || "-") + "</div>" +
-      '<div class="lbl" style="margin-top:10px;">Nomor Aktif</div><div class="mono" style="font-size:13.5px;">' + esc(priv.nomor || "-") + "</div>" +
+      '<div class="lbl" style="margin-top:10px;">Nomor Aktif &middot; ubah bila salah</div>' +
+      '<div class="row" style="gap:8px;margin-top:4px;"><input type="tel" class="mono grow" data-nomor-adm="1" value="' + esc(priv.nomor || "") + '" placeholder="08xx" style="padding:8px;border-radius:9px;border:1px solid var(--border-strong);font-size:13.5px;min-width:0;">' +
+        '<button class="btn btn-ghost btn-sm" data-do="simpanNomorAdm" data-v="' + esc(v) + '">Simpan</button></div>' +
       '<div class="lbl" style="margin-top:10px;">HP Terhubung</div><div style="font-size:13.5px;">' + (d.hp ? "Ya, sejak " + fmtWaktu(d.hp.waktu) : "Belum ada HP terhubung") + "</div>" +
       '<div class="lbl" style="margin-top:10px;">Poin Peringkat / Saldo</div><div class="mono" style="font-size:13.5px;">' + fmtNum(p.poinPeringkat) + " / " + fmtNum(p.saldo) + "</div></div>" +
     '<div class="card-title">Point Ledger</div>' +
@@ -2946,6 +3057,14 @@ function mockMinePetugas() {
 }
 function mockProfilOrganik() {
   return { id: "preview@telkomsel.co.id", email: "preview@telkomsel.co.id", nama: "Pratinjau Admin", level: "regional", area: "Contoh Area", regional: "Contoh Regional", status: "aktif" };
+}
+/* Pratinjau Admin: data tingkat bawah palsu, tanpa baca/tulis Firestore */
+function mockNodeOrganik(level, nama) {
+  if (level === "branch") return { wilayah: nama, anggota: {
+    a: { nama: "Contoh Petugas 1", group: "Direct Sales", kode: "CONTOH1", poin: 125, cluster: "Contoh Cluster", status: "aktif" },
+    b: { nama: "Contoh Petugas 2", group: "YPCR", kode: "CONTOH2", poin: 0, cluster: "Contoh Cluster", status: "belum_lengkap" } } };
+  const anak = {}; anak["Contoh " + LABEL_ANAK_ORG[level] + " 1"] = { total: 40, aktif: 12 }; anak["Contoh " + LABEL_ANAK_ORG[level] + " 2"] = { total: 25, aktif: 20 };
+  return { wilayah: nama, anak, level };
 }
 function mockRingkasanOrganik() {
   return {
@@ -3119,6 +3238,7 @@ const DO = {
     } else {
       S.organikProfil = mockProfilOrganik();
       S.ringkasanOrg = mockRingkasanOrganik();
+      S.orgBuka = {}; S.orgNode = {}; S.orgKontak = {};
       S.organikTab = "beranda";
     }
     render();
@@ -3300,7 +3420,12 @@ const DO = {
   async simpanProfil() {
     const nomor = S.profil.nomor.trim();
     if (!nomor) return toast("no", "Isi nomor aktif yang baru.");
-    try { await setDoc(doc(db, "petugas_cek", S.me), { nomor }, { merge: true }); S.profil.nomor = ""; toast("ok", "Nomor aktif diperbarui."); }
+    try {
+      await setDoc(doc(db, "petugas_cek", S.me), { nomor }, { merge: true });
+      const p = S.profilSaya;
+      if (p && p.status === "aktif") { try { const k = writeBatch(db); tulisKontak(k, p, nomor); await k.commit(); } catch (e) {} }
+      S.profil.nomor = ""; toast("ok", "Nomor aktif diperbarui.");
+    }
     catch (e) { toast("no", pesanGagal(e, "Gagal menyimpan")); }
   },
   async ajukanFoto() {
@@ -3408,6 +3533,52 @@ const DO = {
     } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
   },
 
+  async simpanNomorAdm(v) {
+    const el = document.querySelector("[data-nomor-adm]");
+    const nomor = el ? el.value.trim() : "";
+    if (!/^[0-9+][0-9 \-]{6,20}$/.test(nomor)) return toast("no", "Nomor tidak valid. Contoh: 081234567890");
+    if (!confirm("Ubah nomor aktif " + v + " menjadi " + nomor + "?\nNomor ini juga yang terlihat oleh Organik Branch/Regional.")) return;
+    try { await ubahNomorAdmin(v, nomor); toast("ok", "Nomor diperbarui."); DO.detailPetugas(v); }
+    catch (e) { toast("no", pesanGagal(e, "Gagal menyimpan nomor")); }
+  },
+  async bangunKontakAdm() {
+    const k = C.adm.kontak = C.adm.kontak || { log: [] };
+    if (k.busy) return;
+    if (!confirm("Bangun ulang data kontak untuk Organik?\nMembaca semua petugas aktif + nomornya (±1.600 reads, sekali jalan). Aman diulang.")) return;
+    k.busy = true; k.log = []; render();
+    try {
+      const h = await bangunKontak((t) => { k.log.push(t); render(); });
+      k.log.push("Selesai: " + fmtNum(h.jumlah) + " nomor di " + fmtNum(h.branch) + " branch" + (h.tanpaNomor ? " · " + fmtNum(h.tanpaNomor) + " petugas aktif tanpa nomor" : "") + " · " + fmtNum(h.dibaca) + " dokumen dibaca.");
+      toast("ok", "Data kontak selesai dibangun.");
+    } catch (e) { k.log.push("Gagal: " + (e.message || e)); toast("no", pesanGagal(e, "Gagal membangun kontak")); }
+    k.busy = false; render();
+  },
+  async bukaTimOrg(v) {
+    /* v = "level:nama" — level anak yang dibuka (area/regional/branch/cluster) */
+    S.orgBuka = S.orgBuka || {}; S.orgNode = S.orgNode || {}; S.orgKontak = S.orgKontak || {};
+    S.orgBuka[v] = !S.orgBuka[v];
+    render();
+    const o = S.organikProfil;
+    if (!S.orgBuka[v] || !o) return;
+    const i = v.indexOf(":"), lv = v.slice(0, i), nama = v.slice(i + 1);
+    const lihatNomor = o.level === "branch" || o.level === "regional";
+    const branchKontak = lv === "branch" ? nama : lv === "cluster" ? o.branch : null;
+    const tugas = [];
+    if (lv !== "cluster" && !S.orgNode[lv + "_" + nama]) {
+      tugas.push((S.previewSebagai ? Promise.resolve(mockNodeOrganik(lv, nama)) : lv === "branch" ? muatTimBranch(nama)
+          : muatAtauRebuild(lv, nama).then((d) => (d.anak ? d : rebuildRollup(lv, nama))))
+        .then((d) => { S.orgNode[lv + "_" + nama] = d; })
+        .catch((e) => { S.orgBuka[v] = false; toast("no", pesanGagal(e, "Gagal memuat")); }));
+    }
+    if (lihatNomor && branchKontak && S.orgKontak[branchKontak] === undefined) {
+      tugas.push((S.previewSebagai ? Promise.resolve({ a: "0812-0000-0001" }) : getDoc(doc(db, "kontak", branchKontak)).then((d) => (d.exists() ? d.data().nomor || {} : {})))
+        .then((m) => { S.orgKontak[branchKontak] = m; })
+        .catch(() => { S.orgKontak[branchKontak] = {}; }));
+    }
+    if (!tugas.length) return;
+    await Promise.all(tugas);
+    render();
+  },
   async unduhPetugas() {
     const f = S.fPetugas;
     if (S.unduhBusy) return;
