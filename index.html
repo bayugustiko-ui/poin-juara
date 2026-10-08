@@ -1176,7 +1176,8 @@ async function loadAdminStats() {
   const per = periode();
   const seminggu = new Date(Date.now() - 7 * 86400000).toISOString();
   const cnt = (q) => getCountFromServer(q).then((r) => r.data().count).catch(() => 0);
-  const [total, aktif, review, belum, baru, respPer, pending, grpTotals, grpResp, pt, rv, prCount, prList, orgReview] = await Promise.all([
+  const LV = ["hq", "area", "regional", "branch"];
+  const [total, aktif, review, belum, baru, respPer, pending, grpTotals, grpResp, pt, rv, prCount, prList, orgReview, nonaktif, orgTotal, orgAktif, orgLevel] = await Promise.all([
     cnt(col("petugas")),
     cnt(query(col("petugas"), where("status", "==", "aktif"))),
     cnt(query(col("petugas"), where("status", "==", "review"))),
@@ -1184,14 +1185,21 @@ async function loadAdminStats() {
     cnt(query(col("petugas"), where("createdAt", ">=", seminggu))),
     cnt(query(col("respons"), where("periode", "==", per))),
     cnt(query(col("redeem"), where("status", "==", "pending"))),
-    Promise.all(GROUPS.map((g) => cnt(query(col("petugas"), where("group", "==", g))))),
+    /* Target completion = petugas AKTIF per group (yang belum aktivasi/nonaktif belum bisa mengisi) */
+    Promise.all(GROUPS.map((g) => cnt(query(col("petugas"), where("group", "==", g), where("status", "==", "aktif"))))),
     Promise.all(GROUPS.map((g) => cnt(query(col("respons"), where("grupPeriode", "==", g + "|" + per))))),
     getAggregateFromServer(col("hasil"), { rata: average("benar"), soal: average("total") }).then((r) => r.data()).catch(() => ({ rata: null, soal: null })),
     getDocs(query(col("petugas"), where("status", "==", "review"), limit(20))).then(rows).catch(() => []),
     cnt(query(col("peringatan"), where("status", "==", "baru"))),
     getDocs(query(col("peringatan"), where("status", "==", "baru"), limit(20))).then(rows).catch(() => []),
-    getDocs(query(col("organik"), where("status", "==", "review"), limit(20))).then(rows).catch(() => [])
+    getDocs(query(col("organik"), where("status", "==", "review"), limit(20))).then(rows).catch(() => []),
+    cnt(query(col("petugas"), where("status", "==", "nonaktif"))),
+    cnt(col("organik")),
+    cnt(query(col("organik"), where("status", "==", "aktif"))),
+    Promise.all(LV.map((l) => cnt(query(col("organik"), where("level", "==", l), where("status", "==", "aktif")))))
   ]);
+  C.adm.orgStats = { total: orgTotal, aktif: orgAktif, review: orgReview.length, level: LV.reduce((m, l, i) => (m[l] = orgLevel[i], m), {}) };
+  loadTeritori(null);
   const kuAktif = listOf(C.adm.kuesioner).filter((k) => k.aktif);
   const perGroup = GROUPS.map((g, i) => {
     const target = grpTotals[i] * Math.max(1, kuAktif.filter((k) => { const t = k.target || {}; return !t.group || t.group === "semua" || t.group === g; }).length);
@@ -1201,7 +1209,7 @@ async function loadAdminStats() {
   C.adm.reviewList = rv;
   C.adm.peringatan = prList.sort((a, b) => (b.waktu || "").localeCompare(a.waktu || ""));
   C.adm.organikReviewList = orgReview;
-  C.adm.stats = { total, aktif, review, belum, baru, respPer, pending, perGroup, peringatan: prCount, organikReview: orgReview.length, completion: targetAll ? Math.round(respPer / targetAll * 100) : 0, rataBenar: pt.rata, rataSoal: pt.soal, topSalah: null };
+  C.adm.stats = { total, aktif, review, belum, nonaktif, baru, respPer, pending, perGroup, peringatan: prCount, organikReview: orgReview.length, completion: targetAll ? Math.round(respPer / targetAll * 100) : 0, rataBenar: pt.rata, rataSoal: pt.soal, topSalah: null };
   render();
   loadSoalPalingSalah();
   loadLeaderboard().then(() => {
@@ -1209,6 +1217,31 @@ async function loadAdminStats() {
     if (umur > LB_BASI_JAM * 3600000) rebuildLeaderboard().catch(() => {});
   });
   bersihkanFoto(false);
+}
+
+/* Group × teritori: hitung di server (count), tanpa membaca dokumen. area=null → semua Area;
+   area=nama → Regional di bawah Area itu (dimuat saat baris Area diklik). Total = aktif + belum aktivasi,
+   sama dengan definisi "total tim lapangan" di dashboard Organik. */
+async function loadTeritori(area) {
+  const T = C.adm.teritori = C.adm.teritori || { area: null, regional: {}, buka: {} };
+  if (!C.wilayahLoaded) await loadWilayah();
+  const level = area ? "regional" : "area";
+  const nama = area ? anakWilayah("regional", "area", area) : anakWilayah("area", "hq", "NASIONAL");
+  /* Error TIDAK ditelan jadi 0 — kalau Firestore menolak (mis. butuh index), tampil sebagai pesan */
+  const cnt = (q) => getCountFromServer(q).then((r) => r.data().count);
+  const hasil = {};
+  try {
+    /* Hanya yang SUDAH AKTIVASI — permintaan Admin, untuk mengejar aktivasi per teritori */
+    await Promise.all(nama.map((n) => Promise.all(GROUPS.map((g) =>
+      cnt(query(col("petugas"), where(level, "==", n), where("group", "==", g), where("status", "==", "aktif")))
+        .then((a) => { (hasil[n] = hasil[n] || {})[g] = { aktif: a }; })))));
+    T.err = "";
+    if (area) T.regional[area] = hasil; else T.area = hasil;
+  } catch (e) {
+    T.err = e.message || String(e);
+    if (area) T.buka[area] = false;
+  }
+  render();
 }
 
 async function loadSoalPalingSalah() {
@@ -2462,6 +2495,36 @@ function aq(tag, warn, judul, sub, aksi) {
 }
 function tombolMenu(menu, label) { return '<button class="btn btn-ghost btn-sm" data-do="admMenu" data-v="' + menu + '">' + (label || "Buka") + "</button>"; }
 
+/* Tabel Group × Area, klik Area untuk turun ke Regional. Sel = aktif / total · % */
+function vTeritori() {
+  const T = C.adm.teritori;
+  const judul = '<div class="sec-head"><h2>Sudah Aktivasi per Group &times; Teritori</h2><span class="lbl">jumlah petugas aktif</span></div>';
+  if (!T || !T.area) return judul + (T && T.err ? '<div class="err">Gagal menghitung: ' + esc(T.err) + "</div>" : '<div class="skel">Menghitung&hellip;</div>');
+  const sel = (v, tebal) => '<td class="mono" style="font-size:13px;' + (tebal ? "font-weight:700;" : "") + '">' + fmtNum(v.aktif) + "</td>";
+  const baris = (nama, d, gaya, aksi) => {
+    const tot = { aktif: 0 };
+    const sels = GROUPS.map((g) => { const v = (d && d[g]) || { aktif: 0 }; tot.aktif += v.aktif; return sel(v); }).join("");
+    return '<tr style="' + gaya + '"><td>' + aksi + esc(nama) + "</td>" + sels + sel(tot, true) + "</tr>";
+  };
+  const semua = {};
+  let isi = "";
+  Object.keys(T.area).sort().forEach((a) => {
+    GROUPS.forEach((g) => { const v = T.area[a][g]; semua[g] = semua[g] || { aktif: 0 }; semua[g].aktif += v.aktif; });
+    const buka = !!T.buka[a];
+    isi += baris(a, T.area[a], "cursor:pointer;font-weight:600;", "<span>" + (buka ? "&#9662; " : "&#9656; ") + "</span>")
+      .replace("<tr ", '<tr data-do="bukaTeritori" data-v="' + esc(a) + '" ');
+    if (buka) {
+      const reg = T.regional[a];
+      isi += !reg ? '<tr><td colspan="5"><div class="skel" style="margin:4px 0 4px 18px;">Menghitung regional&hellip;</div></td></tr>'
+        : Object.keys(reg).sort().map((r) => baris(r, reg[r], "background:var(--surface-2);font-size:13px;", '<span style="display:inline-block;width:18px;"></span>')).join("");
+    }
+  });
+  isi += baris("Total Nasional", semua, "font-weight:700;border-top:2px solid var(--border-strong);", "");
+  return judul + (T.err ? '<div class="err" style="margin-bottom:10px;">' + esc(T.err) + "</div>" : "") +
+    '<div class="tbl-wrap" style="margin-bottom:6px;"><table><thead><tr><th>Teritori</th>' + GROUPS.map((g) => "<th>" + esc(g) + "</th>").join("") + "<th>Total</th></tr></thead><tbody>" + isi + "</tbody></table></div>" +
+    '<div class="note" style="margin-bottom:18px;">Klik baris Area untuk melihat per Regional. Real-time, dihitung di server saat Dashboard dibuka.</div>';
+}
+
 function aDashboard() {
   const s = C.adm.stats;
   const refresh = '<button class="btn btn-ghost btn-sm" data-do="refreshStats">Muat ulang</button>';
@@ -2469,12 +2532,29 @@ function aDashboard() {
   const bulan = new Date().toLocaleDateString("id-ID", { month: "long", year: "numeric" });
   const rata = s.rataBenar == null ? "-" : s.rataBenar.toFixed(1).replace(".", ",");
   const lbUmur = C.lb && C.lb.diperbarui ? "diperbarui " + fmtWaktu(C.lb.diperbarui) : "belum pernah diperbarui";
+  const kartu = (lbl, n, sub, merah) => '<div class="stat"><div class="lbl">' + lbl + '</div><div class="n mono' + (merah ? " red" : "") + '">' + n + '</div><div class="k lbl" style="color:var(--ink-dim);">' + sub + "</div></div>";
+  const os = C.adm.orgStats;
   return head("Dashboard", "Periode " + bulan + " &middot; seluruh area", refresh) +
+    '<div class="sec-head"><h2>Tim Lapangan</h2><span class="lbl">DS &middot; YPCR &middot; Buddies</span></div>' +
     '<div class="stat-grid">' +
-      '<div class="stat"><div class="lbl">Petugas Aktif</div><div class="n mono">' + fmtNum(s.aktif) + '</div><div class="k lbl" style="color:var(--ink-dim);">dari ' + fmtNum(s.total) + " akun</div></div>" +
-      '<div class="stat"><div class="lbl">Belum Lengkapi Profil</div><div class="n mono">' + fmtNum(s.belum) + '</div><div class="k lbl" style="color:var(--ink-dim);">hasil import, belum pernah masuk</div></div>' +
-      '<div class="stat"><div class="lbl">Completion Kuesioner</div><div class="n mono">' + s.completion + '%</div><div class="k lbl" style="color:var(--ink-dim);">' + fmtNum(s.respPer) + " respons bulan ini</div></div>" +
-      '<div class="stat"><div class="lbl">Redeem Pending</div><div class="n red mono">' + fmtNum(s.pending) + '</div><div class="k lbl" style="color:var(--ink-dim);">poin ditahan &middot; perlu review</div></div>' +
+      kartu("Total Akun", fmtNum(s.total), "semua status") +
+      kartu("Sudah Aktivasi", fmtNum(s.aktif), (s.total ? Math.round(s.aktif / s.total * 100) : 0) + "% dari total akun") +
+      kartu("Belum Aktivasi", fmtNum(s.belum), "hasil import, belum pernah masuk") +
+      kartu("Menunggu Verifikasi", fmtNum(s.review), "daftar mandiri") +
+      kartu("Nonaktif", fmtNum(s.nonaktif || 0), "dinonaktifkan Admin") +
+    "</div>" +
+    vTeritori() +
+    '<div class="sec-head"><h2>Tim Organik</h2><span class="lbl">internal Telkomsel</span></div>' +
+    (!os ? '<div class="skel">Memuat&hellip;</div>' : '<div class="stat-grid">' +
+      kartu("Total Akun", fmtNum(os.total), "semua status") +
+      kartu("Aktif", fmtNum(os.aktif), fmtNum(os.review) + " menunggu verifikasi") +
+      kartu("Per Level (aktif)", '<span style="font-size:18px;">HQ ' + fmtNum(os.level.hq) + " &middot; Area " + fmtNum(os.level.area) + "</span>",
+        "Regional " + fmtNum(os.level.regional) + " &middot; Branch " + fmtNum(os.level.branch)) +
+    "</div>") +
+    '<div class="sec-head"><h2>Aktivitas Bulan Ini</h2></div>' +
+    '<div class="stat-grid">' +
+      kartu("Completion Kuesioner", s.completion + "%", fmtNum(s.respPer) + " respons &middot; target = petugas aktif") +
+      kartu("Redeem Pending", fmtNum(s.pending), "poin ditahan &middot; perlu review", true) +
     "</div>" +
     '<div class="sec-head"><h2>&#9888; Peringatan Foto</h2><span class="lbl">' + fmtNum(s.peringatan || 0) + " belum dicek</span></div>" +
     (!C.adm.peringatan.length ? '<div class="card"><div class="empty" style="padding:16px;">Tidak ada foto yang perlu dicek.</div></div>' :
@@ -3451,7 +3531,14 @@ const DO = {
   async admKeluar() { stop("admin"); stop("redeem"); await signOut(auth); },
   admCekUlang() { cekAdmin(S.adminUser); },
   admMenu(v) { S.adminMenu = v; S.openQ = null; render(); onAdmMenu(v); },
-  refreshStats() { C.adm.stats = null; render(); loadAdminStats(); },
+  refreshStats() { C.adm.stats = null; C.adm.orgStats = null; C.adm.teritori = null; render(); loadAdminStats(); },
+  bukaTeritori(v) {
+    const T = C.adm.teritori;
+    if (!T) return;
+    T.buka[v] = !T.buka[v];
+    render();
+    if (T.buka[v] && !T.regional[v]) loadTeritori(v);
+  },
   refreshLedger() { loadLedgerTerbaru(); },
   cariPetugas() { loadPetugasPage(true); },
   petugasLagi() { loadPetugasPage(false); },
