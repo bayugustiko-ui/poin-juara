@@ -1651,10 +1651,18 @@ function siapkanPanduan(data) {
   });
   return { valid, salah };
 }
-async function simpanPanduanMassal(rows) {
-  const b = writeBatch(db), now = nowIso();
-  rows.forEach((r) => b.set(doc(col("panduan")), { pertanyaan: r.pertanyaan, jawaban: r.jawaban, kategori: r.kategori, audiens: r.audiens, aktif: true, createdAt: now }));
-  await b.commit();
+/* ganti=true: hapus SEMUA panduan lama dulu (ID diambil dari daftar yang sudah dimuat Admin — tanpa baca
+   tambahan), lalu isi dengan file baru. Dipakai saat mengganti panduan versi lengkap, supaya tidak dobel. */
+async function simpanPanduanMassal(rows, ganti) {
+  const now = nowIso();
+  const ops = [];
+  if (ganti) Object.keys(C.adm.panduan || {}).forEach((id) => ops.push((b) => b.delete(doc(db, "panduan", id))));
+  rows.forEach((r) => ops.push((b) => b.set(doc(col("panduan")), { pertanyaan: r.pertanyaan, jawaban: r.jawaban, kategori: r.kategori, audiens: r.audiens, aktif: true, createdAt: now })));
+  for (let i = 0; i < ops.length; i += 400) {
+    const b = writeBatch(db);
+    ops.slice(i, i + 400).forEach((f) => f(b));
+    await b.commit();
+  }
 }
 
 /* Satu per satu: tiap baris perlu cari userId lalu tulis ledger + saldo dalam 1 batch */
@@ -3107,7 +3115,10 @@ function aPanduan() {
       "</div>" +
       '<button class="btn btn-primary btn-sm" style="margin-top:12px;" data-do="tambahPanduan">Tambah</button></div>' +
     kartuUploadUmum("panduan", "Upload Panduan dari Excel", "pertanyaan, jawaban, kategori, audiens",
-      "Kolom audiens boleh diisi <span class=\"mono\">petugas</span>, <span class=\"mono\">organik</span>, atau <span class=\"mono\">keduanya</span> (kosong = keduanya). Panduan lama tidak dihapus, file ini menambah.") +
+      "Kolom audiens boleh diisi <span class=\"mono\">petugas</span>, <span class=\"mono\">organik</span>, atau <span class=\"mono\">keduanya</span> (kosong = keduanya).") +
+    '<div class="card" data-do="togglePanduanGanti" style="margin:-8px 0 18px;padding:12px 16px;cursor:pointer;display:flex;gap:10px;align-items:center;font-size:13.5px;' + (S.panduanGanti ? "border-color:var(--red);" : "") + '">' +
+      '<span class="mono" style="font-size:18px;">' + (S.panduanGanti ? "&#9745;" : "&#9744;") + "</span>" +
+      "<span><b>Ganti semua panduan lama</b> dengan file berikutnya (" + fmtNum(arr.length) + " panduan lama dihapus). Tanpa centang = file hanya menambah.</span></div>" +
     (!arr.length ? '<div class="card"><div class="empty">Belum ada panduan. Sementara Petugas masih melihat 6 FAQ bawaan.</div></div>' :
       '<div class="tbl-wrap"><table><thead><tr><th>Kategori</th><th>Pertanyaan</th><th>Audiens</th><th>Status</th><th></th></tr></thead><tbody>' +
       arr.map((x) => '<tr><td><span class="pill pill-neutral">' + esc(x.kategori || "Umum") + '</span></td><td style="font-weight:600;max-width:320px;">' + esc(x.pertanyaan) + "</td>" +
@@ -4148,7 +4159,7 @@ const DO = {
     const tanya = jenis === "knowledge" ? "Tambahkan " + si.valid.length + " materi knowledge?"
       : jenis === "hadiah" ? "Tambahkan " + si.valid.length + " hadiah ke katalog?"
       : jenis === "wilayah" ? "Tambahkan sampai " + si.valid.length + " baris wilayah? Yang sudah ada otomatis dilewati."
-      : jenis === "panduan" ? "Tambahkan " + si.valid.length + " panduan?"
+      : jenis === "panduan" ? (S.panduanGanti ? "GANTI SEMUA: hapus " + Object.keys(C.adm.panduan || {}).length + " panduan lama, lalu pasang " + si.valid.length + " panduan dari file ini?" : "Tambahkan " + si.valid.length + " panduan?")
       : jenis === "group" ? "Ubah group " + si.valid.length + " petugas? Poin group ikut dipindah, total poin & saldo tidak berubah."
       : "Proses " + si.valid.length + " adjustment poin? Semua tercatat permanen di ledger.";
     if (!confirm(tanya)) return;
@@ -4170,9 +4181,10 @@ const DO = {
         toast("ok", "Master wilayah sekarang " + fmtNum(total) + " cluster.");
         S.impUmum = kosongUmum();
       } else if (jenis === "panduan") {
-        await simpanPanduanMassal(si.valid);
+        await simpanPanduanMassal(si.valid, !!S.panduanGanti);
         jadwalkanRebuildKatalog();
-        toast("ok", fmtNum(si.valid.length) + " panduan ditambahkan.");
+        toast("ok", fmtNum(si.valid.length) + (S.panduanGanti ? " panduan terpasang (panduan lama diganti)." : " panduan ditambahkan."));
+        S.panduanGanti = false;
         S.impUmum = kosongUmum();
       } else if (jenis === "group") {
         const h = await jalankanGroupMassal(si.valid, log);
@@ -4320,6 +4332,7 @@ const DO = {
     try { await updateDoc(doc(db, "panduan", v), { aktif: C.adm.panduan[v].aktif === false }); jadwalkanRebuildKatalog(); }
     catch (e) { toast("no", pesanGagal(e, "Gagal")); }
   },
+  togglePanduanGanti() { S.panduanGanti = !S.panduanGanti; render(); },
   async hapusPanduan(v) {
     if (!confirm("Hapus panduan ini?")) return;
     try { await deleteDoc(doc(db, "panduan", v)); jadwalkanRebuildKatalog(); } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
