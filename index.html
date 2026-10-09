@@ -284,10 +284,10 @@ button.photo-tile{font:inherit;padding:0;width:100%;}
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
 import {
-  initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
+  initializeFirestore, memoryLocalCache, waitForPendingWrites,
   collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, addDoc,
   query, where, orderBy, limit, startAfter, onSnapshot, writeBatch,
-  increment, deleteField, getCountFromServer, getAggregateFromServer, average, runTransaction
+  increment, deleteField, getDocFromServer, getDocsFromServer, getCountFromServer, getAggregateFromServer, average, runTransaction
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 import { getAuth, signInWithEmailAndPassword, signInAnonymously, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 
@@ -301,11 +301,21 @@ const app = initializeApp({
   appId: "1:37955518486:web:ea63f97589c379fe217537"
 });
 let db;
+/* TANPA penyimpanan offline (keputusan Admin 2026-10-09). Versi lama (persistentLocalCache) menampilkan
+   tulisan yang belum sampai server seolah sudah tersimpan & menyimpannya di HP walau aplikasi ditutup —
+   kasus "data hantu" Elmania saat kuota habis. Dengan cache memori, yang tampil SELALU isi server.
+   Reads tidak bertambah: getDoc/getDocs memang selalu ke server; hemat reads lewat localStorage berversi. */
 try {
-  db = initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) });
+  db = initializeFirestore(app, { localCache: memoryLocalCache() });
 } catch (e) {
   db = initializeFirestore(app, {});
 }
+/* Buang antrean offline versi lama (data hantu di HP). JANGAN sentuh "firebaseLocalStorageDb" —
+   itu identitas anonim Firebase Auth = ikatan 1 akun 1 HP. */
+try {
+  if (indexedDB.databases) indexedDB.databases().then((ds) => ds.forEach((d) => { if (d.name && d.name.indexOf("firestore/") === 0) indexedDB.deleteDatabase(d.name); })).catch(() => {});
+  else indexedDB.deleteDatabase("firestore/[DEFAULT]/poin-juara/main");
+} catch (e) {}
 const auth = getAuth(app);
 
 /* ============ konstanta ============ */
@@ -480,6 +490,14 @@ function mapOf(qs) { const m = {}; qs.forEach((d) => { m[d.id] = d.data(); }); r
 const listOf = (o) => Object.keys(o || {}).map((k) => Object.assign({ id: k }, o[k]));
 function errKode(kode, extra) { const e = new Error(kode); e.kode = kode; return Object.assign(e, extra || {}); }
 
+/* Kirim batch ke server dengan batas waktu: kalau 25 detik belum dikonfirmasi server, anggap GAGAL
+   dan beri tahu pengguna — jangan biarkan layar "menyimpan" selamanya atau menampilkan sukses palsu.
+   Aman diulang: semua tulisan penting memakai ID dokumen tetap (ledger kue_/pt_/wel_, redeem per bulan). */
+function kirim(b) {
+  return Promise.race([b.commit(), new Promise((_, tolak) => setTimeout(() => tolak(errKode("lambat",
+    { message: "Koneksi ke server bermasalah, data BELUM tersimpan. Periksa internet lalu coba lagi." })), 25000))]);
+}
+
 /* ---------- identitas perangkat ---------- */
 async function pastikanAnon() {
   if (auth.authStateReady) await auth.authStateReady();
@@ -508,7 +526,7 @@ async function sesiPerangkat() {
 
 async function ikatPerangkat(userId, kode) {
   const authUid = await pastikanAnon();
-  const sa = await getDoc(doc(db, "sesiAuth", authUid));
+  const sa = await getDocFromServer(doc(db, "sesiAuth", authUid));
   if (sa.exists()) {
     if (sa.data().userId === userId) return "sudah";
     throw errKode("hp-akun-lain", { akunLain: sa.data().userId });
@@ -521,7 +539,8 @@ async function masukPetugas(idInput, usernameInput) {
   const kode = normKode(usernameInput);
   if (!USERID_RE.test(userId)) throw errKode("format-id");
   if (!kode) throw errKode("username-kosong");
-  const d = await getDoc(doc(db, "petugas", userId));
+  /* Selalu tanya SERVER — jangan pernah memutuskan login/daftar dari salinan di HP */
+  const d = await getDocFromServer(doc(db, "petugas", userId));
   if (!d.exists()) throw errKode("tidak-terdaftar");
   const p = d.data();
   if (p.kode !== kode) throw errKode("username-salah");
@@ -531,7 +550,7 @@ async function masukPetugas(idInput, usernameInput) {
   const b = writeBatch(db);
   b.set(doc(db, "perangkat", userId), { authUid, kode, waktu: nowIso() });
   b.set(doc(db, "sesiAuth", authUid), { userId });
-  try { await b.commit(); }
+  try { await kirim(b); }
   catch (e) { if (e.code === "permission-denied") throw errKode("terikat-hp-lain"); throw e; }
   return userId;
 }
@@ -541,7 +560,7 @@ function normEmail(s) { return String(s || "").trim().toLowerCase(); }
 
 async function ikatPerangkatOrganik(email) {
   const authUid = await pastikanAnon();
-  const sa = await getDoc(doc(db, "sesiAuth", authUid));
+  const sa = await getDocFromServer(doc(db, "sesiAuth", authUid));
   if (sa.exists()) {
     if (sa.data().tipe === "organik" && sa.data().email === email) return "sudah";
     throw errKode("hp-akun-lain");
@@ -556,7 +575,7 @@ async function masukOrganik(nikInput, emailInput) {
   if (!email) throw errKode("format-id");
   if (!nik) throw errKode("username-kosong");
   let d;
-  try { d = await getDoc(doc(db, "organik", email)); }
+  try { d = await getDocFromServer(doc(db, "organik", email)); }
   catch (e) { if (e.code === "permission-denied") throw errKode("terikat-hp-lain"); throw e; }
   if (!d.exists()) throw errKode("tidak-terdaftar");
   const o = d.data();
@@ -567,7 +586,7 @@ async function masukOrganik(nikInput, emailInput) {
   const b = writeBatch(db);
   b.set(doc(db, "perangkat_organik", email), { authUid, waktu: nowIso() });
   b.set(doc(db, "sesiAuth", authUid), { email, tipe: "organik" });
-  try { await b.commit(); }
+  try { await kirim(b); }
   catch (e) { if (e.code === "permission-denied") throw errKode("terikat-hp-lain"); throw e; }
   return email;
 }
@@ -596,7 +615,7 @@ async function daftarOrganik(d) {
   if (!email || !nama || !nik) throw errKode("format-id");
   /* Email yang belum ada selalu boleh dicek (rules: resource == null); ditolak = sudah ada & terikat HP lain */
   let ada;
-  try { ada = (await getDoc(doc(db, "organik", email))).exists(); }
+  try { ada = (await getDocFromServer(doc(db, "organik", email))).exists(); }
   catch (e) { if (e.code === "permission-denied") throw errKode("sudah-terdaftar"); throw e; }
   if (ada) throw errKode("sudah-terdaftar");
   const authUid = await ikatPerangkatOrganik(email);
@@ -611,7 +630,7 @@ async function daftarOrganik(d) {
   b.set(doc(db, "perangkat_organik", email), { authUid, waktu: nowIso() });
   b.set(doc(db, "sesiAuth", authUid), { email, tipe: "organik" });
   b.set(doc(db, "organik", email), pub);
-  await b.commit();
+  await kirim(b);
   return email;
 }
 
@@ -621,8 +640,10 @@ async function daftarBaru(d) {
   await pastikanAnon();
   const userId = normUserId(d.userId);
   const kode = normKode(d.kode);
-  if ((await getDoc(doc(db, "petugas", userId))).exists()) throw errKode("sudah-terdaftar");
-  const dobel = await getDocs(query(col("petugas"), where("kode", "==", kode), limit(1)));
+  /* Cek ID & username dobel WAJIB ke server (kasus 9 Okt: saat server sibuk, cek dari salinan HP
+     meloloskan ID yang sudah ada → pendaftaran "hantu" tersimpan di HP saja) */
+  if ((await getDocFromServer(doc(db, "petugas", userId))).exists()) throw errKode("sudah-terdaftar");
+  const dobel = await getDocsFromServer(query(col("petugas"), where("kode", "==", kode), limit(1)));
   if (!dobel.empty) throw errKode("username-dipakai");
   const authUid = await ikatPerangkat(userId, kode);
   if (authUid === "sudah") throw errKode("sudah-terdaftar");
@@ -638,7 +659,7 @@ async function daftarBaru(d) {
   b.set(doc(db, "perangkat", userId), { authUid, kode, waktu: nowIso() });
   b.set(doc(db, "sesiAuth", authUid), { userId });
   if (wajahBermasalah(d.wajah)) b.set(doc(col("peringatan")), dokPeringatan(Object.assign({ id: userId }, pub), "registrasi", d.wajah, ""));
-  await b.commit();
+  await kirim(b);
   return userId;
 }
 
@@ -693,6 +714,28 @@ async function sinkronStatusTugas(log) {
   return { petugas: ids.length, respons: rs.size, hasil: hs.size };
 }
 
+/* Cari korban "data hantu": HP SUDAH terikat (perangkat ada = login berhasil di server) tetapi
+   status di server masih belum_lengkap (profil tidak pernah tersimpan). Hemat: daftar belum_lengkap
+   diambil dari ringkasan branch (±61 read), lalu tiap kandidat dicek ulang langsung ke server. */
+async function cariProfilBelumTersimpan(log) {
+  log("Membaca daftar HP terhubung…");
+  const ps = await getDocs(col("perangkat"));
+  const hp = {};
+  ps.forEach((d) => { hp[d.id] = d.data().waktu || ""; });
+  log(fmtNum(ps.size) + " HP terhubung. Membaca ringkasan branch…");
+  if (!C.wilayahLoaded) await loadWilayah();
+  const branches = C.wilayah.map((w) => w.branch).filter((v, i, a) => v && a.indexOf(v) === i);
+  const docs = await Promise.all(branches.map((b) => bacaRingkasan("branch_" + b)));
+  const kandidat = [];
+  docs.forEach((r) => Object.keys((r && r.anggota) || {}).forEach((id) => { if (r.anggota[id].status === "belum_lengkap" && hp[id] !== undefined) kandidat.push(id); }));
+  log(fmtNum(kandidat.length) + " kandidat. Memastikan langsung ke server…");
+  const hasil = (await Promise.all(kandidat.map((id) => getDoc(doc(db, "petugas", id)).then((d) => (d.exists() ? Object.assign({ id }, d.data()) : null)))))
+    .filter((p) => p && p.status === "belum_lengkap")
+    .map((p) => Object.assign(p, { hpSejak: hp[p.id] }))
+    .sort((a, b) => (b.hpSejak || "").localeCompare(a.hpSejak || ""));
+  return { daftar: hasil, hp: ps.size };
+}
+
 /* Admin ubah nomor 1 petugas: petugas_cek + kontak branch-nya sekaligus */
 async function ubahNomorAdmin(userId, nomor) {
   const pd = await getDoc(doc(db, "petugas", userId));
@@ -720,7 +763,7 @@ async function lengkapiProfil(p, l) {
   b.set(doc(db, "ledger", lid), { userId: p.id, jenis: "welcome", delta: 100, waktu: nowIso() });
   b.set(doc(db, "petugas_cek", p.id), { nomor: l.nomor.trim(), foto: l.foto });
   if (wajahBermasalah(l.wajah)) b.set(doc(col("peringatan")), dokPeringatan(Object.assign({}, p, { nama: l.nama.trim() }), "lengkapi", l.wajah, ""));
-  await b.commit();
+  await kirim(b);
   /* Kontak untuk Organik ditulis TERPISAH setelah profil tersimpan — kalau gagal (mis. rules belum
      diperbarui), profil & bonus tetap aman; Admin bisa melengkapinya lewat "Bangun data kontak". */
   try { const k = writeBatch(db); tulisKontak(k, p, l.nomor.trim()); await k.commit(); } catch (e) {}
@@ -823,6 +866,13 @@ async function loadSaya(userId) {
     const pd = hasil[0];
     if (!pd.exists()) { keluarPetugas("Akun tidak ditemukan. Hubungi Admin."); return false; }
     S.profilSaya = Object.assign({ id: pd.id }, pd.data());
+    /* Profil yang tampil masih mengandung tulisan yang belum sampai server (antrean lama) →
+       tunggu antrean terkirim, lalu muat ulang dari server supaya yang tampil = isi server */
+    if (pd.metadata && pd.metadata.hasPendingWrites && S.tertunda !== "kirim") {
+      S.tertunda = "kirim";
+      Promise.race([waitForPendingWrites(db).then(() => "ok"), new Promise((r) => setTimeout(() => r("lambat"), 30000))])
+        .then((h) => { S.tertunda = h === "ok" ? null : "gagal"; if (h === "ok") { toast("ok", "Data tertunda berhasil terkirim ke server."); loadSaya(userId); } else render(); });
+    }
     nama.forEach((n, i) => {
       C.mine[n] = rows(hasil[i + 1]).sort((a, b) => (a.waktu || "").localeCompare(b.waktu || ""));
       C.mine[n + "Penuh"] = hasil[i + 1].size < RIWAYAT_LIMIT; // false = kemungkinan masih ada yang lebih lama, belum ditampilkan
@@ -1140,7 +1190,7 @@ async function simpanFotoAktivitas(p, tujuan, foto, meta) {
     gagalDeteksi: meta && meta.gagal ? meta.gagal : 0
   }));
   if (wajahBermasalah(meta)) b.set(doc(col("peringatan")), dokPeringatan(p, tujuan, meta, ref.id));
-  await b.commit();
+  await kirim(b);
   return ref.id;
 }
 
@@ -1170,7 +1220,7 @@ async function submitKuesioner(p, k, jawaban, fotoId, wajahFoto) {
   }));
   /* Ringkasan "sudah dikerjakan" di dokumen petugas sendiri — Beranda tidak perlu query respons */
   tambahPoinKe(b, p, POIN_KUESIONER, ledgerId, { ["kueSelesai." + k.id]: w });
-  await b.commit();
+  await kirim(b);
 }
 
 /* Anti-curang tanpa server berbayar: jawaban dikunci dulu → baru kunci jawaban boleh dibaca
@@ -1217,7 +1267,7 @@ async function submitPosttest(p, t, jawaban, fotoId, wajahFoto) {
     delta: poin, jenis: "posttest", ref: t.id, aktivitas: "Post Test " + t.judul + " — " + benar + " benar × " + POIN_PER_BENAR, waktu: w, oleh: "sistem"
   }));
   tambahPoinKe(b, p, poin, ledgerId, { ["ptHasil." + t.id]: { benar, total, poin, waktu: w } });
-  await b.commit();
+  await kirim(b);
   return { benar, total, poin, detail };
 }
 
@@ -1228,7 +1278,7 @@ async function ajukanRedeem(p, hadiahId, h, fotoId, wajah) {
     hadiahId, hadiahNama: h.nama, poin: h.poin, status: "pending", fotoId, wajah: wajah || "", waktu: nowIso()
   }));
   if (h.stok !== -1) b.update(doc(db, "hadiah", hadiahId), { stok: increment(-1) });
-  await b.commit();
+  await kirim(b);
 }
 
 /* ================= ADMIN ================= */
@@ -2358,6 +2408,8 @@ function bannerSambutan() {
 function bannerStatus() {
   const p = S.profilSaya;
   let h = bannerSambutan();
+  if (S.tertunda === "kirim") h += kotakInfo("Mengirim data yang tertunda ke server&hellip; jangan tutup DEBY dulu.", "warn");
+  if (S.tertunda === "gagal") h += kotakInfo("Ada data yang BELUM terkirim ke server. Pastikan internet aktif, tutup DEBY di tab/aplikasi lain (mis. dari WhatsApp), lalu buka ulang dari Chrome.", "warn");
   if (p.status === "review") h += kotakInfo("Akunmu sedang menunggu verifikasi Admin. Sementara ini kamu belum bisa mengerjakan tugas atau menukar hadiah.", "warn");
   return h;
 }
@@ -2822,6 +2874,19 @@ function aPetugas() {
         "Jalankan sekali setelah update ini; setelahnya otomatis terisi saat petugas lengkapi profil, ganti nomor, atau disetujui. Jalankan ulang bila ada yang terlewat.</div>" +
         '<button class="btn btn-primary btn-sm" data-do="bangunKontakAdm"' + (k.busy ? " disabled" : "") + ">" + (k.busy ? "Memproses&hellip;" : "Bangun data kontak") + "</button>" +
         (k.log.length ? '<div class="note mono" style="margin-top:12px;white-space:pre-wrap;">' + k.log.map(esc).join("\n") + "</div>" : "") + "</div>";
+    })() +
+    (function () {
+      const h = C.adm.hantu || { log: [] };
+      const daftar = h.daftar || null;
+      return '<div class="card" style="margin-bottom:18px;border-color:var(--warn);"><div class="card-title">Sudah Login tapi Profil Belum Tersimpan</div>' +
+        '<div style="font-size:13px;color:var(--ink-dim);margin-bottom:10px;">Petugas yang HP-nya sudah terhubung (berhasil login) tetapi di server statusnya masih Belum Lengkap &mdash; termasuk korban gangguan 9 Okt (HP menampilkan profil/poin yang tidak pernah tersimpan). Hubungi mereka untuk membuka DEBY versi terbaru dan mengisi ulang profil. Biaya &plusmn;1.000 reads sekali cek.</div>' +
+        '<div class="row" style="gap:8px;flex-wrap:wrap;"><button class="btn btn-primary btn-sm" data-do="cariHantuAdm"' + (h.busy ? " disabled" : "") + ">" + (h.busy ? "Mencari&hellip;" : "Cari sekarang") + "</button>" +
+        (daftar && daftar.length ? '<button class="btn btn-ghost btn-sm" data-do="unduhHantuAdm">Unduh Excel (' + fmtNum(daftar.length) + ")</button>" : "") + "</div>" +
+        (h.log.length ? '<div class="note mono" style="margin-top:12px;white-space:pre-wrap;">' + h.log.map(esc).join("\n") + "</div>" : "") +
+        (daftar ? (!daftar.length ? '<div class="empty" style="padding:12px;">Tidak ada. Semua yang sudah login sudah tersimpan lengkap.</div>' :
+          '<div class="tbl-wrap" style="margin-top:12px;max-height:360px;overflow:auto;"><table><thead><tr><th>HP terhubung</th><th>ID Digipos</th><th>Username</th><th>Regional / Branch</th><th>Cluster</th><th></th></tr></thead><tbody>' +
+          daftar.map((p) => '<tr><td class="mono" style="font-size:12px;white-space:nowrap;">' + fmtWaktu(p.hpSejak) + '</td><td class="mono">' + esc(p.id) + '</td><td class="mono">' + esc(p.kode || "-") + "</td><td>" + esc(p.regional || "-") + " / " + esc(p.branch || "-") + "</td><td>" + esc(p.cluster || "-") + "</td>" +
+            '<td><button class="btn btn-ghost btn-sm" data-do="detailPetugas" data-v="' + esc(p.id) + '">Detail</button></td></tr>').join("") + "</tbody></table></div>") : "") + "</div>";
     })() +
     (function () {
       const t = C.adm.sinkronTugas || { log: [] };
@@ -3685,6 +3750,31 @@ const DO = {
   admCekUlang() { cekAdmin(S.adminUser); },
   admMenu(v) { S.adminMenu = v; S.openQ = null; render(); onAdmMenu(v); },
   refreshStats() { C.adm.stats = null; C.adm.orgStats = null; C.adm.teritori = null; render(); loadAdminStats(); },
+  async cariHantuAdm() {
+    const h = C.adm.hantu = C.adm.hantu || { log: [] };
+    if (h.busy) return;
+    h.busy = true; h.log = []; h.daftar = null; render();
+    try {
+      const r = await cariProfilBelumTersimpan((x) => { h.log.push(x); render(); });
+      h.daftar = r.daftar;
+      h.log.push("Selesai: " + fmtNum(r.daftar.length) + " petugas sudah login tapi profil belum tersimpan.");
+    } catch (e) { h.log.push("Gagal: " + (e.message || e)); toast("no", pesanGagal(e, "Gagal mencari")); }
+    h.busy = false; render();
+  },
+  async unduhHantuAdm() {
+    const h = C.adm.hantu;
+    if (!h || !h.daftar || !h.daftar.length) return;
+    try {
+      const X = await muatSheetJS();
+      const isi = [["hp_terhubung", "user_id", "username_digipos", "area", "regional", "branch", "cluster", "group"]]
+        .concat(h.daftar.map((p) => [fmtWaktu(p.hpSejak), p.id, p.kode || "", p.area || "", p.regional || "", p.branch || "", p.cluster || "", p.group || ""]));
+      const ws = X.utils.aoa_to_sheet(isi);
+      ws["!cols"] = [18, 12, 22, 20, 20, 20, 24, 13].map((w) => ({ wch: w }));
+      const wb = X.utils.book_new();
+      X.utils.book_append_sheet(wb, ws, "belum_tersimpan");
+      X.writeFile(wb, "petugas_login_belum_tersimpan_" + new Date().toISOString().slice(0, 10) + ".xlsx");
+    } catch (e) { toast("no", pesanGagal(e, "Gagal mengunduh")); }
+  },
   async sinkronTugasAdm() {
     const t = C.adm.sinkronTugas = C.adm.sinkronTugas || { log: [] };
     if (t.busy) return;
