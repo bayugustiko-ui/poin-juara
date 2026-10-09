@@ -673,6 +673,26 @@ async function bangunKontak(log) {
   }
   return { jumlah, branch: branches.length, tanpaNomor, dibaca: ps.size + cs.size };
 }
+/* Migrasi sekali (hemat tahap 2b): salin status kuesioner/post test yang SUDAH ada di koleksi
+   respons & hasil ke ringkasan kueSelesai/ptHasil di dokumen petugas. Aman diulang (merge). */
+async function sinkronStatusTugas(log) {
+  log("Membaca respons & hasil…");
+  const [rs, hs] = await Promise.all([getDocs(col("respons")), getDocs(col("hasil"))]);
+  const per = {};
+  rs.forEach((d) => { const r = d.data(); if (!r.userId || !r.kuesionerId) return; ((per[r.userId] = per[r.userId] || {}).kueSelesai = per[r.userId].kueSelesai || {})[r.kuesionerId] = r.waktu || nowIso(); });
+  hs.forEach((d) => { const h = d.data(); if (!h.userId || !h.testId) return; ((per[h.userId] = per[h.userId] || {}).ptHasil = per[h.userId].ptHasil || {})[h.testId] = { benar: h.benar || 0, total: h.total || 0, poin: h.poin || 0, waktu: h.waktu || nowIso() }; });
+  /* Hanya petugas yang dokumennya masih ada — jangan sampai membuat dokumen petugas "hantu" */
+  const cek = await Promise.all(Object.keys(per).map((id) => getDoc(doc(db, "petugas", id)).then((d) => (d.exists() ? id : null))));
+  const ids = cek.filter(Boolean);
+  log("Menulis ringkasan ke " + ids.length + " petugas…");
+  for (let i = 0; i < ids.length; i += 400) {
+    const b = writeBatch(db);
+    ids.slice(i, i + 400).forEach((id) => b.update(doc(db, "petugas", id), per[id]));
+    await b.commit();
+  }
+  return { petugas: ids.length, respons: rs.size, hasil: hs.size };
+}
+
 /* Admin ubah nomor 1 petugas: petugas_cek + kontak branch-nya sekaligus */
 async function ubahNomorAdmin(userId, nomor) {
   const pd = await getDoc(doc(db, "petugas", userId));
@@ -716,11 +736,34 @@ async function loadWilayah() {
   render();
 }
 
+/* ---------- cache di HP (hemat reads) ----------
+   publik/versi = {katalog, leaderboard, peringkat}: penanda kapan Admin terakhir mengubah masing-masing.
+   HP cukup membaca dokumen kecil ini (1 read per buka aplikasi); dokumen besarnya hanya diambil ulang
+   kalau versinya beda dengan yang tersimpan di HP. Tanpa localStorage (mode privat dsb.) tetap jalan,
+   hanya tidak hemat. */
+function cacheAmbil(k) { try { return JSON.parse(localStorage.getItem("deby_" + k) || "null"); } catch (e) { return null; } }
+function cacheSimpan(k, v) { try { localStorage.setItem("deby_" + k, JSON.stringify(v)); } catch (e) {} }
+let versiJanji = null;
+function loadVersi() {
+  if (!versiJanji) versiJanji = getDoc(doc(db, "publik", "versi")).then((d) => (d.exists() ? d.data() : {})).catch(() => ({}));
+  return versiJanji;
+}
+/* Ambil publik/{nama}: dari cache HP kalau versinya sama, selain itu dari server lalu simpan */
+async function ambilPublik(nama, force) {
+  const v = (await loadVersi())[nama];
+  const c = cacheAmbil(nama);
+  if (!force && v && c && c.versi === v) return c.data;
+  const d = await getDoc(doc(db, "publik", nama));
+  const data = d.exists() ? d.data() : null;
+  if (v && data) cacheSimpan(nama, { versi: v, data });
+  return data;
+}
+
 async function loadKatalog(force) {
   if (C.katalog.loaded && !force) return;
   try {
-    const d = await getDoc(doc(db, "publik", "katalog"));
-    const k = d.exists() ? d.data() : {};
+    if (force) versiJanji = null; // "Muat ulang": cek versi terbaru dulu, katalog tetap dari cache kalau tidak berubah
+    const k = (await ambilPublik("katalog", force && S.adminOk)) || {};
     C.katalog = { kuesioner: k.kuesioner || [], posttest: k.posttest || [], knowledge: k.knowledge || [], panduan: k.panduan || [], diperbarui: k.diperbarui || null, loaded: true };
   } catch (e) { C.katalog.loaded = true; }
   render();
@@ -737,25 +780,26 @@ async function loadLeaderboard(force) {
   if (C.lb && !force) return;
   C.lbLoading = true; render();
   try {
-    const d = await getDoc(doc(db, "publik", "leaderboard"));
-    C.lb = d.exists() ? d.data() : { diperbarui: null };
+    /* Admin selalu ambil langsung dari server; petugas lewat cache HP berversi */
+    C.lb = (S.adminOk ? (await getDoc(doc(db, "publik", "leaderboard"))).data() : await ambilPublik("leaderboard", force)) || { diperbarui: null };
   } catch (e) { C.lb = { diperbarui: null }; }
   C.lbLoading = false;
   render();
 }
 
+/* Peringkat TANPA hitungan server: dihitung di HP dari sebaran poin (publik/peringkat, ditulis Admin
+   sekali sehari bersama ringkasan). Poin petugas sendiri tetap yang terbaru dari dokumennya. */
 async function loadRank(force) {
   const p = S.profilSaya;
   if (!p || (C.rank && !force)) return;
   const f = GRP_FIELD[p.group];
   try {
-    const [atas, total, atasGrup, totalGrup] = await Promise.all([
-      getCountFromServer(query(col("petugas"), where("poinPeringkat", ">", p.poinPeringkat || 0))),
-      getCountFromServer(col("petugas")),
-      getCountFromServer(query(col("petugas"), where(f, ">", p[f] || 0))),
-      getCountFromServer(query(col("petugas"), where("group", "==", p.group)))
-    ]);
-    C.rank = { global: atas.data().count + 1, total: total.data().count, grup: atasGrup.data().count + 1, totalGrup: totalGrup.data().count };
+    const pr = await ambilPublik("peringkat");
+    if (!pr || !pr.dist) { C.rank = null; render(); return; }
+    const atas = (m, x) => Object.keys(m || {}).reduce((s, k) => s + (Number(k) > x ? m[k] : 0), 0);
+    const jml = (m) => Object.values(m || {}).reduce((s, n) => s + n, 0);
+    C.rank = { global: atas(pr.dist.semua, p.poinPeringkat || 0) + 1, total: jml(pr.dist.semua),
+      grup: atas(pr.dist[f], p[f] || 0) + 1, totalGrup: jml(pr.dist[f]), per: pr.diperbarui || null };
   } catch (e) { C.rank = null; }
   render();
 }
@@ -769,7 +813,10 @@ async function loadRank(force) {
    "Poin Saya" sendiri, jadi baru ditarik saat tab itu benar-benar dibuka (lihat onTab & loadLedgerSaya). */
 const RIWAYAT_LIMIT = 50;
 async function loadSaya(userId) {
-  const nama = ["respons", "hasil", "redeem"];
+  /* Sejak hemat tahap 2b: status kuesioner/post test dibaca dari dokumen petugas (kueSelesai/ptHasil),
+     jadi respons & hasil TIDAK lagi di-query tiap buka. Redeem tetap (saldo tertahan & kuota bulanan). */
+  const nama = ["redeem"];
+  C.mine.respons = C.mine.respons || []; C.mine.hasil = C.mine.hasil || [];
   try {
     const hasil = await Promise.all([getDoc(doc(db, "petugas", userId))]
       .concat(nama.map((n) => getDocs(query(col(n), where("userId", "==", userId), orderBy("waktu", "desc"), limit(RIWAYAT_LIMIT))))));
@@ -818,13 +865,6 @@ function keluarPetugas(pesan) {
 const RINGKASAN_BASI_JAM = 24;
 function jamSejak(iso) { return iso ? (Date.now() - new Date(iso).getTime()) / 3600000 : Infinity; }
 
-async function ringkasanCache(rid) {
-  try {
-    const d = await getDoc(doc(db, "ringkasan", rid));
-    if (d.exists() && jamSejak(d.data().diperbarui) < RINGKASAN_BASI_JAM) return d.data();
-  } catch (e) {}
-  return null;
-}
 
 function kosongGrup() {
   const g = {};
@@ -858,15 +898,14 @@ function topGrupDari(anggotaArr, n) {
    realistis ukurannya (puluhan-ratusan orang) — dokumennya tetap jauh di bawah batas 1 MB.
    topGrup (top 20 per group) dihitung SEKALIAN dari data yang sama, tanpa baca tambahan —
    dipakai bareng oleh Leaderboard per Wilayah (Admin) & Daftar Anggota (Organik). */
-async function rebuildBranch(branchName) {
-  const qs = await getDocs(query(col("petugas"), where("branch", "==", branchName), where("status", "in", ["belum_lengkap", "aktif"])));
+/* Susun 1 dokumen ringkasan branch dari daftar petugas yang SUDAH ada di memori ({id, ...data}) */
+function bangunBranch(branchName, list) {
   const anggota = {};
   const grup = kosongGrup();
   let total = 0;
   const daftar = [];
   const anak = {}; // rincian per cluster {total, aktif} — untuk tampilan ringkasan Organik
-  qs.forEach((docSnap) => {
-    const p = docSnap.data();
+  list.forEach((p) => {
     if (!grup[p.group]) return; // grup di luar 3 yang dikenal — dilewati dari agregat
     grup[p.group].total++;
     if (p.status === "aktif") grup[p.group].aktif++;
@@ -874,12 +913,16 @@ async function rebuildBranch(branchName) {
     if (!anak[cl]) anak[cl] = { total: 0, aktif: 0 };
     anak[cl].total++;
     if (p.status === "aktif") anak[cl].aktif++;
-    const orang = { id: docSnap.id, nama: namaTampil(Object.assign({ id: docSnap.id }, p)), group: p.group, kode: p.kode || "", poin: p.poinPeringkat || 0, branch: branchName };
-    anggota[docSnap.id] = { nama: orang.nama, group: p.group, kode: p.kode || "", poin: orang.poin, cluster: p.cluster || "", status: p.status };
+    const orang = { id: p.id, nama: namaTampil(p), group: p.group, kode: p.kode || "", poin: p.poinPeringkat || 0, branch: branchName };
+    anggota[p.id] = { nama: orang.nama, group: p.group, kode: p.kode || "", poin: orang.poin, cluster: p.cluster || "", status: p.status };
     daftar.push(orang);
     total += p.poinPeringkat || 0;
   });
-  const data = { level: "branch", wilayah: branchName, grup, total_poin: total, jumlah_anggota: qs.size, anggota, topGrup: topGrupDari(daftar, 20), anak, diperbarui: nowIso() };
+  return { level: "branch", wilayah: branchName, grup, total_poin: total, jumlah_anggota: list.length, anggota, topGrup: topGrupDari(daftar, 20), anak, diperbarui: nowIso() };
+}
+async function rebuildBranch(branchName) {
+  const qs = await getDocs(query(col("petugas"), where("branch", "==", branchName), where("status", "in", ["belum_lengkap", "aktif"])));
+  const data = bangunBranch(branchName, rows(qs));
   await setDoc(doc(db, "ringkasan", "branch_" + branchName), data);
   return data;
 }
@@ -890,15 +933,22 @@ async function rebuildBranch(branchName) {
    ini tetap 100% akurat: top-20 gabungan sebuah grup pasti bagian dari gabungan top-20 tiap anaknya. */
 async function rebuildRollup(level, value) {
   const childLevel = { area: "regional", regional: "branch", hq: "area" }[level];
+  /* Anak-anak dimuat paralel (bukan satu per satu) — HQ punya puluhan branch di bawahnya */
+  const namaAnak = anakWilayah(childLevel, level, value);
+  const docAnak = await Promise.all(namaAnak.map((nv) => muatAtauRebuild(childLevel, nv)));
+  const data = gabungAnak(level, value, namaAnak, docAnak);
+  await setDoc(doc(db, "ringkasan", level + "_" + value), data);
+  return data;
+}
+/* Jumlahkan dokumen anak (sudah di memori) jadi 1 dokumen level di atasnya */
+function gabungAnak(level, value, namaAnak, docAnak) {
   let total = 0, jumlah = 0;
   const calonPerGrup = {};
   Object.keys(GRP_FIELD).forEach((g) => { calonPerGrup[g] = []; });
   const grup = kosongGrup();
-  /* Anak-anak dimuat paralel (bukan satu per satu) — HQ punya puluhan branch di bawahnya */
-  const namaAnak = anakWilayah(childLevel, level, value);
-  const docAnak = await Promise.all(namaAnak.map((nv) => muatAtauRebuild(childLevel, nv)));
   const anak = {}; // rincian per wilayah anak {total, aktif} — untuk tampilan ringkasan Organik
   docAnak.forEach((d, i) => {
+    d = d || {};
     total += d.total_poin || 0;
     jumlah += d.jumlah_anggota || 0;
     const rinci = { total: 0, aktif: 0 };
@@ -913,28 +963,75 @@ async function rebuildRollup(level, value) {
   });
   const topGrup = {};
   Object.keys(calonPerGrup).forEach((g) => { topGrup[g] = calonPerGrup[g].sort((a, b) => (b.poin || 0) - (a.poin || 0)).slice(0, 20); });
-  const data = { level, wilayah: value, grup, total_poin: total, jumlah_anggota: jumlah, topGrup, anak, diperbarui: nowIso() };
-  await setDoc(doc(db, "ringkasan", level + "_" + value), data);
-  return data;
+  return { level, wilayah: value, grup, total_poin: total, jumlah_anggota: jumlah, topGrup, anak, diperbarui: nowIso() };
 }
 
-/* Cache branch versi lama: anggota belum punya cluster & status → perlu dihitung ulang sekali */
-function anggotaLengkap(r) {
-  const a = r && r.anggota ? Object.values(r.anggota) : [];
-  return !a.length || a[0].status !== undefined;
+/* ===== Hitung ulang HANYA oleh Admin, sekali sehari (sejak 2026-10-09) =====
+   Dulu setiap Organik/Admin yang membuka saat cache >24 jam ikut menghitung ulang seluruh petugas
+   (±2.300 reads tiap kali) — terlihat sebagai lonjakan ±7K/jam di jam yang sama tiap hari.
+   Sekarang: Organik & petugas HANYA membaca hasil (berapa pun umurnya); Admin menghitung ulang
+   SEMUA wilayah dalam 1 query petugas (±1.800 reads) + menulis peringkat & leaderboard sekalian.
+   Kunci di publik/ringkasanStatus mencegah dua Admin/tab menghitung bersamaan. */
+async function bacaRingkasan(rid) {
+  try { const d = await getDoc(doc(db, "ringkasan", rid)); return d.exists() ? d.data() : null; }
+  catch (e) { return null; }
 }
-/* Daftar tim 1 branch untuk Organik level Regional — dimuat saat baris branch dibuka (1 read, cache 24 jam) */
-async function muatTimBranch(branch) {
-  let r = await muatAtauRebuild("branch", branch);
-  if (!anggotaLengkap(r)) r = await rebuildBranch(branch);
-  return r;
-}
-
-/* Pintu masuk tunggal: pakai cache kalau masih segar (<24 jam), rebuild kalau basi/belum ada. */
+/* Admin saja: pakai dokumen yang ada (berapa pun umurnya); hitung hanya kalau belum pernah ada */
 async function muatAtauRebuild(level, value) {
-  const cache = await ringkasanCache(level + "_" + value);
-  if (cache) return cache;
+  const ada = await bacaRingkasan(level + "_" + value);
+  if (ada) return ada;
   return level === "branch" ? rebuildBranch(value) : rebuildRollup(level, value);
+}
+async function perbaruiRingkasanNasional(paksa) {
+  const stRef = doc(db, "publik", "ringkasanStatus");
+  const st = (await getDoc(stRef)).data() || {};
+  if (!paksa) {
+    if (st.selesai && st.selesai >= (st.mulai || "") && jamSejak(st.selesai) < RINGKASAN_BASI_JAM) return null;
+    if (st.mulai && (!st.selesai || st.selesai < st.mulai) && jamSejak(st.mulai) < 0.25) return null; // sedang dihitung di tempat lain
+  }
+  const oleh = S.adminUser ? S.adminUser.email : "admin";
+  await setDoc(stRef, { mulai: nowIso(), oleh }, { merge: true });
+  if (!C.wilayahLoaded) await loadWilayah();
+  const semua = rows(await getDocs(query(col("petugas"), where("status", "in", ["belum_lengkap", "aktif"]))));
+  const perBranch = {};
+  semua.forEach((p) => { (perBranch[p.branch] = perBranch[p.branch] || []).push(p); });
+  const tulis = {};
+  const uniq = (a) => a.filter((v, i, x) => v && x.indexOf(v) === i);
+  uniq(C.wilayah.map((w) => w.branch)).forEach((b) => { tulis["branch_" + b] = bangunBranch(b, perBranch[b] || []); });
+  [["regional", "branch"], ["area", "regional"]].forEach(([lv, anakLv]) => {
+    uniq(C.wilayah.map((w) => w[lv])).forEach((v) => {
+      const nama = anakWilayah(anakLv, lv, v);
+      tulis[lv + "_" + v] = gabungAnak(lv, v, nama, nama.map((n) => tulis[anakLv + "_" + n]));
+    });
+  });
+  const areas = anakWilayah("area", "hq", "NASIONAL");
+  tulis.hq_NASIONAL = gabungAnak("hq", "NASIONAL", areas, areas.map((a) => tulis["area_" + a]));
+  /* Peringkat petugas: sebaran poin {poin: jumlah orang} — petugas menghitung peringkatnya sendiri dari sini */
+  const dist = { semua: {} };
+  Object.values(GRP_FIELD).forEach((f) => { dist[f] = {}; });
+  const tambah = (m, x) => { m[x] = (m[x] || 0) + 1; };
+  semua.forEach((p) => { tambah(dist.semua, p.poinPeringkat || 0); const f = GRP_FIELD[p.group]; if (f) tambah(dist[f], p[f] || 0); });
+  /* Leaderboard nasional dari data yang sama — tidak perlu query terpisah */
+  const top = (field, g) => semua.filter((p) => p.status === "aktif" && (!g || p.group === g))
+    .sort((a, b) => (b[field] || 0) - (a[field] || 0)).slice(0, 20)
+    .map((p) => ({ id: p.id, nama: namaTampil(p), group: p.group, area: p.area || "", regional: p.regional || "", poin: p[field] || 0 }));
+  const kini = nowIso();
+  const lb = { semua: top("poinPeringkat"), diperbarui: kini };
+  GROUPS.forEach((g) => { lb[g] = top(GRP_FIELD[g], g); });
+  const kunci = Object.keys(tulis);
+  for (let i = 0; i < kunci.length; i += 40) {
+    const b = writeBatch(db);
+    kunci.slice(i, i + 40).forEach((k) => b.set(doc(db, "ringkasan", k), tulis[k]));
+    await b.commit();
+  }
+  const b2 = writeBatch(db);
+  b2.set(doc(db, "publik", "peringkat"), { dist, diperbarui: kini });
+  b2.set(doc(db, "publik", "leaderboard"), lb);
+  b2.set(doc(db, "publik", "versi"), { peringkat: kini, leaderboard: kini }, { merge: true });
+  b2.set(stRef, { selesai: kini, dibaca: semua.length }, { merge: true });
+  await b2.commit();
+  C.lb = lb; C.adm.ringkasanWilayah = {};
+  return tulis.hq_NASIONAL;
 }
 
 /* ---------- ringkasan wilayah untuk Admin (pakai ulang cache ringkasan milik Organik) ----------
@@ -968,11 +1065,9 @@ async function loadOrganikSaya(email) {
       const p = S.organikProfil;
       /* HQ tidak punya field wilayah — nilainya selalu NASIONAL (lihat wilayahKey 'hq_NASIONAL') */
       const nilai = p.level === "hq" ? "NASIONAL" : p[p.level];
-      let r = await muatAtauRebuild(p.level, nilai);
-      /* Cache versi lama belum punya rincian "anak" — hitung ulang sekali (cuma level ini,
-         anak-anaknya tetap pakai cache karena yang dibutuhkan hanya angka grup mereka) */
-      if (!r.anak || (p.level === "branch" && !anggotaLengkap(r))) r = p.level === "branch" ? await rebuildBranch(nilai) : await rebuildRollup(p.level, nilai);
-      S.ringkasanOrg = r;
+      /* Organik HANYA membaca hasil hitungan Admin (sekali sehari) — tidak pernah menghitung ulang */
+      const r = await bacaRingkasan(p.level + "_" + nilai);
+      S.ringkasanOrg = r || { kosong: true, grup: {}, anak: {} };
       render();
     }
   } catch (e) { toast("no", "Gagal memuat ringkasan: " + e.message); }
@@ -997,8 +1092,14 @@ function poinPeringkatSaya() { return (S.profilSaya && S.profilSaya.poinPeringka
 function ditahanSaya() { return C.mine.redeem.filter((r) => r.status === "pending").reduce((s, r) => s + (r.poin || 0), 0); }
 function tersediaSaya() { return saldoSaya() - ditahanSaya(); }
 function redeemBulanIniSaya() { return C.mine.redeem.filter((r) => r.periode === periode() && r.status !== "ditolak"); }
-function sudahKuesioner(kid) { return C.mine.respons.some((r) => r.kuesionerId === kid); }
-function hasilPosttest(tid) { return C.mine.hasil.find((h) => h.testId === tid); }
+/* Status tugas dibaca dari ringkasan di dokumen petugas (kueSelesai / ptHasil) */
+function sudahKuesioner(kid) {
+  return !!((S.profilSaya && S.profilSaya.kueSelesai) || {})[kid] || C.mine.respons.some((r) => r.kuesionerId === kid);
+}
+function hasilPosttest(tid) {
+  const h = ((S.profilSaya && S.profilSaya.ptHasil) || {})[tid];
+  return h ? Object.assign({ testId: tid }, h) : C.mine.hasil.find((x) => x.testId === tid);
+}
 function bolehBeraktivitas() { return !!(S.profilSaya && S.profilSaya.status === "aktif"); }
 
 function sesuaiTarget(item, p) {
@@ -1046,8 +1147,8 @@ async function simpanFotoAktivitas(p, tujuan, foto, meta) {
 /* Poin Organik TIDAK ditulis di sini — lihat blok "Organik: ringkasan wilayah (lazy rebuild)"
    di bawah. Dashboard Organik dihitung on-demand & di-cache 24 jam, bukan menumpang di tiap
    kejadian poin — supaya beban tulis tidak ikut membengkak seiring total aktivitas nasional. */
-function tambahPoinKe(b, p, delta, ledgerId) {
-  const upd = { poinPeringkat: increment(delta), saldo: increment(delta), lastLedger: ledgerId };
+function tambahPoinKe(b, p, delta, ledgerId, tambahan) {
+  const upd = Object.assign({ poinPeringkat: increment(delta), saldo: increment(delta), lastLedger: ledgerId }, tambahan || {});
   upd[GRP_FIELD[p.group]] = increment(delta);
   b.update(doc(db, "petugas", p.id), upd);
 }
@@ -1067,7 +1168,8 @@ async function submitKuesioner(p, k, jawaban, fotoId, wajahFoto) {
   b.set(doc(db, "ledger", ledgerId), Object.assign({}, s, {
     delta: POIN_KUESIONER, jenis: "kuesioner", ref: k.id, aktivitas: "Kuesioner " + k.judul + " — Lengkap", waktu: w, oleh: "sistem"
   }));
-  tambahPoinKe(b, p, POIN_KUESIONER, ledgerId);
+  /* Ringkasan "sudah dikerjakan" di dokumen petugas sendiri — Beranda tidak perlu query respons */
+  tambahPoinKe(b, p, POIN_KUESIONER, ledgerId, { ["kueSelesai." + k.id]: w });
   await b.commit();
 }
 
@@ -1114,7 +1216,7 @@ async function submitPosttest(p, t, jawaban, fotoId, wajahFoto) {
   b.set(doc(db, "ledger", ledgerId), Object.assign({}, s, {
     delta: poin, jenis: "posttest", ref: t.id, aktivitas: "Post Test " + t.judul + " — " + benar + " benar × " + POIN_PER_BENAR, waktu: w, oleh: "sistem"
   }));
-  tambahPoinKe(b, p, poin, ledgerId);
+  tambahPoinKe(b, p, poin, ledgerId, { ["ptHasil." + t.id]: { benar, total, poin, waktu: w } });
   await b.commit();
   return { benar, total, poin, detail };
 }
@@ -1158,6 +1260,8 @@ async function rebuildKatalog() {
       panduan: aktif(C.adm.panduan).map((x) => ({ id: x.id, pertanyaan: x.pertanyaan, jawaban: x.jawaban, kategori: x.kategori || "Umum", audiens: x.audiens && x.audiens.length ? x.audiens : ["petugas", "organik"] })),
       diperbarui: nowIso()
     });
+    /* Penanda versi: HP petugas/Organik mengambil ulang katalog HANYA kalau versinya berubah */
+    await setDoc(doc(db, "publik", "versi"), { katalog: nowIso() }, { merge: true });
   } catch (e) { toast("no", "Gagal memperbarui daftar tugas petugas: " + e.message); }
 }
 
@@ -1168,73 +1272,82 @@ async function rebuildLeaderboard() {
   const [semua, ds, ypcr, bud] = await Promise.all([ambil("poinPeringkat"), ambil("pDS"), ambil("pYPCR"), ambil("pBUD")]);
   const data = { semua, "Direct Sales": ds, YPCR: ypcr, Buddies: bud, diperbarui: nowIso() };
   await setDoc(doc(db, "publik", "leaderboard"), data);
+  await setDoc(doc(db, "publik", "versi"), { leaderboard: data.diperbarui }, { merge: true });
   C.lb = data;
   render();
 }
 
+/* Dashboard TANPA bergantung pada hitungan server (count): pada 2026-10-09 count ditolak
+   "Quota exceeded" padahal baca dokumen biasa masih jalan. Angka tim lapangan diambil dari cache
+   ringkasan HQ (sama dengan Beranda Organik, 24 jam), status kecil (review/nonaktif/pending, Organik)
+   dari daftar dokumennya langsung. Count hanya dipakai untuk respons kuesioner — kalau gagal tampil "–". */
 async function loadAdminStats() {
   const per = periode();
-  const seminggu = new Date(Date.now() - 7 * 86400000).toISOString();
-  const cnt = (q) => getCountFromServer(q).then((r) => r.data().count).catch(() => 0);
-  const LV = ["hq", "area", "regional", "branch"];
-  const [total, aktif, review, belum, baru, respPer, pending, grpTotals, grpResp, pt, rv, prCount, prList, orgReview, nonaktif, orgTotal, orgAktif, orgLevel] = await Promise.all([
-    cnt(col("petugas")),
-    cnt(query(col("petugas"), where("status", "==", "aktif"))),
-    cnt(query(col("petugas"), where("status", "==", "review"))),
-    cnt(query(col("petugas"), where("status", "==", "belum_lengkap"))),
-    cnt(query(col("petugas"), where("createdAt", ">=", seminggu))),
-    cnt(query(col("respons"), where("periode", "==", per))),
-    cnt(query(col("redeem"), where("status", "==", "pending"))),
-    /* Target completion = petugas AKTIF per group (yang belum aktivasi/nonaktif belum bisa mengisi) */
-    Promise.all(GROUPS.map((g) => cnt(query(col("petugas"), where("group", "==", g), where("status", "==", "aktif"))))),
-    Promise.all(GROUPS.map((g) => cnt(query(col("respons"), where("grupPeriode", "==", g + "|" + per))))),
+  const cntAtauNull = (q) => getCountFromServer(q).then((r) => r.data().count).catch(() => null);
+  const ambil = (q) => getDocs(q).then(rows).catch(() => null);
+  const [hq, rv, nonaktifL, pendingL, respPer, grpResp, pt, prList, orgL] = await Promise.all([
+    /* Hitung ulang nasional hanya kalau hasil terakhir >24 jam & tidak sedang dihitung di tab lain */
+    perbaruiRingkasanNasional(false).catch(() => null).then((r) => r || bacaRingkasan("hq_NASIONAL")),
+    ambil(query(col("petugas"), where("status", "==", "review"), limit(200))),
+    ambil(query(col("petugas"), where("status", "==", "nonaktif"), limit(500))),
+    ambil(query(col("redeem"), where("status", "==", "pending"), limit(300))),
+    cntAtauNull(query(col("respons"), where("periode", "==", per))),
+    Promise.all(GROUPS.map((g) => cntAtauNull(query(col("respons"), where("grupPeriode", "==", g + "|" + per))))),
     getAggregateFromServer(col("hasil"), { rata: average("benar"), soal: average("total") }).then((r) => r.data()).catch(() => ({ rata: null, soal: null })),
-    getDocs(query(col("petugas"), where("status", "==", "review"), limit(20))).then(rows).catch(() => []),
-    cnt(query(col("peringatan"), where("status", "==", "baru"))),
-    getDocs(query(col("peringatan"), where("status", "==", "baru"), limit(20))).then(rows).catch(() => []),
-    getDocs(query(col("organik"), where("status", "==", "review"), limit(20))).then(rows).catch(() => []),
-    cnt(query(col("petugas"), where("status", "==", "nonaktif"))),
-    cnt(col("organik")),
-    cnt(query(col("organik"), where("status", "==", "aktif"))),
-    Promise.all(LV.map((l) => cnt(query(col("organik"), where("level", "==", l), where("status", "==", "aktif")))))
+    ambil(query(col("peringatan"), where("status", "==", "baru"), limit(50))),
+    ambil(col("organik"))
   ]);
-  C.adm.orgStats = { total: orgTotal, aktif: orgAktif, review: orgReview.length, level: LV.reduce((m, l, i) => (m[l] = orgLevel[i], m), {}) };
+  const ada = (x) => x !== null && x !== undefined;
+  const grup = hq && hq.grup ? hq.grup : null;
+  const aktifG = GROUPS.map((g) => (grup && grup[g] ? grup[g].aktif || 0 : null));
+  const aktif = grup ? aktifG.reduce((s, x) => s + (x || 0), 0) : null;
+  const belum = grup ? GROUPS.reduce((s, g) => s + ((grup[g] ? grup[g].total - grup[g].aktif : 0) || 0), 0) : null;
+  const review = rv ? rv.length : null, nonaktif = nonaktifL ? nonaktifL.length : null;
+  const total = [aktif, belum, review, nonaktif].every(ada) ? aktif + belum + review + nonaktif : null;
+  if (orgL) {
+    const lv = { hq: 0, area: 0, regional: 0, branch: 0 };
+    orgL.forEach((o) => { if (o.status === "aktif" && lv[o.level] !== undefined) lv[o.level]++; });
+    C.adm.orgStats = { total: orgL.length, aktif: orgL.filter((o) => o.status === "aktif").length, review: orgL.filter((o) => o.status === "review").length, level: lv };
+  } else C.adm.orgStats = { err: true };
+  C.adm.ringkasanHq = hq;
   loadTeritori(null);
   const kuAktif = listOf(C.adm.kuesioner).filter((k) => k.aktif);
   const perGroup = GROUPS.map((g, i) => {
-    const target = grpTotals[i] * Math.max(1, kuAktif.filter((k) => { const t = k.target || {}; return !t.group || t.group === "semua" || t.group === g; }).length);
-    return { g, anggota: grpTotals[i], isi: grpResp[i], target, pct: target ? Math.round(grpResp[i] / target * 100) : 0 };
+    const target = (aktifG[i] || 0) * Math.max(1, kuAktif.filter((k) => { const t = k.target || {}; return !t.group || t.group === "semua" || t.group === g; }).length);
+    const isi = grpResp[i];
+    return { g, anggota: aktifG[i], isi, target, pct: target && ada(isi) ? Math.round(isi / target * 100) : 0 };
   });
   const targetAll = perGroup.reduce((s, x) => s + x.target, 0);
-  C.adm.reviewList = rv;
-  C.adm.peringatan = prList.sort((a, b) => (b.waktu || "").localeCompare(a.waktu || ""));
-  C.adm.organikReviewList = orgReview;
-  C.adm.stats = { total, aktif, review, belum, nonaktif, baru, respPer, pending, perGroup, peringatan: prCount, organikReview: orgReview.length, completion: targetAll ? Math.round(respPer / targetAll * 100) : 0, rataBenar: pt.rata, rataSoal: pt.soal, topSalah: null };
+  C.adm.reviewList = (rv || []).slice(0, 20);
+  C.adm.peringatan = (prList || []).sort((a, b) => (b.waktu || "").localeCompare(a.waktu || "")).slice(0, 20);
+  C.adm.organikReviewList = (orgL || []).filter((o) => o.status === "review").slice(0, 20);
+  C.adm.stats = { total, aktif, review, belum, nonaktif, respPer, pending: pendingL ? pendingL.length : null, perGroup,
+    peringatan: prList ? prList.length : null, organikReview: C.adm.organikReviewList.length,
+    completion: ada(respPer) && targetAll ? Math.round(respPer / targetAll * 100) : null,
+    rataBenar: pt.rata, rataSoal: pt.soal, topSalah: null, ringkasanPer: hq ? hq.diperbarui : null };
   render();
   loadSoalPalingSalah();
-  loadLeaderboard().then(() => {
-    const umur = C.lb && C.lb.diperbarui ? Date.now() - new Date(C.lb.diperbarui).getTime() : Infinity;
-    if (umur > LB_BASI_JAM * 3600000) rebuildLeaderboard().catch(() => {});
-  });
+  /* Leaderboard kini ikut diperbarui bersama hitung ulang nasional harian (tanpa query terpisah) */
+  loadLeaderboard();
+  /* Pastikan penanda versi katalog ada, supaya HP petugas bisa memakai cache katalog */
+  getDoc(doc(db, "publik", "versi")).then((v) => { if (!v.exists() || !v.data().katalog) return setDoc(doc(db, "publik", "versi"), { katalog: nowIso() }, { merge: true }); }).catch(() => {});
   bersihkanFoto(false);
 }
 
-/* Group × teritori: hitung di server (count), tanpa membaca dokumen. area=null → semua Area;
-   area=nama → Regional di bawah Area itu (dimuat saat baris Area diklik). Total = aktif + belum aktivasi,
-   sama dengan definisi "total tim lapangan" di dashboard Organik. */
+/* Group × teritori dari cache ringkasan (1 read per Area/Regional, dipakai bersama Organik) —
+   bukan hitungan server. area=null → semua Area; area=nama → Regional di bawahnya (saat diklik). */
 async function loadTeritori(area) {
   const T = C.adm.teritori = C.adm.teritori || { area: null, regional: {}, buka: {} };
   if (!C.wilayahLoaded) await loadWilayah();
   const level = area ? "regional" : "area";
   const nama = area ? anakWilayah("regional", "area", area) : anakWilayah("area", "hq", "NASIONAL");
-  /* Error TIDAK ditelan jadi 0 — kalau Firestore menolak (mis. butuh index), tampil sebagai pesan */
-  const cnt = (q) => getCountFromServer(q).then((r) => r.data().count);
   const hasil = {};
   try {
     /* Hanya yang SUDAH AKTIVASI — permintaan Admin, untuk mengejar aktivasi per teritori */
-    await Promise.all(nama.map((n) => Promise.all(GROUPS.map((g) =>
-      cnt(query(col("petugas"), where(level, "==", n), where("group", "==", g), where("status", "==", "aktif")))
-        .then((a) => { (hasil[n] = hasil[n] || {})[g] = { aktif: a }; })))));
+    await Promise.all(nama.map((n) => muatAtauRebuild(level, n).then((d) => {
+      hasil[n] = {};
+      GROUPS.forEach((g) => { hasil[n][g] = { aktif: d.grup && d.grup[g] ? d.grup[g].aktif || 0 : 0 }; });
+    })));
     T.err = "";
     if (area) T.regional[area] = hasil; else T.area = hasil;
   } catch (e) {
@@ -1747,12 +1860,36 @@ async function setujuiPetugas(userId) {
     const [pd, ld, cd] = [await tx.get(pRef), await tx.get(lRef), await tx.get(doc(db, "petugas_cek", userId))];
     if (!pd.exists()) throw new Error("Petugas tidak ditemukan.");
     const oleh = S.adminUser ? S.adminUser.email : "admin";
-    tx.update(pRef, { status: "aktif", disetujuiAt: nowIso(), disetujuiOleh: oleh });
-    if (cd.exists() && cd.data().nomor) tulisKontak(tx, Object.assign({ id: userId }, pd.data()), String(cd.data().nomor).trim());
-    if (ld.exists()) return false;
-    tulisWelcome(tx, Object.assign({ id: userId }, pd.data()), oleh);
-    return true;
+    const p = Object.assign({ id: userId }, pd.data());
+    /* SATU update ke dokumen petugas (status + poin bonus digabung) — jangan dua kali dalam satu transaksi */
+    const upd = { status: "aktif", disetujuiAt: nowIso(), disetujuiOleh: oleh };
+    const kasihBonus = !ld.exists();
+    if (kasihBonus) {
+      const lid = "wel_" + userId;
+      tx.set(doc(db, "ledger", lid), Object.assign(snap(p), { delta: POIN_WELCOME, jenis: "welcome", ref: "", aktivitas: "Welcoming Bonus", waktu: nowIso(), oleh }));
+      Object.assign(upd, { poinPeringkat: increment(POIN_WELCOME), saldo: increment(POIN_WELCOME), lastLedger: lid });
+      upd[GRP_FIELD[p.group]] = increment(POIN_WELCOME);
+    }
+    tx.update(pRef, upd);
+    if (cd.exists() && cd.data().nomor) tulisKontak(tx, p, String(cd.data().nomor).trim());
+    return kasihBonus;
   });
+}
+/* Cadangan Setujui tanpa transaksi. Status aktif ditulis lebih dulu; bonus dicek dulu (wel_ sudah ada →
+   dilewati) supaya tetap maksimal sekali; nomor ke kontak terakhir. Bonus/kontak gagal tidak membatalkan status. */
+async function setujuiSederhana(userId) {
+  const oleh = S.adminUser ? S.adminUser.email : "admin";
+  await updateDoc(doc(db, "petugas", userId), { status: "aktif", disetujuiAt: nowIso(), disetujuiOleh: oleh });
+  let bonus = false;
+  try {
+    const [pd, ld, cd] = await Promise.all([getDoc(doc(db, "petugas", userId)), getDoc(doc(db, "ledger", "wel_" + userId)), getDoc(doc(db, "petugas_cek", userId))]);
+    const p = Object.assign({ id: userId }, pd.data());
+    const b = writeBatch(db);
+    if (!ld.exists() && GRP_FIELD[p.group]) { tulisWelcome(b, p, oleh); bonus = true; }
+    if (cd.exists() && cd.data().nomor) tulisKontak(b, p, String(cd.data().nomor).trim());
+    await b.commit();
+  } catch (e) { bonus = false; }
+  return bonus;
 }
 function tulisWelcome(tx, p, oleh) {
   const lid = "wel_" + p.id;
@@ -2071,6 +2208,9 @@ function vOrganikHome() {
   const wilayah = o.level === "hq" ? "HQ &middot; NASIONAL" : esc(LEVEL_LABEL[o.level].toUpperCase() + " " + (o[o.level] || "").toUpperCase());
   const bulan = new Date().toLocaleDateString("id-ID", { month: "long", year: "numeric" }).toUpperCase();
   if (!r) return hero(wilayah, "Halo, " + esc(o.nama) + "!", "Memuat ringkasan wilayah&hellip;") + '<div class="pad"></div>';
+  if (r.kosong) return hero(wilayah, "Halo, " + esc(o.nama) + "!", "") + '<div class="pad stack" style="margin-top:-14px;">' +
+    '<div style="text-align:right;"><button class="btn btn-ghost btn-sm" data-do="keluarOrganik">Keluar</button></div>' +
+    '<div class="card"><div class="empty">Ringkasan wilayah Anda belum tersedia. Data dihitung Admin sekali sehari &mdash; coba buka lagi nanti.</div></div></div>';
   const pct = (a, t) => (t ? Math.round((a / t) * 100) : 0);
   let tTotal = 0, tAktif = 0;
   Object.values(r.grup || {}).forEach((v) => { tTotal += v.total || 0; tAktif += v.aktif || 0; });
@@ -2119,6 +2259,7 @@ function vOrganikHome() {
         else {
           const nd = node[anakLv + "_" + a.nama];
           isi = !nd ? '<div class="skel" style="margin:6px 0 12px;">Memuat&hellip;</div>'
+            : nd.kosong ? '<div class="empty" style="padding:10px;">Belum tersedia &mdash; menunggu pembaruan harian Admin.</div>'
             : anakLv === "branch" ? daftarTim(anggotaArr(nd), a.nama)
             : '<div style="border-left:2px solid var(--border);padding-left:10px;margin:2px 0 14px;">' + rincian(anakLv, nd, true) + "</div>";
         }
@@ -2140,7 +2281,7 @@ function vOrganikHome() {
     '<div class="card">' + grupHtml + "</div>" +
     '<div class="sec-head"><h2>Per ' + labelAnak + "</h2></div>" +
     '<div class="card">' + anakHtml + "</div>" +
-    '<div class="note" style="text-align:center;">Diperbarui otomatis tiap 24 jam &middot; ringkasan ' + (r.diperbarui ? "per " + fmtTgl(r.diperbarui) : "") + "</div>" +
+    '<div class="note" style="text-align:center;">Diperbarui sekali sehari &middot; data per ' + (r.diperbarui ? fmtWaktu(r.diperbarui) : "-") + "</div>" +
     "</div>";
 }
 
@@ -2534,18 +2675,23 @@ function aDashboard() {
   const lbUmur = C.lb && C.lb.diperbarui ? "diperbarui " + fmtWaktu(C.lb.diperbarui) : "belum pernah diperbarui";
   const kartu = (lbl, n, sub, merah) => '<div class="stat"><div class="lbl">' + lbl + '</div><div class="n mono' + (merah ? " red" : "") + '">' + n + '</div><div class="k lbl" style="color:var(--ink-dim);">' + sub + "</div></div>";
   const os = C.adm.orgStats;
+  /* null = gagal dimuat → "–", jangan tampil 0 yang menyesatkan */
+  const N = (x) => (x === null || x === undefined ? "&ndash;" : fmtNum(x));
   return head("Dashboard", "Periode " + bulan + " &middot; seluruh area", refresh) +
-    '<div class="sec-head"><h2>Tim Lapangan</h2><span class="lbl">DS &middot; YPCR &middot; Buddies</span></div>' +
+    '<div class="sec-head"><h2>Tim Lapangan</h2><span class="lbl">DS &middot; YPCR &middot; Buddies' + (s.ringkasanPer ? " &middot; ringkasan " + fmtWaktu(s.ringkasanPer) : "") + "</span></div>" +
+    '<div class="note" style="margin:-4px 0 10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">Ringkasan (Dashboard, Organik, leaderboard, peringkat petugas) dihitung ulang otomatis sekali sehari saat Dashboard dibuka. ' +
+      '<button class="btn btn-ghost btn-sm" data-do="perbaruiRingkasan"' + (C.adm.ringkasanBusy ? " disabled" : "") + ">" + (C.adm.ringkasanBusy ? "Menghitung&hellip;" : "Perbarui sekarang (&plusmn;1.800 reads)") + "</button></div>" +
+    (s.aktif === null ? '<div class="err" style="margin-bottom:10px;">Ringkasan tim lapangan gagal dimuat. Coba Muat ulang.</div>' : "") +
     '<div class="stat-grid">' +
-      kartu("Total Akun", fmtNum(s.total), "semua status") +
-      kartu("Sudah Aktivasi", fmtNum(s.aktif), (s.total ? Math.round(s.aktif / s.total * 100) : 0) + "% dari total akun") +
-      kartu("Belum Aktivasi", fmtNum(s.belum), "hasil import, belum pernah masuk") +
-      kartu("Menunggu Verifikasi", fmtNum(s.review), "daftar mandiri") +
-      kartu("Nonaktif", fmtNum(s.nonaktif || 0), "dinonaktifkan Admin") +
+      kartu("Total Akun", N(s.total), "semua status") +
+      kartu("Sudah Aktivasi", N(s.aktif), (s.total ? Math.round(s.aktif / s.total * 100) + "% dari total akun" : "&nbsp;")) +
+      kartu("Belum Aktivasi", N(s.belum), "hasil import, belum pernah masuk") +
+      kartu("Menunggu Verifikasi", N(s.review), "daftar mandiri") +
+      kartu("Nonaktif", N(s.nonaktif), "dinonaktifkan Admin") +
     "</div>" +
     vTeritori() +
     '<div class="sec-head"><h2>Tim Organik</h2><span class="lbl">internal Telkomsel</span></div>' +
-    (!os ? '<div class="skel">Memuat&hellip;</div>' : '<div class="stat-grid">' +
+    (!os ? '<div class="skel">Memuat&hellip;</div>' : os.err ? '<div class="err">Data Organik gagal dimuat. Coba Muat ulang.</div>' : '<div class="stat-grid">' +
       kartu("Total Akun", fmtNum(os.total), "semua status") +
       kartu("Aktif", fmtNum(os.aktif), fmtNum(os.review) + " menunggu verifikasi") +
       kartu("Per Level (aktif)", '<span style="font-size:18px;">HQ ' + fmtNum(os.level.hq) + " &middot; Area " + fmtNum(os.level.area) + "</span>",
@@ -2553,17 +2699,17 @@ function aDashboard() {
     "</div>") +
     '<div class="sec-head"><h2>Aktivitas Bulan Ini</h2></div>' +
     '<div class="stat-grid">' +
-      kartu("Completion Kuesioner", s.completion + "%", fmtNum(s.respPer) + " respons &middot; target = petugas aktif") +
-      kartu("Redeem Pending", fmtNum(s.pending), "poin ditahan &middot; perlu review", true) +
+      kartu("Completion Kuesioner", s.completion === null ? "&ndash;" : s.completion + "%", N(s.respPer) + " respons &middot; target = petugas aktif") +
+      kartu("Redeem Pending", N(s.pending), "poin ditahan &middot; perlu review", true) +
     "</div>" +
-    '<div class="sec-head"><h2>&#9888; Peringatan Foto</h2><span class="lbl">' + fmtNum(s.peringatan || 0) + " belum dicek</span></div>" +
+    '<div class="sec-head"><h2>&#9888; Peringatan Foto</h2><span class="lbl">' + N(s.peringatan) + " belum dicek</span></div>" +
     (!C.adm.peringatan.length ? '<div class="card"><div class="empty" style="padding:16px;">Tidak ada foto yang perlu dicek.</div></div>' :
       C.adm.peringatan.map((w) => '<div class="aq"><span class="pill pill-warn">' + esc(LABEL_TIPE_FOTO[w.tipe] || w.tipe) + "</span>" +
         '<div class="grow"><div class="aq-n">' + esc(w.nama || w.kode) + " &middot; " + grpTag(w.group) + "</div>" +
         '<div class="aq-s"><span class="mono">' + esc(w.userId) + "</span> &middot; " + ketPeringatan(w) + " &middot; " + fmtWaktu(w.waktu) + "</div></div>" +
         '<button class="btn btn-ghost btn-sm" data-do="lihatPeringatan" data-v="' + esc(w.id) + '">Lihat foto</button>' +
         '<button class="btn btn-ok btn-sm" data-do="tandaiPeringatan" data-v="' + esc(w.id) + '">Sudah dicek</button></div>').join("")) +
-    '<div class="sec-head"><h2>Verifikasi Petugas Baru</h2><span class="lbl">' + fmtNum(s.review) + " menunggu</span></div>" +
+    '<div class="sec-head"><h2>Verifikasi Petugas Baru</h2><span class="lbl">' + N(s.review) + " menunggu</span></div>" +
     (!C.adm.reviewList.length ? '<div class="card"><div class="empty" style="padding:16px;">Tidak ada petugas baru yang menunggu verifikasi.</div></div>' :
       C.adm.reviewList.map((p) => '<div class="aq"><div class="grow"><div class="aq-n">' + esc(namaTampil(p)) + " &middot; " + grpTag(p.group) + "</div>" +
         '<div class="aq-s"><span class="mono">' + esc(p.id) + " / " + esc(p.kode) + "</span> &middot; " + esc(p.regional) + " / " + esc(p.cluster) + " &middot; daftar " + fmtTgl(p.createdAt) + "</div></div>" +
@@ -2576,14 +2722,14 @@ function aDashboard() {
         '<button class="btn btn-ghost btn-sm" data-do="detailOrganik" data-v="' + esc(o.email) + '">Lihat detail</button>' +
         '<button class="btn btn-ok btn-sm" data-do="setujuiOrganikAdm" data-v="' + esc(o.email) + '">Setujui</button></div>').join("")) +
     '<div class="sec-head"><h2>Action Queue</h2></div>' +
-    aq("Monitor", false, "Kuesioner", fmtNum(s.respPer) + " respons &middot; completion " + s.completion + "% dari target aktif", tombolMenu("kuesioner")) +
+    aq("Monitor", false, "Kuesioner", N(s.respPer) + " respons &middot; completion " + (s.completion === null ? "&ndash;" : s.completion + "%") + " dari target aktif", tombolMenu("kuesioner")) +
     aq("Analyze", !!s.topSalah, "Post Test — rata benar " + rata + " dari " + (s.rataSoal == null ? "-" : Math.round(s.rataSoal)) + " soal", s.topSalah ? esc(s.topSalah.teks) + " &mdash; " + s.topSalah.n + " dari " + s.topSalah.dari + " peserta salah" : "Belum ada pola kesalahan", tombolMenu("posttest")) +
-    aq("Review", s.pending > 0, "Redeem Queue", fmtNum(s.pending) + " permintaan pending &middot; cek foto & stok", tombolMenu("redeem")) +
-    aq("Sistem", false, "Leaderboard petugas", lbUmur + " &middot; otomatis diperbarui saat Dashboard dibuka bila lebih dari " + LB_BASI_JAM + " jam", '<button class="btn btn-ghost btn-sm" data-do="perbaruiLb">Perbarui sekarang</button>') +
+    aq("Review", s.pending > 0, "Redeem Queue", N(s.pending) + " permintaan pending &middot; cek foto & stok", tombolMenu("redeem")) +
+    aq("Sistem", false, "Leaderboard petugas", lbUmur + " &middot; otomatis diperbarui sekali sehari bersama ringkasan", '<button class="btn btn-ghost btn-sm" data-do="perbaruiLb">Perbarui sekarang</button>') +
     aq("Sistem", false, "Pembersihan foto", C.adm.fotoBersih ? fmtNum(C.adm.fotoBersih.total) + " foto kedaluwarsa dihapus " + fmtWaktu(C.adm.fotoBersih.waktu) : "Berjalan otomatis saat Dashboard dibuka", tombolMenu("pengaturan", "Pengaturan")) +
     '<div class="sec-head"><h2>Completion Rate per Group</h2><span class="lbl">bulan ini</span></div><div class="card">' +
     s.perGroup.map((x) => '<div style="padding:10px 0;border-bottom:1px solid var(--border);"><div class="row"><span class="grow" style="font-weight:700;font-size:14px;">' + esc(x.g) +
-      '</span><span class="mono" style="font-size:13px;color:var(--ink-dim);">' + fmtNum(x.isi) + " / " + fmtNum(x.target) + " &middot; " + x.pct + "%</span></div>" +
+      '</span><span class="mono" style="font-size:13px;color:var(--ink-dim);">' + N(x.isi) + " / " + N(x.anggota === null ? null : x.target) + " &middot; " + x.pct + "%</span></div>" +
       '<div class="prog"><i style="width:' + Math.min(100, x.pct) + '%"></i></div></div>').join("") + "</div>";
 }
 
@@ -2647,7 +2793,7 @@ function panelRingkasanWilayah() {
 function aPetugas() {
   const f = S.fPetugas, P = C.adm.petugas;
   const opt = (arr, val, semua, label) => '<option value="">' + semua + "</option>" + arr.map((x) => '<option value="' + esc(x) + '" ' + (val === x ? "selected" : "") + ">" + esc(label ? label(x) : x) + "</option>").join("");
-  return head("Data Petugas", (C.adm.stats ? fmtNum(C.adm.stats.total) + " akun &middot; " : "") + "dimuat per " + HALAMAN + " baris") +
+  return head("Data Petugas", (C.adm.stats && C.adm.stats.total !== null ? fmtNum(C.adm.stats.total) + " akun &middot; " : "") + "dimuat per " + HALAMAN + " baris") +
     '<div class="wgrid"><div>' +
     '<div class="filters" style="margin-bottom:14px;">' +
       '<input type="text" class="mono" placeholder="Cari ID / Username (persis)" value="' + esc(f.q) + '" data-in="fPetugas.q" style="min-width:230px;">' +
@@ -2676,6 +2822,13 @@ function aPetugas() {
         "Jalankan sekali setelah update ini; setelahnya otomatis terisi saat petugas lengkapi profil, ganti nomor, atau disetujui. Jalankan ulang bila ada yang terlewat.</div>" +
         '<button class="btn btn-primary btn-sm" data-do="bangunKontakAdm"' + (k.busy ? " disabled" : "") + ">" + (k.busy ? "Memproses&hellip;" : "Bangun data kontak") + "</button>" +
         (k.log.length ? '<div class="note mono" style="margin-top:12px;white-space:pre-wrap;">' + k.log.map(esc).join("\n") + "</div>" : "") + "</div>";
+    })() +
+    (function () {
+      const t = C.adm.sinkronTugas || { log: [] };
+      return '<div class="card" style="margin-bottom:18px;"><div class="card-title">Sinkron Status Tugas (sekali saja)</div>' +
+        '<div style="font-size:13px;color:var(--ink-dim);margin-bottom:10px;">Menyalin kuesioner &amp; post test yang sudah pernah dikerjakan ke ringkasan di dokumen petugas, supaya Beranda petugas tidak perlu membaca riwayat tiap dibuka. Jalankan sekali setelah update; aman diulang. Biaya = jumlah respons + hasil yang ada.</div>' +
+        '<button class="btn btn-primary btn-sm" data-do="sinkronTugasAdm"' + (t.busy ? " disabled" : "") + ">" + (t.busy ? "Memproses&hellip;" : "Sinkron status tugas") + "</button>" +
+        (t.log.length ? '<div class="note mono" style="margin-top:12px;white-space:pre-wrap;">' + t.log.map(esc).join("\n") + "</div>" : "") + "</div>";
     })() +
     kartuUploadUmum("group", "Koreksi Group dari Excel", "user_id, group, group_baru",
       "Isi <span class=\"mono\">group_baru</span> dengan Direct Sales / YPCR / Buddies (DS &amp; BUD juga dikenali). Baris yang group_baru-nya kosong atau sama dengan group sekarang dilewati. Poin group ikut dipindah; total poin &amp; saldo tidak berubah.") +
@@ -3532,6 +3685,27 @@ const DO = {
   admCekUlang() { cekAdmin(S.adminUser); },
   admMenu(v) { S.adminMenu = v; S.openQ = null; render(); onAdmMenu(v); },
   refreshStats() { C.adm.stats = null; C.adm.orgStats = null; C.adm.teritori = null; render(); loadAdminStats(); },
+  async sinkronTugasAdm() {
+    const t = C.adm.sinkronTugas = C.adm.sinkronTugas || { log: [] };
+    if (t.busy) return;
+    if (!confirm("Sinkron status tugas semua petugas sekarang? Aman diulang.")) return;
+    t.busy = true; t.log = []; render();
+    try {
+      const h = await sinkronStatusTugas((x) => { t.log.push(x); render(); });
+      t.log.push("Selesai: " + fmtNum(h.respons) + " respons + " + fmtNum(h.hasil) + " hasil → " + fmtNum(h.petugas) + " petugas.");
+      toast("ok", "Status tugas tersinkron.");
+    } catch (e) { t.log.push("Gagal: " + (e.message || e)); toast("no", pesanGagal(e, "Gagal sinkron")); }
+    t.busy = false; render();
+  },
+  async perbaruiRingkasan() {
+    if (C.adm.ringkasanBusy) return;
+    if (!confirm("Hitung ulang semua ringkasan sekarang? (±1.800 reads)\nOtomatisnya sudah sekali sehari — tombol ini hanya untuk kebutuhan mendadak.")) return;
+    C.adm.ringkasanBusy = true; render();
+    try { await perbaruiRingkasanNasional(true); toast("ok", "Ringkasan diperbarui."); }
+    catch (e) { toast("no", pesanGagal(e, "Gagal memperbarui ringkasan")); }
+    C.adm.ringkasanBusy = false;
+    DO.refreshStats();
+  },
   bukaTeritori(v) {
     const T = C.adm.teritori;
     if (!T) return;
@@ -3611,13 +3785,21 @@ const DO = {
     } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
   },
   async setujuiPetugas(v) {
-    try {
-      const bonus = await setujuiPetugas(v);
-      C.adm.reviewList = C.adm.reviewList.filter((p) => p.id !== v);
-      if (C.adm.stats) C.adm.stats.review = Math.max(0, C.adm.stats.review - 1);
-      toast("ok", "Petugas disetujui dan sekarang aktif." + (bonus ? " Welcoming Bonus +" + POIN_WELCOME + " diberikan." : ""));
-      if (S.modal) DO.detailPetugas(v); else render();
-    } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
+    let bonus = false, pesan = "";
+    try { bonus = await setujuiPetugas(v); }
+    catch (e) {
+      /* Jalur cadangan tanpa transaksi: status dulu (yang paling penting), lalu bonus & kontak terpisah */
+      const errTx = (e && (e.code || "") + " " + (e.message || "")) || String(e);
+      try { bonus = await setujuiSederhana(v); pesan = " (jalur cadangan)"; }
+      catch (e2) {
+        alert("Gagal menyetujui " + v + ".\n\nTransaksi: " + errTx + "\nCadangan: " + ((e2 && (e2.code || "") + " " + (e2.message || "")) || e2) + "\n\nScreenshot pesan ini untuk dicek.");
+        return;
+      }
+    }
+    C.adm.reviewList = C.adm.reviewList.filter((p) => p.id !== v);
+    if (C.adm.stats && C.adm.stats.review !== null) C.adm.stats.review = Math.max(0, C.adm.stats.review - 1);
+    toast("ok", "Petugas disetujui dan sekarang aktif" + pesan + "." + (bonus ? " Welcoming Bonus +" + POIN_WELCOME + " diberikan." : ""));
+    if (S.modal) DO.detailPetugas(v); else render();
   },
 
   async simpanNomorAdm(v) {
@@ -3652,8 +3834,7 @@ const DO = {
     const branchKontak = lv === "branch" ? nama : lv === "cluster" ? o.branch : null;
     const tugas = [];
     if (lv !== "cluster" && !S.orgNode[lv + "_" + nama]) {
-      tugas.push((S.previewSebagai ? Promise.resolve(mockNodeOrganik(lv, nama)) : lv === "branch" ? muatTimBranch(nama)
-          : muatAtauRebuild(lv, nama).then((d) => (d.anak ? d : rebuildRollup(lv, nama))))
+      tugas.push((S.previewSebagai ? Promise.resolve(mockNodeOrganik(lv, nama)) : bacaRingkasan(lv + "_" + nama).then((d) => d || { kosong: true }))
         .then((d) => { S.orgNode[lv + "_" + nama] = d; })
         .catch((e) => { S.orgBuka[v] = false; toast("no", pesanGagal(e, "Gagal memuat")); }));
     }
