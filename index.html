@@ -176,12 +176,22 @@ a{color:var(--red);}
 .mgrid .mt{font-size:11px;font-weight:600;color:var(--ink-dim);text-align:center;line-height:1.25;}
 
 /* ---------- knowledge ---------- */
-.kn{display:flex;align-items:center;gap:12px;padding:13px;border:1px solid var(--border);border-radius:12px;background:var(--surface);text-decoration:none;color:inherit;}
+.kn{display:flex;align-items:center;gap:12px;padding:13px;border:1px solid var(--border);border-radius:12px;background:var(--surface);text-decoration:none;color:inherit;width:100%;text-align:left;font:inherit;cursor:pointer;}
 .kn + .kn{margin-top:9px;}
 .kn .kt{width:38px;height:38px;border-radius:9px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-family:"IBM Plex Mono",monospace;font-size:10.5px;font-weight:600;flex:none;}
-.kn .kn-n{font-weight:700;font-size:14px;}
-.kn .kn-s{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-faint);}
+.kn .kt.t-KV{background:#B5545C;} .kn .kt.t-PDF{background:#7A6F6C;} .kn .kt.t-VID{background:#6B7FA8;} .kn .kt.t-DOC{background:#8A7AA8;} .kn .kt.t-FAQ{background:#6F8F7A;}
+.kn .kn-n{font-weight:700;font-size:14px;display:block;}
+.kn .kn-s{font-size:12px;color:var(--ink-faint);display:block;margin-top:2px;}
 .kn .ka{margin-left:auto;color:var(--ink-faint);font-size:16px;}
+.kn .kdot{width:9px;height:9px;border-radius:50%;background:var(--red);flex:none;margin-left:auto;}
+.kn .kdot.off{background:transparent;border:1.5px solid var(--border-strong);}
+.kn.kn-baru{border-color:var(--red);}
+.kn .kn-e{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.07em;color:var(--red);display:block;}
+.knbar{height:5px;border-radius:99px;background:rgba(255,255,255,.25);margin-top:10px;overflow:hidden;}
+.knbar > i{display:block;height:100%;background:#fff;border-radius:99px;}
+.mgrid button{position:relative;}
+.mbadge{position:absolute;top:5px;right:5px;background:var(--red);color:#fff;font-size:9.5px;font-weight:700;padding:2px 6px;border-radius:99px;}
+.kn-sec{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.08em;color:var(--ink-faint);margin:16px 0 8px;text-transform:uppercase;}
 
 /* ---------- reward ---------- */
 .rw{display:flex;align-items:center;gap:12px;padding:13px;border:1px solid var(--border);border-radius:12px;background:var(--surface);}
@@ -1306,7 +1316,7 @@ async function rebuildKatalog() {
     await setDoc(doc(db, "publik", "katalog"), {
       kuesioner: aktif(C.adm.kuesioner).map((x) => ({ id: x.id, judul: x.judul, target: tgt(x), mulai: x.mulai || "", selesai: x.selesai || "", pertanyaan: x.pertanyaan || [] })),
       posttest: aktif(C.adm.posttest).map((x) => ({ id: x.id, judul: x.judul, target: tgt(x), mulai: x.mulai || "", selesai: x.selesai || "", soal: x.soal || [] })),
-      knowledge: aktif(C.adm.knowledge).map((x) => ({ id: x.id, judul: x.judul, tipe: x.tipe, url: x.url, target: tgt(x) })),
+      knowledge: aktif(C.adm.knowledge).map((x) => ({ id: x.id, judul: x.judul, tipe: x.tipe, url: x.url, target: tgt(x), dibuat: x.createdAt || "" })),
       panduan: aktif(C.adm.panduan).map((x) => ({ id: x.id, pertanyaan: x.pertanyaan, jawaban: x.jawaban, kategori: x.kategori || "Umum", audiens: x.audiens && x.audiens.length ? x.audiens : ["petugas", "organik"] })),
       diperbarui: nowIso()
     });
@@ -2432,6 +2442,12 @@ function vHome() {
   const menu = [["KS", "Kuesioner", "tugas"], ["PT", "Post Test", "tugas"], ["LB", "Leaderboard", "leaderboard"], ["KN", "Knowledge", "knowledge"],
     ["HD", "Hadiah", "hadiah"], ["PN", "Poin Saya", "poin"], ["PF", "Profil", "profil"], ["BT", "Bantuan", "bantuan"]];
   const top5 = C.lb && C.lb.semua ? C.lb.semua.slice(0, 5) : null;
+  const knB = C.katalog.loaded ? knBaruBelumDibuka() : [];
+  const kb = knB[0];
+  const kartuKnBaru = kb ? '<button class="kn kn-baru" data-do="bukaKn" data-v="' + esc(kb.id) + '"><span class="kt t-' + esc((kb.tipe || "DOC").toUpperCase()) + '">' + esc((kb.tipe || "DOC").toUpperCase()) + "</span>" +
+    '<span class="grow" style="min-width:0;"><span class="kn-e">MATERI BARU &middot; ' + (jamSejak(kb.dibuat) < 24 ? "HARI INI" : "MINGGU INI") + (knB.length > 1 ? " &middot; +" + (knB.length - 1) + " lainnya" : "") + "</span>" +
+    '<span class="kn-n">' + esc(kb.judul) + '</span><span class="kn-s">' + esc(domainDari(kb.url)) + " &middot; ketuk untuk buka</span></span>" +
+    '<span class="ka">&rsaquo;</span></button>' : "";
   return '<div class="hero"><div class="eyebrow">' + esc(p.group) + " &middot; " + esc(p.cluster || "-") + "</div>" +
     "<h1>Halo, " + esc(namaTampil(p).split(" ")[0]) + "</h1></div>" +
     '<div class="pad stack" style="margin-top:-14px;">' +
@@ -2441,6 +2457,7 @@ function vHome() {
       '<div class="stat lift"><div class="lbl">Peringkat</div><div class="n mono">' + (r ? "#" + fmtNum(r.global) : "&hellip;") + "</div>" +
         '<div class="k lbl" style="color:var(--ink-dim);">' + (r ? "dari " + fmtNum(r.total) + " &middot; #" + fmtNum(r.grup) + " di " + esc(p.group) : "menghitung") + "</div></div>" +
     "</div>" +
+    kartuKnBaru +
     '<div class="sec-head"><h2>Tugas Aktif</h2><button class="link" data-do="muatUlang">Muat ulang</button></div>' +
     (!C.katalog.loaded || !C.mine.loaded ? '<div class="skel">Memuat tugas&hellip;</div>'
       : aktif.length ? aktif.slice(0, 3).map((x) => kartuTugas(x[0], x[1], null)).join("")
@@ -2448,7 +2465,8 @@ function vHome() {
     (aktif.length > 3 ? '<button class="btn btn-ghost btn-sm btn-block" data-do="tab" data-v="tugas">Lihat semua tugas (' + aktif.length + ")</button>" : "") +
     (selesai.length ? '<div class="sec-head"><h2>Sudah Selesai</h2></div>' + selesai.slice(0, 2).map((x) => kartuTugas(x[0], x[1], x[2])).join("") : "") +
     '<div class="sec-head"><h2>Menu</h2></div><div class="mgrid">' +
-      menu.map((m) => '<button data-do="tab" data-v="' + m[2] + '"><span class="mi">' + m[0] + '</span><span class="mt">' + m[1] + "</span></button>").join("") + "</div>" +
+      menu.map((m) => '<button data-do="tab" data-v="' + m[2] + '">' + (m[2] === "knowledge" && knB.length ? '<span class="mbadge">' + knB.length + " baru</span>" : "") +
+        '<span class="mi">' + m[0] + '</span><span class="mt">' + m[1] + "</span></button>").join("") + "</div>" +
     '<div class="sec-head"><h2>Top 5 Leaderboard</h2><button class="link" data-do="tab" data-v="leaderboard">Semua</button></div>' +
     '<div class="card">' + (top5 ? barisLb(top5, p.id) : '<div class="skel">Memuat&hellip;</div>') + "</div>" +
     "</div>";
@@ -2528,15 +2546,54 @@ function vLeaderboard() {
     '<div class="note" style="margin-top:12px;">Leaderboard diperbarui berkala oleh sistem, bukan detik per detik. Poinmu sendiri di Beranda selalu terbaru.</div></div>';
 }
 
-function vKnowledge() {
+/* ===== Knowledge (mockup "Knowledge — tampilan petugas", 12 Okt 2026) =====
+   0 reads tambahan: materi ikut cache katalog; status "sudah dibuka" disimpan di HP (localStorage, per akun). */
+const KN_BARU_HARI = 7;
+function kunciKnDibuka() { return "kn_dibuka_" + (S.me || ""); }
+function knDibuka() { return cacheAmbil(kunciKnDibuka()) || {}; }
+function tandaiKnDibuka(id) { const m = knDibuka(); m[id] = 1; cacheSimpan(kunciKnDibuka(), m); }
+function knowledgeSaya() {
   const p = S.profilSaya;
-  const arr = C.katalog.knowledge.filter((k) => { const t = k.target || {}; return (!t.group || t.group === "semua" || t.group === p.group) && (!t.area || t.area === p.area) && (!t.regional || t.regional === p.regional); });
-  return hero("S-07 &middot; Knowledge", "Materi &amp; Key Visual", "Direktori tautan &middot; dibuka di browser") +
-    '<div class="pad">' + (!arr.length ? '<div class="card"><div class="empty">Belum ada materi untuk wilayahmu.</div></div>' :
-      arr.map((k) => '<a class="kn" href="' + esc(k.url) + '" target="_blank" rel="noopener noreferrer"><span class="kt">' + esc(k.tipe || "DOC") + "</span>" +
-        '<span class="grow"><span class="kn-n" style="display:block;">' + esc(k.judul) + '</span><span class="kn-s">' + esc(k.tipe || "DOC") + "</span></span>" +
-        '<span class="ka">&#8599;</span></a>').join("")) +
-    '<div class="note" style="margin-top:14px;">Tautan terbuka di tab baru supaya aplikasi tetap ringan.</div></div>';
+  if (!p) return [];
+  return (C.katalog.knowledge || []).filter((k) => { const t = k.target || {}; return (!t.group || t.group === "semua" || t.group === p.group) && (!t.area || t.area === p.area) && (!t.regional || t.regional === p.regional); })
+    .sort((a, b) => (b.dibuat || "").localeCompare(a.dibuat || ""));
+}
+function knBaru(k) { return !!k.dibuat && jamSejak(k.dibuat) < KN_BARU_HARI * 24; }
+function knBaruBelumDibuka() { const d = knDibuka(); return knowledgeSaya().filter((k) => knBaru(k) && !d[k.id]); }
+function domainDari(url) { try { return new URL(url).hostname.replace(/^www\./, ""); } catch (e) { return ""; } }
+function ketKn(k) {
+  const t = k.target || {};
+  const tempat = t.regional ? "Regional " + t.regional : t.area ? "Area " + t.area : (k.dibuat ? fmtTgl(k.dibuat) : "");
+  return [domainDari(k.url), tempat].filter(Boolean).map(esc).join(" &middot; ");
+}
+function kartuKn(k, dibuka) {
+  const tipe = (k.tipe || "DOC").toUpperCase();
+  return '<button class="kn" data-do="bukaKn" data-v="' + esc(k.id) + '"><span class="kt t-' + esc(tipe) + '">' + esc(tipe) + "</span>" +
+    '<span class="grow" style="min-width:0;"><span class="kn-n">' + esc(k.judul) + '</span><span class="kn-s">' + ketKn(k) + "</span></span>" +
+    '<span class="kdot' + (dibuka ? " off" : "") + '" title="' + (dibuka ? "Sudah dibuka" : "Belum dibuka") + '"></span></button>';
+}
+function vKnowledge() {
+  const semua = knowledgeSaya();
+  if (!semua.length) return '<div class="hero"><h1>Knowledge</h1></div><div class="pad"><div class="card" style="text-align:center;padding:40px 18px;">' +
+    '<svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" style="color:var(--ink-faint);" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>' +
+    '<div style="font-weight:700;font-size:16px;margin-top:12px;">Belum ada materi untuk kamu</div>' +
+    '<div class="note" style="margin-top:6px;">Materi dari tim program akan muncul di sini. Kami kabari di Beranda kalau ada yang baru.</div>' +
+    '<button class="btn btn-ghost" style="margin-top:16px;" data-do="tab" data-v="home">Kembali ke Beranda</button></div></div>';
+  const dib = knDibuka();
+  const sudah = semua.filter((k) => dib[k.id]).length;
+  const q = (S.knCari || "").trim().toLowerCase(), f = S.knTipe || "semua";
+  const tipes = ["semua"].concat(TIPE_KN.filter((t) => semua.some((k) => (k.tipe || "DOC").toUpperCase() === t)));
+  const cocok = semua.filter((k) => (f === "semua" || (k.tipe || "DOC").toUpperCase() === f) && (!q || (k.judul || "").toLowerCase().indexOf(q) >= 0));
+  const baru = cocok.filter(knBaru), lain = cocok.filter((k) => !knBaru(k));
+  return '<div class="hero"><h1>Knowledge</h1><p>' + fmtNum(sudah) + " dari " + fmtNum(semua.length) + " materi sudah dibuka</p>" +
+      '<div class="knbar"><i style="width:' + Math.round(sudah / semua.length * 100) + '%;"></i></div></div>' +
+    '<div class="pad">' +
+    '<input type="search" data-in="knCari" value="' + esc(S.knCari || "") + '" placeholder="Cari judul materi&hellip;" style="width:100%;padding:11px 13px;border-radius:11px;border:1px solid var(--border-strong);font-size:14px;margin-bottom:10px;">' +
+    '<div class="chips" style="flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px;">' + tipes.map((t) => '<button class="chip ' + (f === t ? "on" : "") + '" data-do="knTipe" data-v="' + t + '">' + (t === "semua" ? "Semua" : t) + "</button>").join("") + "</div>" +
+    (!cocok.length ? '<div class="card" style="margin-top:12px;"><div class="empty">Tidak ada materi yang cocok.</div></div>' : "") +
+    (baru.length ? '<div class="kn-sec">Baru minggu ini</div>' + baru.map((k) => kartuKn(k, dib[k.id])).join("") : "") +
+    (lain.length ? '<div class="kn-sec">' + (baru.length ? "Semua materi" : "Materi") + "</div>" + lain.map((k) => kartuKn(k, dib[k.id])).join("") : "") +
+    '<div class="note" style="margin-top:14px;">Tautan terbuka di tab baru. Titik merah = belum kamu buka.</div></div>';
 }
 
 function vHadiah() {
@@ -3533,6 +3590,14 @@ const DO = {
   keDaftar() { S.view = "daftar"; S.daftar.err = ""; if (!C.wilayahLoaded) loadWilayah(); render(); },
   keDaftarOrg() { S.view = "daftarOrganik"; S.daftarOrg.err = ""; if (!C.wilayahLoaded) loadWilayah(); render(); },
   tab(v) { S.view = "app"; S.tab = v; S.gate = null; S.run = null; S.panduanCari = ""; render(); onTab(v); },
+  knTipe(v) { S.knTipe = v; render(); },
+  bukaKn(v) {
+    const k = (C.katalog.knowledge || []).find((x) => x.id === v);
+    if (!k) return toast("no", "Materi tidak ditemukan. Ketuk Muat ulang di Beranda.");
+    tandaiKnDibuka(v);
+    try { window.open(k.url, "_blank", "noopener"); } catch (e) {}
+    render();
+  },
   setGroup(v) { S.daftar.group = v; render(); },
   lbFilter(v) { S.lbFilter = v; render(); },
   organikTab(v) { S.organikTab = v; S.panduanCari = ""; if (v === "panduan" && !C.katalog.loaded) loadKatalog(); render(); },
@@ -4565,7 +4630,7 @@ root.addEventListener("input", (e) => {
   const el = e.target, path = el.getAttribute("data-in");
   if (!path || el.tagName === "SELECT") return;
   setPath(path, el.value);
-  if (path === "panduanCari") return render();
+  if (path === "panduanCari" || path === "knCari") return render();
   if (!el.getAttribute("data-live")) return;
   const hint = root.querySelector('[data-hint="' + path.split(".")[1] + '"]');
   if (!hint) return;
