@@ -297,7 +297,7 @@ import {
   initializeFirestore, memoryLocalCache, waitForPendingWrites,
   collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, addDoc,
   query, where, orderBy, limit, startAfter, onSnapshot, writeBatch,
-  increment, deleteField, getDocFromServer, getDocsFromServer, getCountFromServer, getAggregateFromServer, average, runTransaction
+  increment, deleteField, serverTimestamp, getDocFromServer, getDocsFromServer, getCountFromServer, getAggregateFromServer, average, runTransaction
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 import { getAuth, signInWithEmailAndPassword, signInAnonymously, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 
@@ -538,7 +538,11 @@ async function ikatPerangkat(userId, kode) {
   const authUid = await pastikanAnon();
   const sa = await getDocFromServer(doc(db, "sesiAuth", authUid));
   if (sa.exists()) {
-    if (sa.data().userId === userId) return "sudah";
+    if (sa.data().userId === userId) {
+      /* Sesi lama masih ada, tapi akun mungkin sudah dipindah ke HP lain → tawarkan pindah balik */
+      try { await getDocFromServer(doc(db, "perangkat", userId)); } catch (e) { if (e.code === "permission-denied") throw errKode("terikat-hp-lain"); throw e; }
+      return "sudah";
+    }
     throw errKode("hp-akun-lain", { akunLain: sa.data().userId });
   }
   return authUid;
@@ -744,6 +748,67 @@ async function cariProfilBelumTersimpan(log) {
     .map((p) => Object.assign(p, { hpSejak: hp[p.id] }))
     .sort((a, b) => (b.hpSejak || "").localeCompare(a.hpSejak || ""));
   return { daftar: hasil, hp: ps.size };
+}
+
+/* ===== PINDAH HP MANDIRI (petugas, sejak 12 Okt 2026) =====
+   Ditulis ke petugas: "1x per 30 hari". Sistem (rules) mengizinkan tiap 7 hari — keputusan Admin.
+   Verifikasi: 4 digit terakhir nomor aktif terdaftar, dicocokkan di SERVER (nomor tak pernah dikirim ke HP).
+   Tebakan dicatat dulu di percobaan_pindah (3 slot/hari) → tebakan salah tetap terhitung. */
+const PINDAH_JEDA_HARI = 7, PINDAH_TULISAN_HARI = 30;
+const tglUTC = () => new Date().toISOString().slice(0, 10);
+const tambahHariIso = (iso, n) => new Date(new Date(iso).getTime() + n * 86400000).toISOString();
+async function statusJedaPindah(userId) {
+  const qs = await getDocsFromServer(query(col("log_pindah"), where("userId", "==", userId)));
+  const ev = rows(qs).map((x) => Object.assign(x, { t: x.waktu && x.waktu.toDate ? x.waktu.toDate().toISOString() : String(x.waktu || "") }))
+    .sort((a, b) => (b.t || "").localeCompare(a.t || ""));
+  const terakhir = ev.find((x) => x.cara === "mandiri");
+  const dibuka = terakhir && ev.some((x) => x.cara === "buka_jeda" && x.t > terakhir.t);
+  const masihJeda = !!terakhir && !dibuka && jamSejak(terakhir.t) < PINDAH_JEDA_HARI * 24;
+  return { terakhir: terakhir ? terakhir.t : null, masihJeda, bisaLagi: terakhir ? tambahHariIso(terakhir.t, PINDAH_TULISAN_HARI) : null };
+}
+async function pindahHpMandiri(userId, kode, digit4) {
+  const authUid = await pastikanAnon();
+  /* 1) Catat tebakan di slot kosong hari ini (1..3). Slot terisi → create ditolak → coba slot berikutnya. */
+  let bukti = null, ke = 0;
+  for (let k = 1; k <= 3 && !bukti; k++) {
+    const id = userId + "_" + tglUTC() + "_" + k;
+    const b1 = writeBatch(db);
+    b1.set(doc(db, "percobaan_pindah", id), { userId, authUid, tebakan: digit4, waktu: serverTimestamp() });
+    try { await kirim(b1); bukti = id; ke = k; }
+    catch (e) { if (e.code !== "permission-denied") throw e; }
+  }
+  if (!bukti) throw errKode("pindah-kunci");
+  /* 2) Pindahkan: perangkat → HP ini, sesi (kalau belum ada), catatan log. Server menolak kalau 4 digit salah / masih jeda. */
+  const sa = await getDocFromServer(doc(db, "sesiAuth", authUid));
+  if (sa.exists() && sa.data().userId !== userId) throw errKode("hp-akun-lain");
+  const b = writeBatch(db);
+  b.set(doc(db, "perangkat", userId), { authUid, kode, waktu: nowIso(), pindahAt: serverTimestamp(), bukti });
+  if (!sa.exists()) b.set(doc(db, "sesiAuth", authUid), { userId });
+  b.set(doc(db, "log_pindah", bukti), { userId, cara: "mandiri", waktu: serverTimestamp() });
+  try { await kirim(b); }
+  catch (e) { if (e.code === "permission-denied") throw errKode("pindah-ditolak", { sisa: 3 - ke }); throw e; }
+  return true;
+}
+/* HP lama: akun sudah dipindah ke HP lain? (cek ringan, maks tiap 3 jam per HP) */
+async function cekMasihPemilik(userId) {
+  const k = "cekhp_" + userId, c = cacheAmbil(k);
+  if (c && Date.now() - c < 3 * 3600000) return true;
+  try { await getDocFromServer(doc(db, "perangkat", userId)); cacheSimpan(k, Date.now()); return true; }
+  catch (e) { return e.code === "permission-denied" ? false : true; }
+}
+
+
+/* Nama harus nama orang: tolak isian yang berupa deretan angka (NIK/ID/nomor HP salah kolom) */
+function namaTidakWajar(nama) {
+  const n = String(nama || "").trim();
+  if (/\d{4,}/.test(n) || (n.replace(/[^0-9]/g, "").length > n.replace(/[^A-Za-z]/g, "").length)) return "Nama tidak boleh berisi angka (NIK/ID/nomor HP). Isi nama lengkap sesuai KTP.";
+  if (n.replace(/[^A-Za-z]/g, "").length < 2) return "Nama lengkap wajib diisi dengan huruf.";
+  return "";
+}
+/* Admin koreksi nama petugas (salah ketik / terisi NIK). Ringkasan & leaderboard ikut berubah di
+   pembaruan harian berikutnya; riwayat aktivitas lama tetap menyimpan nama saat kejadian. */
+async function ubahNamaAdmin(userId, nama) {
+  await updateDoc(doc(db, "petugas", userId), { nama, namaDiubahAt: nowIso(), namaDiubahOleh: S.adminUser ? S.adminUser.email : "admin" });
 }
 
 /* Admin ubah nomor 1 petugas: petugas_cek + kontak branch-nya sekaligus */
@@ -1135,7 +1200,7 @@ async function loadOrganikSaya(email) {
 }
 
 function mulaiSesiOrganik(email) {
-  S.me = email; S.view = "organikApp"; S.organikProfil = null; S.ringkasanOrg = null; S.organikTab = "beranda"; S.orgBuka = {}; S.orgNode = {}; S.orgKontak = {};
+  S.me = email; S.view = "organikApp"; S.organikProfil = null; S.ringkasanOrg = null; S.organikTab = "beranda"; S.orgBuka = {}; S.orgNode = {}; S.orgKontak = {}; S.orgReset = {};
   render();
   loadOrganikSaya(email);
 }
@@ -1345,7 +1410,7 @@ async function loadAdminStats() {
   const per = periode();
   const cntAtauNull = (q) => getCountFromServer(q).then((r) => r.data().count).catch(() => null);
   const ambil = (q) => getDocs(q).then(rows).catch(() => null);
-  const [hq, rv, nonaktifL, pendingL, respPer, grpResp, pt, prList, orgL] = await Promise.all([
+  const [hq, rv, nonaktifL, pendingL, respPer, grpResp, pt, prList, orgL, lp30] = await Promise.all([
     /* Hitung ulang nasional hanya kalau hasil terakhir >24 jam & tidak sedang dihitung di tab lain */
     perbaruiRingkasanNasional(false).catch(() => null).then((r) => r || bacaRingkasan("hq_NASIONAL")),
     ambil(query(col("petugas"), where("status", "==", "review"), limit(200))),
@@ -1355,8 +1420,14 @@ async function loadAdminStats() {
     Promise.all(GROUPS.map((g) => cntAtauNull(query(col("respons"), where("grupPeriode", "==", g + "|" + per))))),
     getAggregateFromServer(col("hasil"), { rata: average("benar"), soal: average("total") }).then((r) => r.data()).catch(() => ({ rata: null, soal: null })),
     ambil(query(col("peringatan"), where("status", "==", "baru"), limit(50))),
-    ambil(col("organik"))
+    ambil(col("organik")),
+    /* Pindah HP mandiri 30 hari terakhir — biaya = jumlah pemindahan (kecil) */
+    ambil(query(col("log_pindah"), where("waktu", ">=", new Date(Date.now() - 30 * 86400000))))
   ]);
+  /* Petugas yang pindah HP mandiri >= 2x dalam 30 hari → kandidat joki */
+  const hitPindah = {};
+  (lp30 || []).filter((x) => x.cara === "mandiri").forEach((x) => { hitPindah[x.userId] = (hitPindah[x.userId] || 0) + 1; });
+  C.adm.pindahCuriga = Object.keys(hitPindah).filter((id) => hitPindah[id] >= 2).map((id) => ({ id, n: hitPindah[id] })).sort((a, b) => b.n - a.n);
   const ada = (x) => x !== null && x !== undefined;
   const grup = hq && hq.grup ? hq.grup : null;
   const aktifG = GROUPS.map((g) => (grup && grup[g] ? grup[g].aktif || 0 : null));
@@ -1873,13 +1944,15 @@ async function loadPetugasPage(reset) {
 }
 
 async function loadDetailPetugas(userId) {
-  const [pub, priv, hp, fotos, led, prg] = await Promise.all([
+  const [pub, priv, hp, fotos, led, prg, rst, lp] = await Promise.all([
     getDoc(doc(db, "petugas", userId)),
     getDoc(doc(db, "petugas_cek", userId)),
     getDoc(doc(db, "perangkat", userId)),
     getDocs(query(col("foto_aktivitas"), where("userId", "==", userId), limit(20))),
     getDocs(query(col("ledger"), where("userId", "==", userId), limit(200))),
-    getDocs(query(col("peringatan"), where("userId", "==", userId), limit(20)))
+    getDocs(query(col("peringatan"), where("userId", "==", userId), limit(20))),
+    getDocs(query(col("log_reset"), where("userId", "==", userId), limit(10))).catch(() => null),
+    getDocs(query(col("log_pindah"), where("userId", "==", userId), limit(20))).catch(() => null)
   ]);
   return {
     pub: pub.exists() ? Object.assign({ id: pub.id }, pub.data()) : null,
@@ -1887,7 +1960,11 @@ async function loadDetailPetugas(userId) {
     hp: hp.exists() ? hp.data() : null,
     fotos: rows(fotos).sort((a, b) => (b.waktu || "").localeCompare(a.waktu || "")),
     ledger: rows(led).sort((a, b) => (b.waktu || "").localeCompare(a.waktu || "")),
-    peringatan: rows(prg).sort((a, b) => (b.waktu || "").localeCompare(a.waktu || ""))
+    peringatan: rows(prg).sort((a, b) => (b.waktu || "").localeCompare(a.waktu || "")),
+    resetOrg: rst ? rows(rst).sort((a, b) => (b.waktu || "").localeCompare(a.waktu || "")) : [],
+    /* Riwayat pindah HP mandiri & buka-jeda (waktu = Timestamp server) */
+    pindah: lp ? rows(lp).map((x) => Object.assign(x, { t: x.waktu && x.waktu.toDate ? x.waktu.toDate().toISOString() : String(x.waktu || "") }))
+      .sort((a, b) => (b.t || "").localeCompare(a.t || "")) : []
   };
 }
 
@@ -2146,7 +2223,9 @@ function vMasuk() {
     '<input type="text" class="mono" value="' + esc(m.username) + '" data-in="masuk.username" placeholder="cth. MAR9789836_DS" style="text-transform:uppercase;" autocapitalize="characters"></div>' +
     (m.info ? '<div class="note" style="margin-top:12px;">' + esc(m.info) + "</div>" : "") +
     (m.err ? '<div class="err" style="margin-top:12px;">' + m.err + "</div>" : "") +
-    '<button class="btn btn-primary btn-block" style="margin-top:16px;" data-do="masuk" ' + (m.busy ? "disabled" : "") + ">" + (m.busy ? "Memeriksa…" : "Masuk") + "</button>" +
+    (m.bisaPindah ? '<button class="btn btn-primary btn-block" style="margin-top:10px;" data-do="mulaiPindah">&#128241; Ini HP baru saya &mdash; pindahkan akun</button>' +
+      '<div class="note" style="text-align:center;margin-top:6px;">Bukan HP baru? Buka DEBY dari Chrome di HP biasamu.</div>' : "") +
+    '<button class="btn btn-primary btn-block" style="margin-top:16px;" data-do="masuk"' + (m.busy ? "disabled" : "") + ">" + (m.busy ? "Memeriksa…" : "Masuk") + "</button>" +
     '<div style="text-align:center;margin-top:14px;font-size:13px;color:var(--ink-dim);">ID belum terdaftar? ' +
     '<button style="background:none;border:none;color:var(--red);font-weight:700;cursor:pointer;padding:0;" data-do="keDaftar">Daftar sebagai petugas baru</button></div>' +
     "</div>" +
@@ -2154,6 +2233,45 @@ function vMasuk() {
     '<div style="text-align:center;margin-top:6px;"><button style="background:none;border:none;color:var(--ink-dim);font-size:12.5px;font-weight:600;cursor:pointer;" data-do="ke" data-v="masukOrganik">Masuk sebagai Tim Internal (Organik)</button></div>' +
     '<div style="text-align:center;"><button style="background:none;border:none;color:var(--ink-faint);font-size:12px;cursor:pointer;" data-do="ke" data-v="admLogin">Masuk sebagai Super Admin</button></div>' +
     "</div></div>";
+}
+
+/* ============ pindah HP mandiri (mockup 12 Okt) ============ */
+function heroPolos(ey, judul) {
+  return '<div class="hero" style="border-radius:0 0 18px 18px;"><div class="eyebrow">' + ey + "</div><h1>" + judul + "</h1></div>";
+}
+function vPindahHp() {
+  const s = S.pindah || {};
+  const bantuan = '<div style="font-size:13px;margin-top:4px;">Darurat (HP hilang/rusak)? Hubungi <b>Admin</b> (bisa lewat tim Organik Telkomsel wilayahmu), sebutkan ID Digipos-mu.</div>';
+  const kembali = '<button class="btn btn-ghost btn-block" data-do="pindahBatal">Kembali ke layar Masuk</button>';
+  if (s.step === "cek") return '<div class="wrap-plain">' + heroPolos("Pindah HP", "Memeriksa&hellip;") + '<div class="pad"><div class="skel">Memeriksa akunmu&hellip;</div></div></div>';
+  if (s.step === "jeda" || s.step === "kunci") return '<div class="wrap-plain">' + heroPolos("Pindah HP", "Belum bisa pindah") + '<div class="pad stack">' +
+    (s.step === "jeda"
+      ? kotakInfo("Kamu sudah pindah HP pada <b>" + fmtTgl(s.terakhir) + "</b>. Pindah HP mandiri maksimal <b>1x per 30 hari</b>; pindah berikutnya bisa mulai <b>" + fmtTgl(s.bisaLagi) + "</b>.", "warn")
+      : kotakInfo("Sudah <b>3x salah</b> memasukkan 4 digit hari ini. Pindah HP mandiri terkunci sampai besok.", "warn")) +
+    bantuan + kembali + "</div></div>";
+  if (s.step === "ok") return '<div class="wrap-plain">' + heroPolos("Pindah HP", "Akun dipindah") + '<div class="pad stack" style="text-align:center;">' +
+    '<div style="font-size:40px;color:var(--good);">&#10004;</div><div style="font-weight:700;font-size:16px;">Akunmu sekarang di HP ini</div>' +
+    '<div class="note">HP lama sudah tidak bisa dipakai untuk DEBY.</div>' +
+    kotakInfo("Pindah HP berikutnya baru bisa <b>" + fmtTgl(s.bisaLagi) + "</b>. Simpan DEBY di layar utama (menu &#8942; &rarr; Tambahkan ke layar utama) supaya tidak perlu pindah lagi.", "warn") +
+    '<button class="btn btn-primary btn-block" data-do="pindahSelesai">Masuk ke Beranda</button></div></div>';
+  /* step verif */
+  return '<div class="wrap-plain">' + heroPolos("Pindah HP", "Pindahkan akun ke HP ini?") + '<div class="pad stack">' +
+    '<div class="err" style="line-height:1.55;"><b>Perhatian.</b> Pindah HP mandiri dibatasi dan setiap pemindahan <b>tercatat</b> (maksimal <b>1x per 30 hari</b>). ' +
+      "Memindahkan akun milik orang lain atau mengerjakan tugas untuk orang lain = <b>akun dinonaktifkan &amp; poin dibekukan</b>.</div>" +
+    '<div class="card"><div class="lbl">Akun</div><div class="mono" style="font-weight:700;">' + esc(s.userId) + " &middot; " + esc(s.kode) + "</div>" +
+      '<div class="field" style="margin-top:12px;"><label class="req">4 digit terakhir nomor aktif yang kamu daftarkan</label>' +
+      '<input type="tel" inputmode="numeric" maxlength="4" class="mono" data-in="pindah.digit" value="' + esc(s.digit || "") + '" placeholder="&bull;&bull;&bull;&bull;" style="font-size:22px;letter-spacing:.5em;text-align:center;"></div>' +
+      '<div data-do="pindahSetuju" style="display:flex;gap:10px;align-items:flex-start;margin-top:12px;cursor:pointer;font-size:13px;">' +
+        '<span class="mono" style="font-size:18px;line-height:1;">' + (s.setuju ? "&#9745;" : "&#9744;") + "</span><span>Saya pemilik akun ini dan paham tindakan ini tercatat.</span></div></div>" +
+    (s.err ? '<div class="err">' + s.err + "</div>" : "") +
+    '<button class="btn btn-primary btn-block" data-do="pindahKirim"' + (s.busy ? " disabled" : "") + ">" + (s.busy ? "Memproses&hellip;" : "Pindahkan ke HP ini") + "</button>" +
+    '<div class="note" style="text-align:center;">Salah 3x = terkunci sampai besok</div>' + bantuan + kembali + "</div></div>";
+}
+function vDipindah() {
+  return '<div class="wrap-plain">' + heroPolos("DEBY", "Akun dipindah") + '<div class="pad stack">' +
+    '<div class="err" style="line-height:1.55;">Akunmu sudah <b>dipindahkan ke HP lain</b>. HP ini tidak bisa dipakai lagi untuk DEBY.</div>' +
+    '<div style="font-size:13.5px;"><b>Bukan kamu yang memindahkan?</b> Segera lapor ke <b>Admin</b> (bisa lewat tim Organik Telkomsel wilayahmu), sebutkan ID Digipos-mu. Akun akan diperiksa.</div>' +
+    '<button class="btn btn-ghost btn-block" data-do="keluar">Keluar</button></div></div>';
 }
 
 /* ============ daftar (petugas baru) ============ */
@@ -2819,6 +2937,9 @@ function aDashboard() {
       kartu("Completion Kuesioner", s.completion === null ? "&ndash;" : s.completion + "%", N(s.respPer) + " respons &middot; target = petugas aktif") +
       kartu("Redeem Pending", N(s.pending), "poin ditahan &middot; perlu review", true) +
     "</div>" +
+    ((C.adm.pindahCuriga || []).length ? '<div class="sec-head"><h2>&#9888; Pindah HP Mencurigakan</h2><span class="lbl">&ge;2x pindah mandiri dalam 30 hari</span></div>' +
+      C.adm.pindahCuriga.map((x) => '<div class="aq"><span class="pill pill-warn">' + x.n + 'x</span><div class="grow"><div class="aq-n mono">' + esc(x.id) + '</div><div class="aq-s">Cek apakah akun dipakai orang lain (joki). Bisa dinonaktifkan dari Detail.</div></div>' +
+        '<button class="btn btn-ghost btn-sm" data-do="detailPetugas" data-v="' + esc(x.id) + '">Detail</button></div>').join("") : "") +
     '<div class="sec-head"><h2>&#9888; Peringatan Foto</h2><span class="lbl">' + N(s.peringatan) + " belum dicek</span></div>" +
     (!C.adm.peringatan.length ? '<div class="card"><div class="empty" style="padding:16px;">Tidak ada foto yang perlu dicek.</div></div>' :
       C.adm.peringatan.map((w) => '<div class="aq"><span class="pill pill-warn">' + esc(LABEL_TIPE_FOTO[w.tipe] || w.tipe) + "</span>" +
@@ -3339,6 +3460,9 @@ function modalDetail(d) {
     (priv.fotoPending ? '<div class="note" style="margin-bottom:12px;"><div style="margin-bottom:8px;">Pengajuan ganti foto baseline:</div><img src="' + priv.fotoPending + '" style="width:120px;border-radius:8px;display:block;margin-bottom:8px;">' +
       '<button class="btn btn-ok btn-sm" data-do="setujuiFoto" data-v="' + esc(v) + '">Setujui</button> <button class="btn btn-danger btn-sm" data-do="tolakFoto" data-v="' + esc(v) + '">Tolak</button></div>' : "") +
     '<div class="card" style="background:var(--surface-2);margin-bottom:12px;">' +
+      '<div class="lbl">Nama &middot; ubah bila salah ketik</div>' +
+      '<div class="row" style="gap:8px;margin:4px 0 10px;"><input type="text" class="grow" data-nama-adm="1" value="' + esc(p.nama || "") + '" placeholder="Nama lengkap sesuai KTP" style="padding:8px;border-radius:9px;border:1px solid var(--border-strong);font-size:13.5px;min-width:0;">' +
+        '<button class="btn btn-ghost btn-sm" data-do="simpanNamaAdm" data-v="' + esc(v) + '">Simpan</button></div>' +
       '<div class="lbl">Group &middot; ubah bila salah input</div>' +
       '<select data-grup="' + esc(v) + '" style="width:100%;margin:4px 0 10px;padding:9px;border-radius:9px;border:1px solid var(--border-strong);font-size:13.5px;">' +
         Object.keys(GRP_FIELD).map((g) => '<option value="' + esc(g) + '" ' + (p.group === g ? "selected" : "") + ">" + esc(g) + "</option>").join("") + "</select>" +
@@ -3351,6 +3475,18 @@ function modalDetail(d) {
       '<div class="row" style="gap:8px;margin-top:4px;"><input type="tel" class="mono grow" data-nomor-adm="1" value="' + esc(priv.nomor || "") + '" placeholder="08xx" style="padding:8px;border-radius:9px;border:1px solid var(--border-strong);font-size:13.5px;min-width:0;">' +
         '<button class="btn btn-ghost btn-sm" data-do="simpanNomorAdm" data-v="' + esc(v) + '">Simpan</button></div>' +
       '<div class="lbl" style="margin-top:10px;">HP Terhubung</div><div style="font-size:13.5px;">' + (d.hp ? "Ya, sejak " + fmtWaktu(d.hp.waktu) : "Belum ada HP terhubung") + "</div>" +
+      ((d.resetOrg || []).length ? '<div class="note" style="margin-top:6px;">Reset HP oleh Organik: ' + d.resetOrg.slice(0, 3).map((x) => esc(x.oleh) + " (" + fmtWaktu(x.waktu) + ")").join(", ") + "</div>" : "") +
+      (function () {
+        const pm = (d.pindah || []).filter((x) => x.cara === "mandiri");
+        if (!pm.length) return "";
+        const terakhir = pm[0];
+        const dibuka = (d.pindah || []).some((x) => x.cara === "buka_jeda" && x.t > terakhir.t);
+        const jeda = !dibuka && jamSejak(terakhir.t) < PINDAH_JEDA_HARI * 24;
+        return '<div class="note" style="margin-top:6px;">Pindah HP mandiri: ' + fmtNum(pm.length) + "x &middot; terakhir " + fmtWaktu(terakhir.t) +
+          (pm.filter((x) => jamSejak(x.t) < 30 * 24).length >= 2 ? ' &middot; <b style="color:var(--bad);">&ge;2x dalam 30 hari</b>' : "") +
+          (dibuka ? " &middot; jeda sudah dibuka Admin" : "") +
+          (jeda && d.hp ? ' <button class="btn btn-ghost btn-sm" style="margin-left:6px;" data-do="bukaJedaAdm" data-v="' + esc(v) + '">Buka jeda</button>' : "") + "</div>";
+      })() +
       '<div class="lbl" style="margin-top:10px;">Poin Peringkat / Saldo</div><div class="mono" style="font-size:13.5px;">' + fmtNum(p.poinPeringkat) + " / " + fmtNum(p.saldo) + "</div></div>" +
     '<div class="card-title">Point Ledger</div>' +
     (!d.ledger.length ? '<div class="empty" style="padding:14px;">Belum ada transaksi.</div>' : d.ledger.slice(0, 15).map((l) =>
@@ -3486,6 +3622,8 @@ function render() {
       : S.organikProfil.status !== "aktif" ? vOrganikTunggu()
       : vShellOrganik(S.organikTab === "panduan" ? vPanduan("organik") : vOrganikHome());
   }
+  else if (S.view === "pindahHp") html = vPindahHp();
+  else if (S.view === "dipindah") html = vDipindah();
   else if (!S.me || S.view === "masuk") html = vMasuk();
   else if (!S.profilSaya) html = layarMuat("Memuat akun&hellip;");
   else if (S.profilSaya.status === "belum_lengkap") html = vLengkapi();
@@ -3531,6 +3669,8 @@ function onAdmMenu(v) {
 function mulaiSesi(userId) {
   S.me = userId; S.view = "app"; S.tab = "home"; S.profilSaya = null;
   render();
+  /* HP lama setelah akun dipindah mandiri: sesinya masih ada, tapi ikatan HP sudah milik HP lain */
+  if (!S.previewSebagai) cekMasihPemilik(userId).then((pemilik) => { if (!pemilik) { S.view = "dipindah"; render(); } });
   loadSaya(userId).then((ok) => {
     if (!ok || !S.profilSaya) return;
     if (S.profilSaya.status === "belum_lengkap") { S.lengkapi.nama = S.profilSaya.nama || ""; render(); }
@@ -3557,7 +3697,9 @@ const PESAN_MASUK = {
   "username-salah": "Username Digipos tidak cocok dengan ID tersebut.",
   "nonaktif": "Akun dinonaktifkan. Hubungi Admin.",
   "hp-akun-lain": "HP/browser ini sudah terhubung ke akun lain. Satu HP hanya untuk satu akun.",
-  "terikat-hp-lain": "Akun ini sudah terhubung ke HP atau browser lain. Kalau biasanya membuka dari Chrome, pastikan sekarang juga dari Chrome. Kalau memang ganti HP, minta Admin menekan <b>Reset HP</b>.",
+  "terikat-hp-lain": "Akun ini sudah terhubung ke HP atau browser lain. Kalau biasanya membuka dari Chrome, pastikan sekarang juga dari Chrome.",
+  "pindah-kunci": "Sudah 3x salah memasukkan 4 digit hari ini. Coba lagi besok, atau hubungi Admin.",
+  "pindah-ditolak": "4 digit tidak cocok dengan nomor aktif yang terdaftar.",
   "sudah-terdaftar": "ID ini sudah terdaftar. Kembali ke layar Masuk dan pakai ID &amp; Username Digipos.",
   "username-dipakai": "Username Digipos ini sudah dipakai akun lain. Periksa kembali, atau hubungi Admin."
 };
@@ -3612,7 +3754,7 @@ const DO = {
     } else {
       S.organikProfil = mockProfilOrganik();
       S.ringkasanOrg = mockRingkasanOrganik();
-      S.orgBuka = {}; S.orgNode = {}; S.orgKontak = {};
+      S.orgBuka = {}; S.orgNode = {}; S.orgKontak = {}; S.orgReset = {};
       S.organikTab = "beranda";
     }
     render();
@@ -3627,10 +3769,48 @@ const DO = {
   muatHadiah() { loadHadiah(true); },
   bukaKamera(v) { bukaKamera(v); },
 
+  async mulaiPindah() {
+    const bp = S.masuk.bisaPindah;
+    if (!bp) return;
+    S.pindah = { userId: bp.userId, kode: bp.kode, step: "cek", digit: "", setuju: false, err: "", busy: false };
+    S.view = "pindahHp"; render();
+    try {
+      const j = await statusJedaPindah(bp.userId);
+      Object.assign(S.pindah, { terakhir: j.terakhir, bisaLagi: j.bisaLagi, step: j.masihJeda ? "jeda" : "verif" });
+    } catch (e) { Object.assign(S.pindah, { step: "verif" }); }
+    render();
+  },
+  pindahSetuju() { if (S.pindah) { S.pindah.setuju = !S.pindah.setuju; render(); } },
+  pindahBatal() { S.pindah = null; S.view = "masuk"; render(); },
+  async pindahKirim() {
+    const s = S.pindah;
+    if (!s || s.busy) return;
+    const d = String(s.digit || "").replace(/\D/g, "");
+    if (d.length !== 4) { s.err = "Masukkan tepat 4 digit angka."; return render(); }
+    if (!s.setuju) { s.err = "Centang pernyataan pemilik akun terlebih dahulu."; return render(); }
+    s.busy = true; s.err = ""; render();
+    try {
+      await pindahHpMandiri(s.userId, s.kode, d);
+      Object.assign(s, { busy: false, step: "ok", bisaLagi: tambahHariIso(nowIso(), PINDAH_TULISAN_HARI) });
+      cacheSimpan("cekhp_" + s.userId, Date.now());
+    } catch (e) {
+      s.busy = false;
+      if (e.kode === "pindah-kunci") s.step = "kunci";
+      else if (e.kode === "pindah-ditolak") {
+        /* Bisa karena 4 digit salah, atau masih dalam jeda — cek ulang jeda supaya pesannya tepat */
+        let j = null; try { j = await statusJedaPindah(s.userId); } catch (x) {}
+        if (j && j.masihJeda) Object.assign(s, { step: "jeda", terakhir: j.terakhir, bisaLagi: j.bisaLagi });
+        else { s.err = "4 digit tidak cocok dengan nomor aktif yang terdaftar." + (e.sisa > 0 ? " Sisa percobaan hari ini: " + e.sisa + "." : " Percobaan hari ini habis."); s.digit = ""; if (!(e.sisa > 0)) s.step = "kunci"; }
+      } else s.err = pesanMasuk(e);
+    }
+    render();
+  },
+  pindahSelesai() { const id = S.pindah && S.pindah.userId; S.pindah = null; S.masuk = { id: "", username: "", err: "", info: "", busy: false }; if (id) mulaiSesi(id); },
+
   async masuk() {
     const m = S.masuk;
     if (m.busy) return;
-    m.err = ""; m.info = ""; m.busy = true; render();
+    m.err = ""; m.info = ""; m.bisaPindah = null; m.busy = true; render();
     try {
       const userId = await masukPetugas(m.id, m.username);
       S.masuk = { id: "", username: "", err: "", info: "", busy: false };
@@ -3638,6 +3818,8 @@ const DO = {
     } catch (e) {
       m.busy = false;
       m.err = pesanMasuk(e);
+      /* ID & username benar tapi terikat HP lain → tawarkan pindah HP mandiri */
+      if (e.kode === "terikat-hp-lain") m.bisaPindah = { userId: normUserId(m.id), kode: normKode(m.username) };
       if (e.kode === "tidak-terdaftar") { S.daftar.userId = normUserId(m.id); S.daftar.kode = normKode(m.username); }
       render();
     }
@@ -3648,6 +3830,7 @@ const DO = {
     const err = (t) => { d.err = t; render(); };
     if (d.busy) return;
     if (d.nama.trim().length < 2) return err("Nama lengkap wajib diisi.");
+    if (namaTidakWajar(d.nama)) return err(namaTidakWajar(d.nama));
     if (!d.group) return err("Pilih group.");
     if (!USERID_RE.test(normUserId(d.userId))) return err("ID Digipos harus tepat 10 digit angka.");
     if (!KODE_RE.test(normKode(d.kode))) return err("Format Username Digipos tidak sesuai.");
@@ -3668,6 +3851,7 @@ const DO = {
     const err = (t) => { l.err = t; render(); };
     if (l.busy) return;
     if (l.nama.trim().length < 2) return err("Nama lengkap wajib diisi.");
+    if (namaTidakWajar(l.nama)) return err(namaTidakWajar(l.nama));
     if (!l.nomor.trim()) return err("Nomor aktif wajib diisi.");
     if (!l.foto) return err("Foto petugas wajib diambil.");
     l.busy = true; l.err = ""; render();
@@ -3968,6 +4152,31 @@ const DO = {
     if (S.modal) DO.detailPetugas(v); else render();
   },
 
+  async bukaJedaAdm(v) {
+    if (!confirm("Buka jeda pindah HP mandiri untuk " + v + "?\nPetugas bisa langsung pindah HP sendiri 1x lagi (tetap pakai 4 digit nomor).")) return;
+    try {
+      const b = writeBatch(db);
+      b.update(doc(db, "perangkat", v), { bukaJeda: true });
+      b.set(doc(db, "log_pindah", v + "_jeda_" + Date.now()), { userId: v, cara: "buka_jeda", waktu: serverTimestamp() });
+      await b.commit();
+      toast("ok", "Jeda dibuka. Petugas bisa pindah HP sendiri sekarang.");
+      DO.detailPetugas(v);
+    } catch (e) { toast("no", pesanGagal(e, "Gagal membuka jeda")); }
+  },
+  async simpanNamaAdm(v) {
+    const el = document.querySelector("[data-nama-adm]");
+    const nama = el ? el.value.replace(/\s+/g, " ").trim() : "";
+    const salah = nama.length < 2 ? "Nama wajib diisi." : namaTidakWajar(nama);
+    if (salah) return toast("no", salah);
+    if (!confirm("Ubah nama " + v + " menjadi \"" + nama + "\"?")) return;
+    try {
+      await ubahNamaAdmin(v, nama);
+      const baris = C.adm.petugas.rows.find((r) => r.id === v);
+      if (baris) baris.nama = nama;
+      toast("ok", "Nama diperbarui.");
+      DO.detailPetugas(v);
+    } catch (e) { toast("no", pesanGagal(e, "Gagal menyimpan nama")); }
+  },
   async simpanNomorAdm(v) {
     const el = document.querySelector("[data-nomor-adm]");
     const nomor = el ? el.value.trim() : "";
