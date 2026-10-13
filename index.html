@@ -108,6 +108,7 @@ a{color:var(--red);}
 .grp-ds{background:var(--red-soft);color:var(--red);}
 .grp-ypcr{background:#E6EAF7;color:#3A4E8C;}
 .grp-bud{background:#F6E7D6;color:#8A5418;}
+.grp-lain{background:#E8E4F3;color:#4B3A8A;}
 
 /* ---------- task item ---------- */
 .task{border:1px solid var(--border);border-radius:13px;padding:14px;background:var(--surface);}
@@ -329,9 +330,27 @@ try {
 const auth = getAuth(app);
 
 /* ============ konstanta ============ */
-const GROUPS = ["Direct Sales", "YPCR", "Buddies"];
-/* Satu field poin per group: leaderboard per group cukup orderBy satu field, tanpa composite index. */
+/* Daftar group DINAMIS (sejak 13 Okt 2026): dikelola Super Admin di master/grup {daftar, tutup}, tanpa
+   update index/rules. Isi awal = 3 group lama; diganti isi master/grup saat loadWilayah (bareng, +1 read).
+   tutup = group yang disembunyikan dari form Daftar mandiri (data & poinnya tetap). */
+const GROUPS_AWAL = ["Direct Sales", "YPCR", "Buddies"];
+const GROUPS = GROUPS_AWAL.slice();
+const GROUPS_TUTUP = [];
+/* Field poin khusus hanya untuk 3 group lama (data historis & rules lama). Group baru (mis. Promotor)
+   memakai poinPeringkat langsung — poin group = total poin, karena keduanya selalu naik bersama. */
 const GRP_FIELD = { "Direct Sales": "pDS", "YPCR": "pYPCR", "Buddies": "pBUD" };
+const fGrp = (g) => GRP_FIELD[g] || "poinPeringkat";
+function pasangGroups(d) {
+  const daftar = (d && Array.isArray(d.daftar) && d.daftar.length ? d.daftar : GROUPS_AWAL).filter((g) => typeof g === "string" && g.trim());
+  GROUPS.splice(0, GROUPS.length, ...daftar);
+  GROUPS_TUTUP.splice(0, GROUPS_TUTUP.length, ...((d && d.tutup) || []));
+}
+const groupsDaftar = () => GROUPS.filter((g) => !GROUPS_TUTUP.includes(g));
+/* Admin: simpan daftar group. Server (rules) memakai master/grup.daftar untuk validasi Daftar mandiri. */
+async function simpanGroups(daftar, tutup) {
+  await setDoc(doc(db, "master", "grup"), { daftar, tutup, diperbarui: nowIso(), oleh: S.adminUser ? S.adminUser.email : "admin" });
+  pasangGroups({ daftar, tutup });
+}
 const POIN_KUESIONER = 25;
 const POIN_PER_BENAR = 5;
 const HALAMAN = 50;
@@ -387,7 +406,7 @@ function hariIni() {
 function nowIso() { return new Date().toISOString(); }
 function tambahHari(n) { return new Date(Date.now() + n * 86400000).toISOString(); }
 function uid() { return Math.random().toString(36).slice(2, 11); }
-function grpClass(g) { return g === "Direct Sales" ? "grp-ds" : g === "YPCR" ? "grp-ypcr" : "grp-bud"; }
+function grpClass(g) { return g === "Direct Sales" ? "grp-ds" : g === "YPCR" ? "grp-ypcr" : g === "Buddies" ? "grp-bud" : "grp-lain"; }
 function grpTag(g) { return '<span class="grp ' + grpClass(g) + '">' + esc(g) + "</span>"; }
 function fmtNum(n) { return (n == null ? 0 : n).toLocaleString("id-ID"); }
 function namaTampil(p) { return (p && (p.nama || p.kode || p.id)) || "-"; }
@@ -506,6 +525,19 @@ function errKode(kode, extra) { const e = new Error(kode); e.kode = kode; return
 function kirim(b) {
   return Promise.race([b.commit(), new Promise((_, tolak) => setTimeout(() => tolak(errKode("lambat",
     { message: "Koneksi ke server bermasalah, data BELUM tersimpan. Periksa internet lalu coba lagi." })), 25000))]);
+}
+
+/* Kirim yang AMAN DIULANG (audit 13 Okt). Poin dobel sudah mustahil di server: rules menolak batch kalau
+   ledger berID tetap (kue_/pt_/wel_) sudah ada, dan petugas tidak boleh menimpa ledger. Masalahnya hanya
+   tampilan: kalau batch pertama ternyata sukses tapi responsnya telat, percobaan ulang ditolak server
+   dan petugas melihat "gagal". Di sini: kalau gagal, cek langsung ke server apakah dokumen buktinya
+   sudah ada → anggap SUKSES (tanpa menulis apa pun lagi). */
+async function kirimAtauSudah(b, buktiRef) {
+  try { await kirim(b); return "baru"; }
+  catch (e) {
+    try { if ((await getDocFromServer(buktiRef)).exists()) return "sudah"; } catch (e2) {}
+    throw e;
+  }
 }
 
 /* ---------- identitas perangkat ---------- */
@@ -699,7 +731,7 @@ async function daftarBaru(d) {
     area: d.area, regional: d.regional, branch: d.branch, cluster: d.cluster,
     status: "review", sumber: "daftar", createdAt: nowIso(), poinPeringkat: 0, saldo: 0
   };
-  pub[GRP_FIELD[d.group]] = 0;
+  if (GRP_FIELD[d.group]) pub[GRP_FIELD[d.group]] = 0;
   const b = writeBatch(db);
   b.set(doc(db, "petugas", userId), pub);
   b.set(doc(db, "petugas_cek", userId), { nomor: d.nomor.trim(), foto: d.foto });
@@ -866,12 +898,12 @@ async function lengkapiProfil(p, l) {
     nama: l.nama.trim(), status: "aktif", lengkapAt: nowIso(),
     poinPeringkat: (p.poinPeringkat || 0) + 100, saldo: (p.saldo || 0) + 100, lastLedger: lid
   };
-  upd[f] = (p[f] || 0) + 100;
+  if (GRP_FIELD[p.group]) upd[f] = (p[f] || 0) + 100;
   b.update(doc(db, "petugas", p.id), upd);
   b.set(doc(db, "ledger", lid), { userId: p.id, jenis: "welcome", delta: 100, waktu: nowIso() });
   b.set(doc(db, "petugas_cek", p.id), { nomor: l.nomor.trim(), foto: l.foto });
   if (wajahBermasalah(l.wajah)) b.set(doc(col("peringatan")), dokPeringatan(Object.assign({}, p, { nama: l.nama.trim() }), "lengkapi", l.wajah, ""));
-  await kirim(b);
+  await kirimAtauSudah(b, doc(db, "ledger", lid));
   /* Kontak untuk Organik ditulis TERPISAH setelah profil tersimpan — kalau gagal (mis. rules belum
      diperbarui), profil & bonus tetap aman; Admin bisa melengkapinya lewat "Bangun data kontak". */
   try { const k = writeBatch(db); tulisKontak(k, p, l.nomor.trim()); await k.commit(); } catch (e) {}
@@ -880,8 +912,9 @@ async function lengkapiProfil(p, l) {
 /* ---------- master & ringkasan (sekali muat per sesi) ---------- */
 async function loadWilayah() {
   try {
-    const d = await getDoc(doc(db, "master", "wilayah"));
+    const [d, g] = await Promise.all([getDoc(doc(db, "master", "wilayah")), getDoc(doc(db, "master", "grup")).catch(() => null)]);
     C.wilayah = d.exists() ? (d.data().rows || []) : [];
+    pasangGroups(g && g.exists() ? g.data() : null);
   } catch (e) { C.wilayah = []; }
   C.wilayahLoaded = true;
   render();
@@ -943,14 +976,14 @@ async function loadLeaderboard(force) {
 async function loadRank(force) {
   const p = S.profilSaya;
   if (!p || (C.rank && !force)) return;
-  const f = GRP_FIELD[p.group];
+  const f = fGrp(p.group), kunci = GRP_FIELD[p.group] || p.group; // group baru: sebaran disimpan per nama group
   try {
     const pr = await ambilPublik("peringkat");
     if (!pr || !pr.dist) { C.rank = null; render(); return; }
     const atas = (m, x) => Object.keys(m || {}).reduce((s, k) => s + (Number(k) > x ? m[k] : 0), 0);
     const jml = (m) => Object.values(m || {}).reduce((s, n) => s + n, 0);
     C.rank = { global: atas(pr.dist.semua, p.poinPeringkat || 0) + 1, total: jml(pr.dist.semua),
-      grup: atas(pr.dist[f], p[f] || 0) + 1, totalGrup: jml(pr.dist[f]), per: pr.diperbarui || null };
+      grup: atas(pr.dist[kunci], p[f] || 0) + 1, totalGrup: jml(pr.dist[kunci]), per: pr.diperbarui || null };
   } catch (e) { C.rank = null; }
   render();
 }
@@ -1026,7 +1059,7 @@ function jamSejak(iso) { return iso ? (Date.now() - new Date(iso).getTime()) / 3
 
 function kosongGrup() {
   const g = {};
-  Object.keys(GRP_FIELD).forEach((k) => { g[k] = { total: 0, aktif: 0 }; });
+  GROUPS.forEach((k) => { g[k] = { total: 0, aktif: 0 }; });
   return g;
 }
 
@@ -1045,7 +1078,7 @@ function gabungTopGrup(topGrup) {
    (dari anggota lengkap) maupun di rollup (dari gabungan topGrup anak-anaknya). */
 function topGrupDari(anggotaArr, n) {
   const out = {};
-  Object.keys(GRP_FIELD).forEach((g) => {
+  GROUPS.forEach((g) => {
     out[g] = anggotaArr.filter((a) => a.group === g).sort((a, b) => (b.poin || 0) - (a.poin || 0)).slice(0, n || 20);
   });
   return out;
@@ -1102,7 +1135,7 @@ async function rebuildRollup(level, value) {
 function gabungAnak(level, value, namaAnak, docAnak) {
   let total = 0, jumlah = 0;
   const calonPerGrup = {};
-  Object.keys(GRP_FIELD).forEach((g) => { calonPerGrup[g] = []; });
+  GROUPS.forEach((g) => { calonPerGrup[g] = []; });
   const grup = kosongGrup();
   const anak = {}; // rincian per wilayah anak {total, aktif} — untuk tampilan ringkasan Organik
   docAnak.forEach((d, i) => {
@@ -1166,16 +1199,19 @@ async function perbaruiRingkasanNasional(paksa) {
   tulis.hq_NASIONAL = gabungAnak("hq", "NASIONAL", areas, areas.map((a) => tulis["area_" + a]));
   /* Peringkat petugas: sebaran poin {poin: jumlah orang} — petugas menghitung peringkatnya sendiri dari sini */
   const dist = { semua: {} };
-  Object.values(GRP_FIELD).forEach((f) => { dist[f] = {}; });
+  /* Kunci sebaran per group: pDS/pYPCR/pBUD untuk 3 group lama (HP versi lama tetap membaca ini),
+     nama group untuk group baru (mis. "Promotor") */
+  const kunciDist = (g) => GRP_FIELD[g] || g;
+  GROUPS.forEach((g) => { dist[kunciDist(g)] = {}; });
   const tambah = (m, x) => { m[x] = (m[x] || 0) + 1; };
-  semua.forEach((p) => { tambah(dist.semua, p.poinPeringkat || 0); const f = GRP_FIELD[p.group]; if (f) tambah(dist[f], p[f] || 0); });
+  semua.forEach((p) => { tambah(dist.semua, p.poinPeringkat || 0); if (GROUPS.includes(p.group)) tambah(dist[kunciDist(p.group)], p[fGrp(p.group)] || 0); });
   /* Leaderboard nasional dari data yang sama — tidak perlu query terpisah */
   const top = (field, g) => semua.filter((p) => p.status === "aktif" && (!g || p.group === g))
     .sort((a, b) => (b[field] || 0) - (a[field] || 0)).slice(0, 20)
     .map((p) => ({ id: p.id, nama: namaTampil(p), group: p.group, area: p.area || "", regional: p.regional || "", poin: p[field] || 0 }));
   const kini = nowIso();
   const lb = { semua: top("poinPeringkat"), diperbarui: kini };
-  GROUPS.forEach((g) => { lb[g] = top(GRP_FIELD[g], g); });
+  GROUPS.forEach((g) => { lb[g] = top(fGrp(g), g); });
   const kunci = Object.keys(tulis);
   for (let i = 0; i < kunci.length; i += 40) {
     const b = writeBatch(db);
@@ -1307,7 +1343,7 @@ async function simpanFotoAktivitas(p, tujuan, foto, meta) {
    kejadian poin — supaya beban tulis tidak ikut membengkak seiring total aktivitas nasional. */
 function tambahPoinKe(b, p, delta, ledgerId, tambahan) {
   const upd = Object.assign({ poinPeringkat: increment(delta), saldo: increment(delta), lastLedger: ledgerId }, tambahan || {});
-  upd[GRP_FIELD[p.group]] = increment(delta);
+  if (GRP_FIELD[p.group]) upd[GRP_FIELD[p.group]] = increment(delta); // group baru: cukup poinPeringkat
   b.update(doc(db, "petugas", p.id), upd);
 }
 
@@ -1328,7 +1364,7 @@ async function submitKuesioner(p, k, jawaban, fotoId, wajahFoto) {
   }));
   /* Ringkasan "sudah dikerjakan" di dokumen petugas sendiri — Beranda tidak perlu query respons */
   tambahPoinKe(b, p, POIN_KUESIONER, ledgerId, { ["kueSelesai." + k.id]: w });
-  await kirim(b);
+  await kirimAtauSudah(b, doc(db, "ledger", ledgerId));
 }
 
 /* Anti-curang tanpa server berbayar: jawaban dikunci dulu → baru kunci jawaban boleh dibaca
@@ -1375,7 +1411,7 @@ async function submitPosttest(p, t, jawaban, fotoId, wajahFoto) {
     delta: poin, jenis: "posttest", ref: t.id, aktivitas: "Post Test " + t.judul + " — " + benar + " benar × " + POIN_PER_BENAR, waktu: w, oleh: "sistem"
   }));
   tambahPoinKe(b, p, poin, ledgerId, { ["ptHasil." + t.id]: { benar, total, poin, waktu: w } });
-  await kirim(b);
+  await kirimAtauSudah(b, doc(db, "ledger", ledgerId));
   return { benar, total, poin, detail };
 }
 
@@ -1386,7 +1422,7 @@ async function ajukanRedeem(p, hadiahId, h, fotoId, wajah) {
     hadiahId, hadiahNama: h.nama, poin: h.poin, status: "pending", fotoId, wajah: wajah || "", waktu: nowIso()
   }));
   if (h.stok !== -1) b.update(doc(db, "hadiah", hadiahId), { stok: increment(-1) });
-  await kirim(b);
+  await kirimAtauSudah(b, doc(db, "redeem", p.id + "_" + s.periode));
 }
 
 /* ================= ADMIN ================= */
@@ -1424,11 +1460,13 @@ async function rebuildKatalog() {
 }
 
 async function rebuildLeaderboard() {
-  const ambil = async (field) => rows(await getDocs(query(col("petugas"), orderBy(field, "desc"), limit(25))))
-    .filter((p) => p.status === "aktif").slice(0, 20)
+  /* Group baru tidak punya field poin sendiri → ambil dari top poinPeringkat (lebih banyak) lalu saring group-nya */
+  const ambil = async (field, g) => rows(await getDocs(query(col("petugas"), orderBy(field, "desc"), limit(GRP_FIELD[g] || !g ? 25 : 200))))
+    .filter((p) => p.status === "aktif" && (!g || p.group === g)).slice(0, 20)
     .map((p) => ({ id: p.id, nama: namaTampil(p), group: p.group, area: p.area || "", regional: p.regional || "", poin: p[field] || 0 }));
-  const [semua, ds, ypcr, bud] = await Promise.all([ambil("poinPeringkat"), ambil("pDS"), ambil("pYPCR"), ambil("pBUD")]);
-  const data = { semua, "Direct Sales": ds, YPCR: ypcr, Buddies: bud, diperbarui: nowIso() };
+  const data = { semua: await ambil("poinPeringkat"), diperbarui: nowIso() };
+  const per = await Promise.all(GROUPS.map((g) => ambil(fGrp(g), g)));
+  GROUPS.forEach((g, i) => { data[g] = per[i]; });
   await setDoc(doc(db, "publik", "leaderboard"), data);
   await setDoc(doc(db, "publik", "versi"), { leaderboard: data.diperbarui }, { merge: true });
   C.lb = data;
@@ -1783,12 +1821,13 @@ async function simpanPanduanMassal(rows, ganti) {
 async function jalankanAdjustmentMassal(rows, log) {
   let berhasil = 0;
   const gagal = [];
+  const jalan = Date.now(); // 1 kode per proses upload: baris yang diulang dalam proses ini tidak dobel
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
     try {
       const userId = await cariUserId(r.id);
       if (!userId) gagal.push({ baris: r.baris, alasan: "ID / Username tidak ditemukan" });
-      else { await catatAdjustment(userId, r.poin, r.alasan); berhasil++; }
+      else { await catatAdjustment(userId, r.poin, r.alasan, "adj_" + userId + "_" + jalan + "_" + r.baris); berhasil++; }
     } catch (e) { gagal.push({ baris: r.baris, alasan: e.message || "gagal menyimpan" }); }
     if ((i + 1) % 10 === 0 || i === rows.length - 1) log(fmtNum(i + 1) + " dari " + fmtNum(rows.length) + " baris diproses…");
   }
@@ -1830,7 +1869,7 @@ function siapkanImport(data, groupDefault) {
     else if (kodes.has(kode)) alasan = "username dobel di file";
     if (alasan) { salah.push({ baris: i + 2, userId, kode, alasan }); return; }
     ids.add(userId); kodes.add(kode);
-    valid.push({ userId, kode, nama, group: GROUPS.includes(grp) ? grp : groupDefault, area, regional, branch, cluster });
+    valid.push({ userId, kode, nama, group: normGroup(grp) || groupDefault, area, regional, branch, cluster });
   });
   return { valid, salah };
 }
@@ -1849,7 +1888,7 @@ async function jalankanImport(valid, log) {
         kode: r.kode, nama: r.nama || "", group: r.group, area: r.area, regional: r.regional, branch: r.branch, cluster: r.cluster,
         status: "belum_lengkap", sumber: "import", createdAt: now, poinPeringkat: 0, saldo: 0
       };
-      d[GRP_FIELD[r.group]] = 0;
+      if (GRP_FIELD[r.group]) d[GRP_FIELD[r.group]] = 0;
       b.set(doc(db, "petugas", r.userId), d);
     });
     await b.commit();
@@ -1906,10 +1945,13 @@ async function unduhPetugasExcel(f) {
   return data.length;
 }
 
-/* "DS", "direct sales", "BUD", "buddy" dst. → nama group resmi */
+/* "DS", "direct sales", "BUD", "buddy" dst. → nama group resmi. Group tambahan Admin (mis. "Promotor")
+   dikenali dari namanya, tanpa beda huruf besar/kecil & spasi. */
 function normGroup(s) {
-  const t = String(s || "").trim().toLowerCase().replace(/[^a-z]/g, "");
+  const t = String(s || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
   if (!t) return "";
+  const persis = GROUPS.find((g) => g.toLowerCase().replace(/[^a-z0-9]/g, "") === t);
+  if (persis) return persis;
   if (t === "ds" || t.indexOf("direct") === 0) return "Direct Sales";
   if (t === "ypcr" || t.indexOf("ypc") === 0) return "YPCR";
   if (t.indexOf("bud") === 0) return "Buddies";
@@ -1925,7 +1967,7 @@ function siapkanGroup(data) {
     const baru = normGroup(baruRaw);
     let alasan = "";
     if (!id) alasan = "ID / Username kosong";
-    else if (!baru) alasan = "group_baru \"" + baruRaw + "\" tidak dikenal (pakai Direct Sales / YPCR / Buddies)";
+    else if (!baru) alasan = "group_baru \"" + baruRaw + "\" tidak dikenal (pakai " + GROUPS.join(" / ") + ")";
     else if (normGroup(ambilKol(r, ["group", "grup"])) === baru) return; // sama dengan group sekarang di file
     else if (valid.length >= MAKS_BARIS_UPLOAD.group) alasan = "melebihi maksimal " + MAKS_BARIS_UPLOAD.group;
     if (alasan) { salah.push({ baris, alasan }); return; }
@@ -2018,10 +2060,12 @@ async function ubahGroupPetugas(userId, baru) {
   const d = await getDoc(doc(db, "petugas", userId));
   if (!d.exists()) throw new Error("Petugas tidak ditemukan.");
   const p = d.data();
-  if (!GRP_FIELD[baru] || p.group === baru) return null;
+  if (!GROUPS.includes(baru) || p.group === baru) return null;
+  /* Group lama → field-nya dinolkan; group baru lama-format (DS/YPCR/BUD) → diisi poin group lama
+     (atau total poin kalau asalnya group baru seperti Promotor). Group baru tanpa field: cukup ganti nama group. */
   const fLama = GRP_FIELD[p.group], fBaru = GRP_FIELD[baru];
   const upd = { group: baru, groupLama: p.group || "", groupDiubahAt: nowIso(), groupDiubahOleh: S.adminUser ? S.adminUser.email : "admin" };
-  upd[fBaru] = (p[fBaru] || 0) + (fLama ? p[fLama] || 0 : 0);
+  if (fBaru) upd[fBaru] = (p[fBaru] || 0) + (fLama ? p[fLama] || 0 : p.poinPeringkat || 0);
   if (fLama) upd[fLama] = 0;
   await updateDoc(doc(db, "petugas", userId), upd);
   return Object.assign({}, p, upd);
@@ -2046,7 +2090,7 @@ async function setujuiPetugas(userId) {
       const lid = "wel_" + userId;
       tx.set(doc(db, "ledger", lid), Object.assign(snap(p), { delta: POIN_WELCOME, jenis: "welcome", ref: "", aktivitas: "Welcoming Bonus", waktu: nowIso(), oleh }));
       Object.assign(upd, { poinPeringkat: increment(POIN_WELCOME), saldo: increment(POIN_WELCOME), lastLedger: lid });
-      upd[GRP_FIELD[p.group]] = increment(POIN_WELCOME);
+      if (GRP_FIELD[p.group]) upd[GRP_FIELD[p.group]] = increment(POIN_WELCOME);
     }
     tx.update(pRef, upd);
     if (cd.exists() && cd.data().nomor) tulisKontak(tx, p, String(cd.data().nomor).trim());
@@ -2063,7 +2107,7 @@ async function setujuiSederhana(userId) {
     const [pd, ld, cd] = await Promise.all([getDoc(doc(db, "petugas", userId)), getDoc(doc(db, "ledger", "wel_" + userId)), getDoc(doc(db, "petugas_cek", userId))]);
     const p = Object.assign({ id: userId }, pd.data());
     const b = writeBatch(db);
-    if (!ld.exists() && GRP_FIELD[p.group]) { tulisWelcome(b, p, oleh); bonus = true; }
+    if (!ld.exists() && p.group) { tulisWelcome(b, p, oleh); bonus = true; }
     if (cd.exists() && cd.data().nomor) tulisKontak(b, p, String(cd.data().nomor).trim());
     await b.commit();
   } catch (e) { bonus = false; }
@@ -2223,44 +2267,57 @@ async function fotoById(id) {
   return C.adm.fotoCache[id];
 }
 
+/* Setujui/Tolak redeem memakai TRANSAKSI (audit 13 Okt): status redeem dibaca ulang di server, jadi
+   klik dobel, dua tab Admin, atau ulang setelah koneksi lambat tidak bisa memotong saldo / mengembalikan
+   stok dua kali. Yang kedua ditolak dengan pesan "sudah diproses". */
 async function setujuiRedeem(r) {
   const oleh = S.adminUser ? S.adminUser.email : "admin";
-  const b = writeBatch(db);
-  b.set(doc(db, "ledger", "rdm_" + r.id), {
-    userId: r.userId, kode: r.kode || "", nama: r.nama || "", group: r.group || "",
-    area: r.area || "", regional: r.regional || "", branch: r.branch || "", cluster: r.cluster || "", periode: periode(),
-    delta: -r.poin, jenis: "redeem", ref: r.id, aktivitas: "Penukaran " + r.hadiahNama, waktu: nowIso(), oleh
+  const rRef = doc(db, "redeem", r.id), lRef = doc(db, "ledger", "rdm_" + r.id);
+  await runTransaction(db, async (tx) => {
+    const [rd, ld] = [await tx.get(rRef), await tx.get(lRef)];
+    if (!rd.exists() || rd.data().status !== "pending" || ld.exists()) throw new Error("Penukaran ini sudah diproses sebelumnya (tidak dipotong lagi).");
+    const x = rd.data();
+    tx.set(lRef, {
+      userId: x.userId, kode: x.kode || "", nama: x.nama || "", group: x.group || "",
+      area: x.area || "", regional: x.regional || "", branch: x.branch || "", cluster: x.cluster || "", periode: periode(),
+      delta: -x.poin, jenis: "redeem", ref: r.id, aktivitas: "Penukaran " + x.hadiahNama, waktu: nowIso(), oleh
+    });
+    tx.update(doc(db, "petugas", x.userId), { saldo: increment(-x.poin), lastLedger: "rdm_" + r.id });
+    tx.update(rRef, { status: "selesai", selesaiAt: nowIso(), oleh });
   });
-  b.update(doc(db, "petugas", r.userId), { saldo: increment(-r.poin), lastLedger: "rdm_" + r.id });
-  b.update(doc(db, "redeem", r.id), { status: "selesai", selesaiAt: nowIso(), oleh });
-  await b.commit();
 }
 
 async function tolakRedeem(r, alasan) {
   /* Dipindah ke ID baru supaya slot {userId}_{periode} kosong lagi: kuota 1x/bulan kembali */
-  const b = writeBatch(db);
-  const copy = Object.assign({}, r);
-  delete copy.id;
-  b.set(doc(db, "redeem", r.id + "_tolak_" + Date.now()), Object.assign(copy, {
-    status: "ditolak", alasan: alasan || "", selesaiAt: nowIso(), oleh: S.adminUser ? S.adminUser.email : "admin"
-  }));
-  b.delete(doc(db, "redeem", r.id));
-  const h = C.hadiah[r.hadiahId];
-  if (h && h.stok !== -1) b.update(doc(db, "hadiah", r.hadiahId), { stok: increment(1) });
-  await b.commit();
+  const rRef = doc(db, "redeem", r.id);
+  await runTransaction(db, async (tx) => {
+    const rd = await tx.get(rRef);
+    if (!rd.exists() || rd.data().status !== "pending") throw new Error("Penukaran ini sudah diproses sebelumnya (stok tidak dikembalikan lagi).");
+    const x = rd.data();
+    tx.set(doc(db, "redeem", r.id + "_tolak_" + Date.now()), Object.assign({}, x, {
+      status: "ditolak", alasan: alasan || "", selesaiAt: nowIso(), oleh: S.adminUser ? S.adminUser.email : "admin"
+    }));
+    tx.delete(rRef);
+    const h = C.hadiah[x.hadiahId];
+    if (h && h.stok !== -1) tx.update(doc(db, "hadiah", x.hadiahId), { stok: increment(1) });
+  });
 }
 
-async function catatAdjustment(userId, delta, alasan) {
-  const pd = await getDoc(doc(db, "petugas", userId));
-  if (!pd.exists()) throw new Error("User ID tidak ditemukan.");
-  const p = Object.assign({ id: userId }, pd.data());
-  const ledgerId = "adj_" + userId + "_" + Date.now();
-  const b = writeBatch(db);
-  b.set(doc(db, "ledger", ledgerId), Object.assign(snap(p), {
-    delta, jenis: "adjustment", ref: "", aktivitas: "Manual Adj — " + alasan, alasan, waktu: nowIso(), oleh: S.adminUser ? S.adminUser.email : "admin"
-  }));
-  tambahPoinKe(b, p, delta, ledgerId);
-  await b.commit();
+/* ledgerId dibuat SEKALI oleh pemanggil (per isian form / per baris file) dan dicek di transaksi:
+   klik dobel atau ulang setelah gagal koneksi tidak mencatat poin dua kali. */
+async function catatAdjustment(userId, delta, alasan, ledgerId) {
+  const id = ledgerId || "adj_" + userId + "_" + Date.now();
+  const lRef = doc(db, "ledger", id);
+  await runTransaction(db, async (tx) => {
+    const [pd, ld] = [await tx.get(doc(db, "petugas", userId)), await tx.get(lRef)];
+    if (!pd.exists()) throw new Error("User ID tidak ditemukan.");
+    if (ld.exists()) throw errKode("adj-sudah", { message: "Adjustment ini sudah tercatat sebelumnya (tidak dicatat dua kali)." });
+    const p = Object.assign({ id: userId }, pd.data());
+    tx.set(lRef, Object.assign(snap(p), {
+      delta, jenis: "adjustment", ref: "", aktivitas: "Manual Adj — " + alasan, alasan, waktu: nowIso(), oleh: S.adminUser ? S.adminUser.email : "admin"
+    }));
+    tambahPoinKe(tx, p, delta, id);
+  });
 }
 
 async function tandaiPeringatan(id) {
@@ -2389,7 +2446,7 @@ function vDaftar() {
     '<div class="card">' +
       '<div class="field"><label class="req">01 &nbsp;Nama Lengkap</label><input type="text" value="' + esc(d.nama) + '" data-in="daftar.nama" placeholder="cth. Reza Afrizal"></div>' +
       '<div class="field"><label class="req">02 &nbsp;Group</label><div class="seg">' +
-        GROUPS.map((g) => '<button class="' + (d.group === g ? "on" : "") + '" data-do="setGroup" data-v="' + esc(g) + '">' + esc(g) + "</button>").join("") + "</div></div>" +
+        groupsDaftar().map((g) => '<button class="' + (d.group === g ? "on" : "") + '" data-do="setGroup" data-v="' + esc(g) + '">' + esc(g) + "</button>").join("") + "</div></div>" +
       '<div class="field"><label class="req">03 &nbsp;ID Digipos</label><input type="text" inputmode="numeric" class="mono" value="' + esc(d.userId) + '" data-in="daftar.userId" data-live="1" placeholder="10 digit angka">' +
         '<div class="hint" data-hint="userId" style="' + (uidErr ? "color:var(--bad);" : "") + '">' + (uidErr ? "Harus tepat 10 digit angka." : "10 digit angka, sesuai data Digipos.") + "</div></div>" +
       '<div class="field"><label class="req">04 &nbsp;Username Digipos</label><input type="text" class="mono" value="' + esc(d.kode) + '" data-in="daftar.kode" data-live="1" placeholder="cth. MAR9789836_DS" style="text-transform:uppercase;">' +
@@ -2468,7 +2525,8 @@ function vMasukOrganik() {
 function vOrganikTunggu() {
   const o = S.organikProfil;
   const baris = (l, v) => '<div class="field"><label>' + l + "</label><input type=\"text\" value=\"" + esc(v || "-") + '" disabled></div>';
-  const wilayah = o.level === "hq" ? "Nasional" : [o.area, o.regional, o.branch].filter(Boolean).join(" &middot; ");
+  /* Isi <input value> di-esc → pakai karakter "·" asli, bukan entitas &middot; (dulu tampil mentah) */
+  const wilayah = o.level === "hq" ? "Nasional" : [o.area, o.regional, o.branch].filter(Boolean).join(" · ");
   return '<div class="wrap-plain">' +
     '<div class="hero" style="border-radius:0 0 18px 18px;"><div class="eyebrow">Status Pendaftaran</div><h1>Menunggu Verifikasi Admin</h1>' +
     "<p>Pendaftaran akun Organik Anda sudah terkirim. Admin akan meninjau data &amp; wilayah kerja sebelum akun dapat digunakan.</p></div>" +
@@ -2745,14 +2803,17 @@ function vHasil() {
 /* ============ leaderboard / knowledge / hadiah / poin / profil / bantuan ============ */
 function vLeaderboard() {
   const p = S.profilSaya;
-  const chips = [["semua", "Semua"]].concat(GROUPS.map((g) => [g, g]));
+  /* HP petugas tidak memuat daftar group (hemat read) — chip group diambil dari isi leaderboard itu sendiri */
+  const lbGrup = C.lb ? Object.keys(C.lb).filter((k) => k !== "semua" && Array.isArray(C.lb[k])) : [];
+  const urut = GROUPS.filter((g) => lbGrup.includes(g)).concat(lbGrup.filter((g) => !GROUPS.includes(g)));
+  const chips = [["semua", "Semua"]].concat((urut.length ? urut : GROUPS).map((g) => [g, g]));
   const data = C.lb ? (C.lb[S.lbFilter] || []) : null;
   const ada = data && data.some((x) => x.id === p.id);
   const r = C.rank;
   let pin = "";
   if (data && !ada && r && (S.lbFilter === "semua" || S.lbFilter === p.group)) {
     const pos = S.lbFilter === "semua" ? r.global : r.grup;
-    const poin = S.lbFilter === "semua" ? poinPeringkatSaya() : (p[GRP_FIELD[p.group]] || 0);
+    const poin = S.lbFilter === "semua" || !GRP_FIELD[p.group] ? poinPeringkatSaya() : (p[GRP_FIELD[p.group]] || 0);
     pin = '<div class="card" style="margin-top:12px;background:var(--red-soft);border-color:var(--red-line);"><div class="lb-row" style="border:none;">' +
       '<div class="lb-rank">#' + fmtNum(pos) + '</div><div class="grow"><div class="lb-name">' + esc(namaTampil(p)) + ' (Anda)</div><div class="lb-sub">' + esc(p.group) + "</div></div>" +
       '<div class="lb-pts">' + fmtNum(poin) + "</div></div></div>";
@@ -3013,7 +3074,7 @@ function aDashboard() {
   /* null = gagal dimuat → "–", jangan tampil 0 yang menyesatkan */
   const N = (x) => (x === null || x === undefined ? "&ndash;" : fmtNum(x));
   return head("Dashboard", "Periode " + bulan + " &middot; seluruh area", refresh) +
-    '<div class="sec-head"><h2>Tim Lapangan</h2><span class="lbl">DS &middot; YPCR &middot; Buddies' + (s.ringkasanPer ? " &middot; ringkasan " + fmtWaktu(s.ringkasanPer) : "") + "</span></div>" +
+    '<div class="sec-head"><h2>Tim Lapangan</h2><span class="lbl">' + GROUPS.map(esc).join(" &middot; ") + (s.ringkasanPer ? " &middot; ringkasan " + fmtWaktu(s.ringkasanPer) : "") + "</span></div>" +
     '<div class="note" style="margin:-4px 0 10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">Ringkasan (Dashboard, Organik, leaderboard, peringkat petugas) dihitung ulang otomatis sekali sehari saat Dashboard dibuka. ' +
       '<button class="btn btn-ghost btn-sm" data-do="perbaruiRingkasan"' + (C.adm.ringkasanBusy ? " disabled" : "") + ">" + (C.adm.ringkasanBusy ? "Menghitung&hellip;" : "Perbarui sekarang (&plusmn;1.800 reads)") + "</button></div>" +
     (s.aktif === null ? '<div class="err" style="margin-bottom:10px;">Ringkasan tim lapangan gagal dimuat. Coba Muat ulang.</div>' : "") +
@@ -3182,7 +3243,7 @@ function aPetugas() {
         (t.log.length ? '<div class="note mono" style="margin-top:12px;white-space:pre-wrap;">' + t.log.map(esc).join("\n") + "</div>" : "") + "</div>";
     })() +
     kartuUploadUmum("group", "Koreksi Group dari Excel", "user_id, group, group_baru",
-      "Isi <span class=\"mono\">group_baru</span> dengan Direct Sales / YPCR / Buddies (DS &amp; BUD juga dikenali). Baris yang group_baru-nya kosong atau sama dengan group sekarang dilewati. Poin group ikut dipindah; total poin &amp; saldo tidak berubah.") +
+      "Isi <span class=\"mono\">group_baru</span> dengan " + GROUPS.map(esc).join(" / ") + " (DS &amp; BUD juga dikenali). Baris yang group_baru-nya kosong atau sama dengan group sekarang dilewati. Poin group ikut dipindah; total poin &amp; saldo tidak berubah.") +
     "</div>" + panelRingkasanWilayah() + "</div>";
 }
 
@@ -3526,6 +3587,17 @@ function aPengaturan() {
       (im.log.length ? '<div class="note mono" style="margin-top:12px;white-space:pre-wrap;">' + im.log.map(esc).join("\n") + "</div>" : "") +
       (hasil ? '<div class="card" style="margin-top:12px;background:var(--good-soft);border-color:#BFE3CC;"><b style="color:var(--good);">Import selesai.</b> ' + fmtNum(hasil.dibuat) + " akun dibuat, " + fmtNum(hasil.dilewati) + " dilewati karena sudah ada, master wilayah " + fmtNum(hasil.wilayah) + " cluster.</div>" : "") +
     "</div>" +
+    '<div class="card" style="margin-bottom:18px;"><div class="card-title">Kelola Group Tim Lapangan</div>' +
+      '<div style="font-size:13px;color:var(--ink-dim);margin-bottom:12px;">Group baru langsung dipakai di form Daftar, import Excel, Ubah/Koreksi Group, target tugas &amp; knowledge, leaderboard, dan dashboard Organik &mdash; tanpa update aplikasi. ' +
+        "Nama group <b>tidak bisa diubah/dihapus</b> setelah dibuat (dipakai di data petugas); kalau tidak dipakai lagi, sembunyikan dari form Daftar.</div>" +
+      '<div class="tbl-wrap"><table><thead><tr><th>Group</th><th>Form Daftar mandiri</th><th></th></tr></thead><tbody>' +
+        GROUPS.map((g) => {
+          const tutup = GROUPS_TUTUP.includes(g);
+          return '<tr><td><span class="grp ' + grpClass(g) + '">' + esc(g) + "</span></td><td>" + (tutup ? '<span class="lbl">Disembunyikan</span>' : "Tampil") + "</td>" +
+            '<td style="text-align:right;"><button class="btn btn-ghost btn-sm" data-do="toggleTutupGroup" data-v="' + esc(g) + '">' + (tutup ? "Tampilkan" : "Sembunyikan") + "</button></td></tr>";
+        }).join("") + "</tbody></table></div>" +
+      '<div class="filters" style="margin-top:12px;"><input type="text" data-in="grupBaru" value="' + esc(S.grupBaru || "") + '" placeholder="Nama group baru, mis. Promotor" style="flex:1;min-width:180px;">' +
+        '<button class="btn btn-primary btn-sm" data-do="tambahGroup" ' + (S.grupBusy ? "disabled" : "") + ">Tambah Group</button></div></div>" +
     '<div class="card" style="margin-bottom:18px;"><div class="card-title">Master Wilayah</div>' +
       '<div class="row"><span class="grow" style="font-size:13px;color:var(--ink-dim);">Terbentuk otomatis dari import. Baris yang sudah ada (Area+Regional+Branch+Cluster sama persis) dilewati otomatis.</span><span class="lbl">' + fmtNum(C.wilayah.length) + " cluster</span></div>" +
       kartuUploadUmum("wilayah", "Upload Wilayah dari Excel", "area, regional, branch, cluster",
@@ -3565,7 +3637,7 @@ function modalDetail(d) {
         '<button class="btn btn-ghost btn-sm" data-do="simpanNamaAdm" data-v="' + esc(v) + '">Simpan</button></div>' +
       '<div class="lbl">Group &middot; ubah bila salah input</div>' +
       '<select data-grup="' + esc(v) + '" style="width:100%;margin:4px 0 10px;padding:9px;border-radius:9px;border:1px solid var(--border-strong);font-size:13.5px;">' +
-        Object.keys(GRP_FIELD).map((g) => '<option value="' + esc(g) + '" ' + (p.group === g ? "selected" : "") + ">" + esc(g) + "</option>").join("") + "</select>" +
+        GROUPS.map((g) => '<option value="' + esc(g) + '" ' + (p.group === g ? "selected" : "") + ">" + esc(g) + "</option>").join("") + "</select>" +
       (p.groupLama ? '<div class="note" style="margin:-4px 0 10px;">Sebelumnya ' + esc(p.groupLama) + " &middot; diubah " + fmtTgl(p.groupDiubahAt) + "</div>" : "") +
       '<div class="lbl">Area</div><div style="font-size:13.5px;">' + esc(p.area || "-") + "</div>" +
       '<div class="lbl" style="margin-top:10px;">Regional</div><div style="font-size:13.5px;">' + esc(p.regional || "-") + "</div>" +
@@ -4760,15 +4832,42 @@ const DO = {
     const delta = parseInt(d.poin, 10);
     if (!delta) return toast("no", "Poin tidak boleh kosong / nol.");
     if (!d.alasan.trim()) return toast("no", "Alasan wajib diisi.");
+    if (S.adjBusy) return;
+    S.adjBusy = true;
     try {
       const userId = await cariUserId(d.id);
       if (!userId) return toast("no", "ID / Username tidak ditemukan.");
-      await catatAdjustment(userId, delta, d.alasan.trim());
-      S.draftAdj = { id: "", poin: "", alasan: "" };
+      /* Kode ledger tetap untuk isian yang sama (ID+poin+alasan): klik ulang setelah gagal koneksi tidak dobel */
+      const sidik = userId + "|" + delta + "|" + d.alasan.trim();
+      if (!S.adjKunci || S.adjKunci.sidik !== sidik) S.adjKunci = { sidik, id: "adj_" + userId + "_" + Date.now() };
+      await catatAdjustment(userId, delta, d.alasan.trim(), S.adjKunci.id);
+      S.draftAdj = { id: "", poin: "", alasan: "" }; S.adjKunci = null;
       toast("ok", "Adjustment tercatat di ledger."); loadLedgerTerbaru();
-    } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
+    } catch (e) {
+      if (e.kode === "adj-sudah") { S.draftAdj = { id: "", poin: "", alasan: "" }; S.adjKunci = null; loadLedgerTerbaru(); }
+      toast("no", pesanGagal(e, "Gagal"));
+    } finally { S.adjBusy = false; }
   },
 
+  async tambahGroup() {
+    const nama = String(S.grupBaru || "").replace(/\s+/g, " ").trim();
+    if (!/^[A-Za-z0-9][A-Za-z0-9 &.\-]{1,29}$/.test(nama)) return toast("no", "Nama group 2–30 karakter: huruf, angka, spasi, & . -");
+    if (nama.toLowerCase() === "semua" || normGroup(nama) && GROUPS.includes(normGroup(nama))) return toast("no", "Group \"" + nama + "\" sudah ada (atau mirip group yang ada).");
+    if (!confirm("Tambah group \"" + nama + "\"?\nNama tidak bisa diubah/dihapus setelah dibuat (hanya bisa disembunyikan dari form Daftar).")) return;
+    S.grupBusy = true; render();
+    try {
+      await simpanGroups(GROUPS.concat([nama]), GROUPS_TUTUP.slice());
+      S.grupBaru = "";
+      toast("ok", "Group \"" + nama + "\" ditambahkan. Langsung bisa dipakai di import, Ubah Group, form Daftar, dan target tugas.");
+    } catch (e) { toast("no", pesanGagal(e, "Gagal menambah group")); }
+    S.grupBusy = false; render();
+  },
+  async toggleTutupGroup(g) {
+    const tutup = GROUPS_TUTUP.includes(g) ? GROUPS_TUTUP.filter((x) => x !== g) : GROUPS_TUTUP.concat([g]);
+    if (tutup.length >= GROUPS.length) return toast("no", "Minimal 1 group harus tampil di form Daftar.");
+    try { await simpanGroups(GROUPS.slice(), tutup); toast("ok", "Tersimpan."); render(); }
+    catch (e) { toast("no", pesanGagal(e, "Gagal menyimpan")); }
+  },
   async tambahWilayah() {
     const baru = S.bulkWilayah.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map((l) => {
       const p = l.split(l.indexOf("\t") >= 0 ? "\t" : ",").map((x) => x.trim());
@@ -4980,7 +5079,8 @@ root.addEventListener("change", async (e) => {
 
   const grpId = el.getAttribute("data-grup");
   if (grpId) {
-    const baris = P.rows.find((r) => r.id === grpId);
+    /* (dulu "P.rows" — P tidak ada di scope ini → ReferenceError, dropdown group di Detail tidak pernah jalan) */
+    const baris = ((C.adm.petugas && C.adm.petugas.rows) || []).find((r) => r.id === grpId);
     const lama = baris ? baris.group : "";
     if (!confirm("Ubah group " + grpId + (lama ? " dari " + lama : "") + " ke " + el.value + "?\nPoin group ikut dipindah, total poin & saldo tidak berubah.")) {
       if (lama) el.value = lama;
