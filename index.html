@@ -297,7 +297,7 @@ import {
   initializeFirestore, memoryLocalCache, waitForPendingWrites,
   collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, addDoc,
   query, where, orderBy, limit, startAfter, onSnapshot, writeBatch,
-  increment, deleteField, serverTimestamp, getDocFromServer, getDocsFromServer, getCountFromServer, getAggregateFromServer, average, runTransaction
+  increment, deleteField, serverTimestamp, arrayUnion, getDocFromServer, getDocsFromServer, getCountFromServer, getAggregateFromServer, average, runTransaction
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 import { getAuth, signInWithEmailAndPassword, signInAnonymously, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 
@@ -590,7 +590,11 @@ async function masukOrganik(nikInput, emailInput) {
   if (!nik) throw errKode("username-kosong");
   let d;
   try { d = await getDocFromServer(doc(db, "organik", email)); }
-  catch (e) { if (e.code === "permission-denied") throw errKode("terikat-hp-lain"); throw e; }
+  catch (e) {
+    /* Ditolak = akun sudah terikat ke perangkat lain → coba tambahkan perangkat ini (maks 3) */
+    if (e.code === "permission-denied") { await tambahPerangkatOrganik(email, nik); return email; }
+    throw e;
+  }
   if (!d.exists()) throw errKode("tidak-terdaftar");
   const o = d.data();
   if (String(o.nik || "").trim() !== nik) throw errKode("username-salah");
@@ -603,6 +607,35 @@ async function masukOrganik(nikInput, emailInput) {
   try { await kirim(b); }
   catch (e) { if (e.code === "permission-denied") throw errKode("terikat-hp-lain"); throw e; }
   return email;
+}
+
+/* ===== TAMBAH PERANGKAT ORGANIK (sejak 13 Okt 2026) =====
+   Organik memantau dari laptop & turun lapangan pakai HP → 1 akun boleh 3 perangkat.
+   Perangkat ke-2 & ke-3 ditambah sendiri saat masuk; NIK dicocokkan di SERVER (HP baru tidak bisa
+   membaca data akun), tebakan dicatat dulu di percobaan_organik (3/hari) supaya tidak bisa ditebak terus.
+   Perangkat ke-4: Admin Reset HP (semua slot dilepas), lalu masuk ulang. Reads: ±3 sekali saja. */
+const ORG_MAKS_PERANGKAT = 3;
+async function tambahPerangkatOrganik(email, nik) {
+  const authUid = await ikatPerangkatOrganik(email);
+  if (authUid === "sudah") return;
+  const p = await getDocFromServer(doc(db, "perangkat_organik", email));
+  const terpakai = p.exists() ? 1 + ((p.data().lain || []).length) : 0;
+  if (terpakai >= ORG_MAKS_PERANGKAT) throw errKode("slot-penuh");
+  let bukti = null, ke = 0;
+  for (let k = 1; k <= 3 && !bukti; k++) {
+    const id = email + "_" + tglUTC() + "_" + k;
+    const b1 = writeBatch(db);
+    b1.set(doc(db, "percobaan_organik", id), { email, authUid, nik, waktu: serverTimestamp() });
+    try { await kirim(b1); bukti = id; ke = k; }
+    catch (e) { if (e.code !== "permission-denied") throw e; }
+  }
+  if (!bukti) throw errKode("slot-kunci");
+  const b = writeBatch(db);
+  b.update(doc(db, "perangkat_organik", email), { lain: arrayUnion(authUid), bukti });
+  b.set(doc(db, "sesiAuth", authUid), { email, tipe: "organik" });
+  try { await kirim(b); }
+  catch (e) { if (e.code === "permission-denied") throw errKode("slot-ditolak", { sisa: 3 - ke }); throw e; }
+  S.orgSlotBaru = terpakai + 1;
 }
 
 /* Daftar Organik: pilih level (area/regional/branch/cluster) + lokasinya, status review sampai disetujui Admin */
@@ -2090,9 +2123,71 @@ async function resetHpOrganik(email) {
   if (!hp.exists()) return false;
   const b = writeBatch(db);
   b.delete(doc(db, "perangkat_organik", email));
-  b.delete(doc(db, "sesiAuth", hp.data().authUid));
+  /* Semua perangkat akun ini dilepas sekaligus (perangkat utama + maks 2 tambahan) */
+  [hp.data().authUid].concat(hp.data().lain || []).filter(Boolean).forEach((u) => b.delete(doc(db, "sesiAuth", u)));
   await b.commit();
   return true;
+}
+
+/* ===== UNDUH DATA TIM ORGANIK (sejak 13 Okt 2026) =====
+   Sumber: ringkasan per branch hasil CLOSING HARIAN (bukan koleksi petugas) → 1 read per branch
+   dalam cakupan (Branch 1, Regional ±5–8, Area ±15–20, HQ ±61) + kontak per branch untuk
+   Organik Branch/Regional. Branch yang sudah dibuka di layar tidak dibaca ulang.
+   Data realtime hanya lewat Admin (Unduh Excel di Data Petugas). */
+async function unduhTimOrganik() {
+  const o = S.organikProfil, pratinjau = !!S.previewSebagai;
+  const X = await muatSheetJS();
+  /* Master Wilayah (1 read, biasanya sudah termuat di layar Masuk) hanya perlu untuk Area/HQ:
+     memetakan branch → regional/area. Branch & Regional cukup dari profil sendiri. */
+  if ((o.level === "area" || o.level === "hq") && !C.wilayahLoaded) await loadWilayah();
+  let branches = o.level === "branch" ? [o.branch] : (o.cakupanBranch || []).slice();
+  /* Cadangan kalau akun lama belum punya cakupanBranch: Regional dari rincian Beranda, Area/HQ dari Master Wilayah */
+  if (!branches.length && o.level === "regional") branches = Object.keys((S.ringkasanOrg && S.ringkasanOrg.anak) || {});
+  if (!branches.length && (o.level === "area" || o.level === "hq")) branches = (C.wilayah || []).filter((w) => o.level === "hq" || w.area === o.area).map((w) => w.branch);
+  if (pratinjau) branches = Object.keys((S.ringkasanOrg && S.ringkasanOrg.anak) || {});
+  branches = branches.filter((v, i, a) => v && a.indexOf(v) === i);
+  if (!branches.length) throw new Error("Daftar branch di cakupan akun ini kosong. Hubungi Admin.");
+  const lihatNomor = o.level === "branch" || o.level === "regional";
+  S.orgNode = S.orgNode || {}; S.orgKontak = S.orgKontak || {};
+  await Promise.all(branches.map(async (b) => {
+    const tugas = [];
+    if (!S.orgNode["branch_" + b]) tugas.push((pratinjau ? Promise.resolve(Object.assign(mockNodeOrganik("branch", b), { diperbarui: nowIso() })) : bacaRingkasan("branch_" + b))
+      .then((d) => { S.orgNode["branch_" + b] = d || { kosong: true }; }));
+    if (lihatNomor && S.orgKontak[b] === undefined) tugas.push((pratinjau ? Promise.resolve({ a: "0812-0000-0001" }) : getDoc(doc(db, "kontak", b)).then((d) => (d.exists() ? d.data().nomor || {} : {})))
+      .then((m) => { S.orgKontak[b] = m; }).catch(() => { S.orgKontak[b] = {}; }));
+    await Promise.all(tugas);
+  }));
+  const induk = {};
+  (o.level === "area" || o.level === "hq" ? C.wilayah || [] : []).forEach((w) => { if (w.branch && !induk[w.branch]) induk[w.branch] = { area: w.area || "", regional: w.regional || "" }; });
+  const data = [];
+  let closing = "";
+  branches.forEach((b) => {
+    const d = S.orgNode["branch_" + b];
+    if (!d || d.kosong) return;
+    if (d.diperbarui && (!closing || d.diperbarui < closing)) closing = d.diperbarui;
+    const km = (lihatNomor && S.orgKontak[b]) || {}, w = induk[b] || { area: o.area || "", regional: o.regional || "" };
+    Object.keys(d.anggota || {}).forEach((id) => {
+      const x = d.anggota[id];
+      data.push([id, x.kode || "", x.nama || "", x.group || "", x.status === "aktif" ? "Sudah aktivasi" : "Belum aktivasi", x.poin || 0,
+        w.area, w.regional, b, x.cluster || ""].concat(lihatNomor ? [km[id] || ""] : []));
+    });
+  });
+  data.sort((a, b) => a[6].localeCompare(b[6]) || a[7].localeCompare(b[7]) || a[8].localeCompare(b[8]) || a[9].localeCompare(b[9]) || b[5] - a[5]);
+  const tgl = closing ? fmtWaktu(closing) : "-";
+  const isi = [
+    ["DATA CLOSING HARIAN per " + tgl + " — BUKAN data realtime. Untuk data realtime, minta ke Admin DEBY."],
+    ["Rahasia internal Telkomsel: jangan disebarkan di luar kebutuhan pemantauan tim."],
+    [],
+    ["user_id", "username_digipos", "nama", "group", "status", "poin", "area", "regional", "branch", "cluster"].concat(lihatNomor ? ["nomor_aktif"] : [])
+  ].concat(data);
+  const ws = X.utils.aoa_to_sheet(isi);
+  ws["!cols"] = [12, 22, 26, 13, 15, 9, 20, 20, 20, 24, 16].map((w) => ({ wch: w }));
+  ws["!autofilter"] = { ref: X.utils.encode_range({ s: { r: 3, c: 0 }, e: { r: 3 + data.length, c: lihatNomor ? 10 : 9 } }) };
+  const wb = X.utils.book_new();
+  X.utils.book_append_sheet(wb, ws, "tim");
+  const wil = o.level === "hq" ? "NASIONAL" : o[o.level] || "";
+  X.writeFile(wb, ("tim_" + o.level + "_" + wil + "_closing_" + (closing || nowIso()).slice(0, 10) + ".xlsx").replace(/[^\w.\-]+/g, "-"));
+  return { baris: data.length, branch: branches.length, closing: tgl };
 }
 
 /* ---------- admin: redeem & ledger ---------- */
@@ -2365,6 +2460,7 @@ function vMasukOrganik() {
       '<button class="btn btn-primary btn-block" style="margin-top:16px;" data-do="masukOrganik" ' + (m.busy ? "disabled" : "") + ">" + (m.busy ? "Memeriksa&hellip;" : "Masuk sebagai Akun Organik Telkomsel") + "</button>" +
       '<div style="text-align:center;margin-top:14px;font-size:13px;color:var(--ink-dim);">Belum punya akun? <button style="background:none;border:none;color:var(--red);font-weight:700;cursor:pointer;padding:0;" data-do="keDaftarOrg">Daftar di sini</button></div>' +
     "</div>" +
+    '<div class="note">1 akun Organik bisa dipakai di <b>3 perangkat</b> (mis. laptop + HP). Masuk dari perangkat baru otomatis menambah perangkat itu ke akunmu.</div>' +
     '<button class="btn btn-ghost btn-block" data-do="ke" data-v="masuk">Bukan tim Organik? Kembali ke login Petugas</button>' +
     "</div></div>";
 }
@@ -2463,6 +2559,10 @@ function vOrganikHome() {
       kartu("Total Tim Lapangan", fmtNum(tTotal), "") +
       kartu("Aktif", fmtNum(tAktif), pct(tAktif, tTotal) + "% sudah aktivasi") +
       kartu("Total Poin", fmtNum(r.total_poin || 0), "") + "</div>" +
+    '<div class="card"><div class="card-title">Unduh Data Tim (Excel)</div>' +
+      '<div class="note" style="margin-bottom:10px;"><b>Data yang diunduh adalah DATA CLOSING HARIAN</b> (per ' + (r.diperbarui ? fmtWaktu(r.diperbarui) : "-") + "), bukan realtime. " +
+      "Kalau butuh data realtime, minta ke <b>Admin</b>.<br>Isi: ID &amp; username Digipos, nama, group, status aktivasi, poin, wilayah sampai cluster" + (lihatNomor ? ", nomor aktif" : "") + ".</div>" +
+      '<button class="btn btn-primary btn-block" data-do="unduhTimOrg" ' + (S.orgUnduhBusy ? "disabled" : "") + ">" + (S.orgUnduhBusy ? "Menyiapkan file&hellip;" : "&#8681; Unduh Excel Tim") + "</button></div>" +
     '<div class="sec-head"><h2>Aktivasi per Group</h2></div>' +
     '<div class="card">' + grupHtml + "</div>" +
     '<div class="sec-head"><h2>Per ' + labelAnak + "</h2></div>" +
@@ -3717,9 +3817,13 @@ const PESAN_MASUK_ORG = Object.assign({}, PESAN_MASUK, {
   "username-salah": "NIK tidak cocok dengan email tersebut.",
   "sudah-terdaftar": "Email ini sudah terdaftar. Kembali ke layar Masuk dan pakai NIK &amp; Email.",
   "hp-akun-lain": "HP/browser ini sudah terhubung ke akun Organik lain. Satu HP hanya untuk satu akun.",
-  "terikat-hp-lain": "Akun ini sudah terhubung ke HP atau browser lain. Kalau memang ganti HP, minta Admin menekan <b>Reset HP</b> di data Organik-mu."
+  "terikat-hp-lain": "Akun ini sudah terhubung ke HP atau browser lain. Kalau memang ganti HP, minta Admin menekan <b>Reset HP</b> di data Organik-mu.",
+  "slot-penuh": "Akun ini sudah terhubung ke 3 perangkat (maksimal). Untuk memakai perangkat baru, minta Admin menekan <b>Reset HP</b> di data Organik-mu, lalu masuk ulang dari perangkat yang akan dipakai.",
+  "slot-kunci": "Sudah 3x salah memasukkan NIK hari ini untuk menambah perangkat. Coba lagi besok, atau hubungi Admin.",
+  "slot-ditolak": "NIK tidak cocok dengan email tersebut, perangkat ini belum ditambahkan."
 });
 function pesanMasukOrg(e) {
+  if (e && e.kode === "slot-ditolak") return PESAN_MASUK_ORG["slot-ditolak"] + (e.sisa > 0 ? " Sisa " + e.sisa + "x percobaan hari ini." : " Percobaan hari ini sudah habis.");
   if (e && PESAN_MASUK_ORG[e.kode]) return PESAN_MASUK_ORG[e.kode];
   return pesanMasuk(e);
 }
@@ -3875,6 +3979,7 @@ const DO = {
       const email = await masukOrganik(m.nik, m.email);
       S.masukOrg = { nik: "", email: "", err: "", busy: false };
       mulaiSesiOrganik(email);
+      if (S.orgSlotBaru) { toast("ok", "Perangkat ini ditambahkan ke akunmu (" + S.orgSlotBaru + " dari " + ORG_MAKS_PERANGKAT + " perangkat)."); S.orgSlotBaru = 0; }
     } catch (e) { m.busy = false; m.err = pesanMasukOrg(e); render(); }
   },
 
@@ -4222,6 +4327,15 @@ const DO = {
     await Promise.all(tugas);
     render();
   },
+  async unduhTimOrg() {
+    if (S.orgUnduhBusy) return;
+    S.orgUnduhBusy = true; render();
+    try {
+      const h = await unduhTimOrganik();
+      toast("ok", fmtNum(h.baris) + " petugas diunduh (closing harian per " + h.closing + "). Untuk data realtime, minta ke Admin.");
+    } catch (e) { toast("no", pesanGagal(e, "Gagal mengunduh")); }
+    S.orgUnduhBusy = false; render();
+  },
   async unduhPetugas() {
     const f = S.fPetugas;
     if (S.unduhBusy) return;
@@ -4333,10 +4447,10 @@ const DO = {
     } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
   },
   async resetHpOrganikAdm(v) {
-    if (!confirm("Lepaskan HP dari akun Organik " + v + "? Bisa masuk lagi dari HP/browser baru.")) return;
+    if (!confirm("Lepaskan SEMUA perangkat (maks 3: HP/laptop) dari akun Organik " + v + "?\nSetelah ini Organik masuk ulang dari perangkat yang mau dipakai (sampai 3 lagi).")) return;
     try {
       const ok = await resetHpOrganik(v);
-      toast(ok ? "ok" : "", ok ? "HP dilepas dari akun." : "Akun ini belum pernah terhubung ke HP.");
+      toast(ok ? "ok" : "", ok ? "Semua perangkat dilepas dari akun." : "Akun ini belum pernah terhubung ke perangkat.");
     } catch (e) { toast("no", pesanGagal(e, "Gagal")); }
   },
   async resetHp(v) {
