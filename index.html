@@ -344,12 +344,19 @@ function pasangGroups(d) {
   const daftar = (d && Array.isArray(d.daftar) && d.daftar.length ? d.daftar : GROUPS_AWAL).filter((g) => typeof g === "string" && g.trim());
   GROUPS.splice(0, GROUPS.length, ...daftar);
   GROUPS_TUTUP.splice(0, GROUPS_TUTUP.length, ...((d && d.tutup) || []));
+  GROUPS_UJI.splice(0, GROUPS_UJI.length, ...((d && d.uji) || []));
 }
-const groupsDaftar = () => GROUPS.filter((g) => !GROUPS_TUTUP.includes(g));
+/* Group UJI (mis. "TESTING", ID Digipos yang ternyata akun uji): tetap bisa login, kerjakan tugas & tukar
+   hadiah untuk tes, tapi TIDAK dihitung di ringkasan, dashboard, Organik, leaderboard, peringkat. */
+const GROUPS_UJI = [];
+const groupsHitung = () => GROUPS.filter((g) => !GROUPS_UJI.includes(g));
+const bukanUji = (p) => !GROUPS_UJI.includes(p.group);
+const groupsDaftar = () => GROUPS.filter((g) => !GROUPS_TUTUP.includes(g) && !GROUPS_UJI.includes(g));
 /* Admin: simpan daftar group. Server (rules) memakai master/grup.daftar untuk validasi Daftar mandiri. */
-async function simpanGroups(daftar, tutup) {
-  await setDoc(doc(db, "master", "grup"), { daftar, tutup, diperbarui: nowIso(), oleh: S.adminUser ? S.adminUser.email : "admin" });
-  pasangGroups({ daftar, tutup });
+async function simpanGroups(daftar, tutup, uji) {
+  uji = uji || GROUPS_UJI.slice();
+  await setDoc(doc(db, "master", "grup"), { daftar, tutup, uji, diperbarui: nowIso(), oleh: S.adminUser ? S.adminUser.email : "admin" });
+  pasangGroups({ daftar, tutup, uji });
 }
 const POIN_KUESIONER = 25;
 const POIN_PER_BENAR = 5;
@@ -1059,7 +1066,7 @@ function jamSejak(iso) { return iso ? (Date.now() - new Date(iso).getTime()) / 3
 
 function kosongGrup() {
   const g = {};
-  GROUPS.forEach((k) => { g[k] = { total: 0, aktif: 0 }; });
+  groupsHitung().forEach((k) => { g[k] = { total: 0, aktif: 0 }; });
   return g;
 }
 
@@ -1078,7 +1085,7 @@ function gabungTopGrup(topGrup) {
    (dari anggota lengkap) maupun di rollup (dari gabungan topGrup anak-anaknya). */
 function topGrupDari(anggotaArr, n) {
   const out = {};
-  GROUPS.forEach((g) => {
+  groupsHitung().forEach((g) => {
     out[g] = anggotaArr.filter((a) => a.group === g).sort((a, b) => (b.poin || 0) - (a.poin || 0)).slice(0, n || 20);
   });
   return out;
@@ -1091,6 +1098,7 @@ function topGrupDari(anggotaArr, n) {
    dipakai bareng oleh Leaderboard per Wilayah (Admin) & Daftar Anggota (Organik). */
 /* Susun 1 dokumen ringkasan branch dari daftar petugas yang SUDAH ada di memori ({id, ...data}) */
 function bangunBranch(branchName, list) {
+  list = list.filter(bukanUji); // akun group uji tidak ikut ringkasan / Organik / unduhan
   const anggota = {};
   const grup = kosongGrup();
   let total = 0;
@@ -1135,7 +1143,7 @@ async function rebuildRollup(level, value) {
 function gabungAnak(level, value, namaAnak, docAnak) {
   let total = 0, jumlah = 0;
   const calonPerGrup = {};
-  GROUPS.forEach((g) => { calonPerGrup[g] = []; });
+  groupsHitung().forEach((g) => { calonPerGrup[g] = []; });
   const grup = kosongGrup();
   const anak = {}; // rincian per wilayah anak {total, aktif} — untuk tampilan ringkasan Organik
   docAnak.forEach((d, i) => {
@@ -1183,7 +1191,7 @@ async function perbaruiRingkasanNasional(paksa) {
   const oleh = S.adminUser ? S.adminUser.email : "admin";
   await setDoc(stRef, { mulai: nowIso(), oleh }, { merge: true });
   if (!C.wilayahLoaded) await loadWilayah();
-  const semua = rows(await getDocs(query(col("petugas"), where("status", "in", ["belum_lengkap", "aktif"]))));
+  const semua = rows(await getDocs(query(col("petugas"), where("status", "in", ["belum_lengkap", "aktif"])))).filter(bukanUji);
   const perBranch = {};
   semua.forEach((p) => { (perBranch[p.branch] = perBranch[p.branch] || []).push(p); });
   const tulis = {};
@@ -1202,16 +1210,16 @@ async function perbaruiRingkasanNasional(paksa) {
   /* Kunci sebaran per group: pDS/pYPCR/pBUD untuk 3 group lama (HP versi lama tetap membaca ini),
      nama group untuk group baru (mis. "Promotor") */
   const kunciDist = (g) => GRP_FIELD[g] || g;
-  GROUPS.forEach((g) => { dist[kunciDist(g)] = {}; });
+  groupsHitung().forEach((g) => { dist[kunciDist(g)] = {}; });
   const tambah = (m, x) => { m[x] = (m[x] || 0) + 1; };
-  semua.forEach((p) => { tambah(dist.semua, p.poinPeringkat || 0); if (GROUPS.includes(p.group)) tambah(dist[kunciDist(p.group)], p[fGrp(p.group)] || 0); });
+  semua.forEach((p) => { tambah(dist.semua, p.poinPeringkat || 0); if (groupsHitung().includes(p.group)) tambah(dist[kunciDist(p.group)], p[fGrp(p.group)] || 0); });
   /* Leaderboard nasional dari data yang sama — tidak perlu query terpisah */
   const top = (field, g) => semua.filter((p) => p.status === "aktif" && (!g || p.group === g))
     .sort((a, b) => (b[field] || 0) - (a[field] || 0)).slice(0, 20)
     .map((p) => ({ id: p.id, nama: namaTampil(p), group: p.group, area: p.area || "", regional: p.regional || "", poin: p[field] || 0 }));
   const kini = nowIso();
   const lb = { semua: top("poinPeringkat"), diperbarui: kini };
-  GROUPS.forEach((g) => { lb[g] = top(fGrp(g), g); });
+  groupsHitung().forEach((g) => { lb[g] = top(fGrp(g), g); });
   const kunci = Object.keys(tulis);
   for (let i = 0; i < kunci.length; i += 40) {
     const b = writeBatch(db);
@@ -1462,11 +1470,12 @@ async function rebuildKatalog() {
 async function rebuildLeaderboard() {
   /* Group baru tidak punya field poin sendiri → ambil dari top poinPeringkat (lebih banyak) lalu saring group-nya */
   const ambil = async (field, g) => rows(await getDocs(query(col("petugas"), orderBy(field, "desc"), limit(GRP_FIELD[g] || !g ? 25 : 200))))
-    .filter((p) => p.status === "aktif" && (!g || p.group === g)).slice(0, 20)
+    .filter((p) => p.status === "aktif" && bukanUji(p) && (!g || p.group === g)).slice(0, 20)
     .map((p) => ({ id: p.id, nama: namaTampil(p), group: p.group, area: p.area || "", regional: p.regional || "", poin: p[field] || 0 }));
   const data = { semua: await ambil("poinPeringkat"), diperbarui: nowIso() };
-  const per = await Promise.all(GROUPS.map((g) => ambil(fGrp(g), g)));
-  GROUPS.forEach((g, i) => { data[g] = per[i]; });
+  const gh = groupsHitung();
+  const per = await Promise.all(gh.map((g) => ambil(fGrp(g), g)));
+  gh.forEach((g, i) => { data[g] = per[i]; });
   await setDoc(doc(db, "publik", "leaderboard"), data);
   await setDoc(doc(db, "publik", "versi"), { leaderboard: data.diperbarui }, { merge: true });
   C.lb = data;
@@ -1488,7 +1497,7 @@ async function loadAdminStats() {
     ambil(query(col("petugas"), where("status", "==", "nonaktif"), limit(500))),
     ambil(query(col("redeem"), where("status", "==", "pending"), limit(300))),
     cntAtauNull(query(col("respons"), where("periode", "==", per))),
-    Promise.all(GROUPS.map((g) => cntAtauNull(query(col("respons"), where("grupPeriode", "==", g + "|" + per))))),
+    Promise.all(groupsHitung().map((g) => cntAtauNull(query(col("respons"), where("grupPeriode", "==", g + "|" + per))))),
     getAggregateFromServer(col("hasil"), { rata: average("benar"), soal: average("total") }).then((r) => r.data()).catch(() => ({ rata: null, soal: null })),
     ambil(query(col("peringatan"), where("status", "==", "baru"), limit(50))),
     ambil(col("organik")),
@@ -1501,9 +1510,9 @@ async function loadAdminStats() {
   C.adm.pindahCuriga = Object.keys(hitPindah).filter((id) => hitPindah[id] >= 2).map((id) => ({ id, n: hitPindah[id] })).sort((a, b) => b.n - a.n);
   const ada = (x) => x !== null && x !== undefined;
   const grup = hq && hq.grup ? hq.grup : null;
-  const aktifG = GROUPS.map((g) => (grup && grup[g] ? grup[g].aktif || 0 : null));
+  const aktifG = groupsHitung().map((g) => (grup && grup[g] ? grup[g].aktif || 0 : null));
   const aktif = grup ? aktifG.reduce((s, x) => s + (x || 0), 0) : null;
-  const belum = grup ? GROUPS.reduce((s, g) => s + ((grup[g] ? grup[g].total - grup[g].aktif : 0) || 0), 0) : null;
+  const belum = grup ? groupsHitung().reduce((s, g) => s + ((grup[g] ? grup[g].total - grup[g].aktif : 0) || 0), 0) : null;
   const review = rv ? rv.length : null, nonaktif = nonaktifL ? nonaktifL.length : null;
   const total = [aktif, belum, review, nonaktif].every(ada) ? aktif + belum + review + nonaktif : null;
   if (orgL) {
@@ -1514,7 +1523,7 @@ async function loadAdminStats() {
   C.adm.ringkasanHq = hq;
   loadTeritori(null);
   const kuAktif = listOf(C.adm.kuesioner).filter((k) => k.aktif);
-  const perGroup = GROUPS.map((g, i) => {
+  const perGroup = groupsHitung().map((g, i) => {
     const target = (aktifG[i] || 0) * Math.max(1, kuAktif.filter((k) => { const t = k.target || {}; return !t.group || t.group === "semua" || t.group === g; }).length);
     const isi = grpResp[i];
     return { g, anggota: aktifG[i], isi, target, pct: target && ada(isi) ? Math.round(isi / target * 100) : 0 };
@@ -1548,7 +1557,7 @@ async function loadTeritori(area) {
     /* Hanya yang SUDAH AKTIVASI — permintaan Admin, untuk mengejar aktivasi per teritori */
     await Promise.all(nama.map((n) => muatAtauRebuild(level, n).then((d) => {
       hasil[n] = {};
-      GROUPS.forEach((g) => { hasil[n][g] = { aktif: d.grup && d.grup[g] ? d.grup[g].aktif || 0 : 0 }; });
+      groupsHitung().forEach((g) => { hasil[n][g] = { aktif: d.grup && d.grup[g] ? d.grup[g].aktif || 0 : 0 }; });
     })));
     T.err = "";
     if (area) T.regional[area] = hasil; else T.area = hasil;
@@ -2051,6 +2060,35 @@ async function resetHp(userId) {
   b.delete(doc(db, "sesiAuth", hp.data().authUid));
   await b.commit();
   return true;
+}
+
+/* HAPUS TOTAL akun petugas yang salah daftar (mis. orang Organik yang daftar sebagai petugas, ID ngawur).
+   Menghapus akun + data pribadi + seluruh riwayatnya, melepas HP (supaya HP itu bisa dipakai daftar
+   Organik / akun yang benar), dan membebaskan ID Digipos-nya. TIDAK bisa dibatalkan.
+   Biaya: ±10 reads + 1 write per dokumen yang dihapus. */
+async function kumpulkanDataPetugas(userId) {
+  const q = (c) => getDocs(query(col(c), where("userId", "==", userId), limit(300))).then((s) => s.docs.map((d) => d.ref)).catch(() => []);
+  const [pd, hp, ledger, respons, hasil, jawaban, redeem, foto, peringatan] = await Promise.all([
+    getDoc(doc(db, "petugas", userId)), getDoc(doc(db, "perangkat", userId)),
+    q("ledger"), q("respons"), q("hasil"), q("jawaban"), q("redeem"), q("foto_aktivitas"), q("peringatan")
+  ]);
+  return { p: pd.exists() ? pd.data() : null, hp: hp.exists() ? hp.data() : null, refs: { ledger, respons, hasil, jawaban, redeem, foto, peringatan } };
+}
+async function hapusPetugasTotal(userId) {
+  const k = await kumpulkanDataPetugas(userId);
+  if (!k.p) throw new Error("Petugas tidak ditemukan.");
+  const semua = [].concat(...Object.values(k.refs));
+  semua.push(doc(db, "petugas_cek", userId), doc(db, "perangkat", userId));
+  if (k.hp && k.hp.authUid) semua.push(doc(db, "sesiAuth", k.hp.authUid));
+  for (let i = 0; i < semua.length; i += 400) {
+    const b = writeBatch(db);
+    semua.slice(i, i + 400).forEach((r) => b.delete(r));
+    await b.commit();
+  }
+  /* Nomor di kontak branch (untuk Organik) ikut dicabut; dokumen petugas dihapus PALING AKHIR */
+  if (k.p.branch) { try { await updateDoc(doc(db, "kontak", k.p.branch), { ["nomor." + userId]: deleteField() }); } catch (e) {} }
+  await deleteDoc(doc(db, "petugas", userId));
+  return { dokumen: semua.length + 1 };
 }
 
 /* Koreksi group salah input (mis. DS → Buddies). Poin per-group (pDS/pYPCR/pBUD) ikut dipindah ke
@@ -3040,13 +3078,13 @@ function vTeritori() {
   const sel = (v, tebal) => '<td class="mono" style="font-size:13px;' + (tebal ? "font-weight:700;" : "") + '">' + fmtNum(v.aktif) + "</td>";
   const baris = (nama, d, gaya, aksi) => {
     const tot = { aktif: 0 };
-    const sels = GROUPS.map((g) => { const v = (d && d[g]) || { aktif: 0 }; tot.aktif += v.aktif; return sel(v); }).join("");
+    const sels = groupsHitung().map((g) => { const v = (d && d[g]) || { aktif: 0 }; tot.aktif += v.aktif; return sel(v); }).join("");
     return '<tr style="' + gaya + '"><td>' + aksi + esc(nama) + "</td>" + sels + sel(tot, true) + "</tr>";
   };
   const semua = {};
   let isi = "";
   Object.keys(T.area).sort().forEach((a) => {
-    GROUPS.forEach((g) => { const v = T.area[a][g]; semua[g] = semua[g] || { aktif: 0 }; semua[g].aktif += v.aktif; });
+    groupsHitung().forEach((g) => { const v = T.area[a][g]; semua[g] = semua[g] || { aktif: 0 }; semua[g].aktif += v.aktif; });
     const buka = !!T.buka[a];
     isi += baris(a, T.area[a], "cursor:pointer;font-weight:600;", "<span>" + (buka ? "&#9662; " : "&#9656; ") + "</span>")
       .replace("<tr ", '<tr data-do="bukaTeritori" data-v="' + esc(a) + '" ');
@@ -3058,7 +3096,7 @@ function vTeritori() {
   });
   isi += baris("Total Nasional", semua, "font-weight:700;border-top:2px solid var(--border-strong);", "");
   return judul + (T.err ? '<div class="err" style="margin-bottom:10px;">' + esc(T.err) + "</div>" : "") +
-    '<div class="tbl-wrap" style="margin-bottom:6px;"><table><thead><tr><th>Teritori</th>' + GROUPS.map((g) => "<th>" + esc(g) + "</th>").join("") + "<th>Total</th></tr></thead><tbody>" + isi + "</tbody></table></div>" +
+    '<div class="tbl-wrap" style="margin-bottom:6px;"><table><thead><tr><th>Teritori</th>' + groupsHitung().map((g) => "<th>" + esc(g) + "</th>").join("") + "<th>Total</th></tr></thead><tbody>" + isi + "</tbody></table></div>" +
     '<div class="note" style="margin-bottom:18px;">Klik baris Area untuk melihat per Regional. Real-time, dihitung di server saat Dashboard dibuka.</div>';
 }
 
@@ -3074,7 +3112,7 @@ function aDashboard() {
   /* null = gagal dimuat → "–", jangan tampil 0 yang menyesatkan */
   const N = (x) => (x === null || x === undefined ? "&ndash;" : fmtNum(x));
   return head("Dashboard", "Periode " + bulan + " &middot; seluruh area", refresh) +
-    '<div class="sec-head"><h2>Tim Lapangan</h2><span class="lbl">' + GROUPS.map(esc).join(" &middot; ") + (s.ringkasanPer ? " &middot; ringkasan " + fmtWaktu(s.ringkasanPer) : "") + "</span></div>" +
+    '<div class="sec-head"><h2>Tim Lapangan</h2><span class="lbl">' + groupsHitung().map(esc).join(" &middot; ") + (s.ringkasanPer ? " &middot; ringkasan " + fmtWaktu(s.ringkasanPer) : "") + "</span></div>" +
     '<div class="note" style="margin:-4px 0 10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">Ringkasan (Dashboard, Organik, leaderboard, peringkat petugas) dihitung ulang otomatis sekali sehari saat Dashboard dibuka. ' +
       '<button class="btn btn-ghost btn-sm" data-do="perbaruiRingkasan"' + (C.adm.ringkasanBusy ? " disabled" : "") + ">" + (C.adm.ringkasanBusy ? "Menghitung&hellip;" : "Perbarui sekarang (&plusmn;1.800 reads)") + "</button></div>" +
     (s.aktif === null ? '<div class="err" style="margin-bottom:10px;">Ringkasan tim lapangan gagal dimuat. Coba Muat ulang.</div>' : "") +
@@ -3502,7 +3540,7 @@ function kartuWelcome() {
 
 function aPoin() {
   const d = S.draftAdj;
-  const chips = [["semua", "Semua"]].concat(GROUPS.map((g) => [g, g]));
+  const chips = [["semua", "Semua"]].concat(groupsHitung().map((g) => [g, g]));
   const cak = cakupanLb();
   let dataLb, judulLb, waktuLb;
   if (!cak) {
@@ -3589,12 +3627,15 @@ function aPengaturan() {
     "</div>" +
     '<div class="card" style="margin-bottom:18px;"><div class="card-title">Kelola Group Tim Lapangan</div>' +
       '<div style="font-size:13px;color:var(--ink-dim);margin-bottom:12px;">Group baru langsung dipakai di form Daftar, import Excel, Ubah/Koreksi Group, target tugas &amp; knowledge, leaderboard, dan dashboard Organik &mdash; tanpa update aplikasi. ' +
-        "Nama group <b>tidak bisa diubah/dihapus</b> setelah dibuat (dipakai di data petugas); kalau tidak dipakai lagi, sembunyikan dari form Daftar.</div>" +
-      '<div class="tbl-wrap"><table><thead><tr><th>Group</th><th>Form Daftar mandiri</th><th></th></tr></thead><tbody>' +
+        "Nama group <b>tidak bisa diubah/dihapus</b> setelah dibuat (dipakai di data petugas); kalau tidak dipakai lagi, sembunyikan dari form Daftar. " +
+        "<b>Akun uji</b>: anggotanya tetap bisa login &amp; dipakai tes, tapi tidak dihitung di dashboard, ringkasan Organik, unduhan, leaderboard &amp; peringkat (berlaku setelah Perbarui ringkasan).</div>" +
+      '<div class="tbl-wrap"><table><thead><tr><th>Group</th><th>Form Daftar mandiri</th><th>Statistik</th><th></th></tr></thead><tbody>' +
         GROUPS.map((g) => {
-          const tutup = GROUPS_TUTUP.includes(g);
-          return '<tr><td><span class="grp ' + grpClass(g) + '">' + esc(g) + "</span></td><td>" + (tutup ? '<span class="lbl">Disembunyikan</span>' : "Tampil") + "</td>" +
-            '<td style="text-align:right;"><button class="btn btn-ghost btn-sm" data-do="toggleTutupGroup" data-v="' + esc(g) + '">' + (tutup ? "Tampilkan" : "Sembunyikan") + "</button></td></tr>";
+          const tutup = GROUPS_TUTUP.includes(g), uji = GROUPS_UJI.includes(g), lama = !!GRP_FIELD[g];
+          return '<tr><td><span class="grp ' + grpClass(g) + '">' + esc(g) + "</span></td><td>" + (tutup || uji ? '<span class="lbl">Disembunyikan</span>' : "Tampil") + "</td>" +
+            "<td>" + (uji ? '<span class="pill pill-neutral">AKUN UJI &middot; tidak dihitung</span>' : "Dihitung") + "</td>" +
+            '<td style="text-align:right;white-space:nowrap;">' + (uji ? "" : '<button class="btn btn-ghost btn-sm" data-do="toggleTutupGroup" data-v="' + esc(g) + '">' + (tutup ? "Tampilkan" : "Sembunyikan") + "</button> ") +
+              (lama ? "" : '<button class="btn btn-ghost btn-sm" data-do="toggleUjiGroup" data-v="' + esc(g) + '">' + (uji ? "Hitung lagi" : "Jadikan akun uji") + "</button>") + "</td></tr>";
         }).join("") + "</tbody></table></div>" +
       '<div class="filters" style="margin-top:12px;"><input type="text" data-in="grupBaru" value="' + esc(S.grupBaru || "") + '" placeholder="Nama group baru, mis. Promotor" style="flex:1;min-width:180px;">' +
         '<button class="btn btn-primary btn-sm" data-do="tambahGroup" ' + (S.grupBusy ? "disabled" : "") + ">Tambah Group</button></div></div>" +
@@ -3667,7 +3708,11 @@ function modalDetail(d) {
       '<select data-status="' + esc(v) + '" class="grow" style="padding:9px;border-radius:9px;border:1px solid var(--border-strong);">' +
         ["belum_lengkap", "review", "aktif", "nonaktif"].map((s) => '<option value="' + s + '" ' + ((p.status || "aktif") === s ? "selected" : "") + ">" + STATUS_LABEL[s] + "</option>").join("") + "</select>" +
       (d.hp ? '<button class="btn btn-ghost btn-sm" data-do="resetHp" data-v="' + esc(v) + '">Reset HP</button>' : "") +
-      '<button class="btn btn-ghost btn-sm" data-do="tutupModal">Tutup</button></div></div></div>';
+      '<button class="btn btn-ghost btn-sm" data-do="tutupModal">Tutup</button></div>' +
+    '<div class="note" style="margin-top:14px;border:1px solid var(--red-line);background:var(--red-soft);">' +
+      "<b>Salah daftar?</b> (mis. orang Organik/bukan tim lapangan, ID ngawur). <b>Hapus total</b> menghapus akun, nomor, foto &amp; seluruh riwayat poinnya, melepas HP-nya, dan membebaskan ID Digipos ini. Tidak bisa dibatalkan &mdash; kalau ragu, cukup ubah status ke <i>nonaktif</i>." +
+      '<div style="margin-top:8px;"><button class="btn btn-danger btn-sm" data-do="hapusPetugasAdm" data-v="' + esc(v) + '"' + (S.hapusBusy ? " disabled" : "") + ">" + (S.hapusBusy ? "Menghapus&hellip;" : "Hapus total akun ini") + "</button></div></div>" +
+    "</div></div>";
 }
 function modalFotoRedeem(base, foto) {
   return '<div class="modal-bd" data-do="tutupModal"><div class="modal" data-stop="1"><div class="card-title">Verifikasi Foto Redeem</div>' +
@@ -4329,6 +4374,29 @@ const DO = {
     if (S.modal) DO.detailPetugas(v); else render();
   },
 
+  async hapusPetugasAdm(v) {
+    if (S.hapusBusy) return;
+    const baris = ((C.adm.petugas && C.adm.petugas.rows) || []).find((r) => r.id === v);
+    const nama = baris ? (baris.nama || baris.kode || v) : v;
+    let k;
+    try { k = await kumpulkanDataPetugas(v); } catch (e) { return toast("no", pesanGagal(e, "Gagal memeriksa data")); }
+    if (!k.p) return toast("no", "Petugas tidak ditemukan.");
+    const n = (x) => k.refs[x].length;
+    const redeemSelesai = n("redeem") ? "\n⚠ Ada " + n("redeem") + " data penukaran hadiah — ikut terhapus." : "";
+    const ketik = prompt("HAPUS TOTAL " + nama + " (" + v + ")?\n\n" +
+      "Yang dihapus: akun, nomor & foto, " + n("ledger") + " riwayat poin, " + n("respons") + " kuesioner, " + n("hasil") + " post test, " + n("redeem") + " penukaran, " + n("foto") + " foto aktivitas, ikatan HP." + redeemSelesai +
+      "\nPoin " + fmtNum(k.p.poinPeringkat || 0) + " hilang. TIDAK bisa dibatalkan.\n\nKetik ID Digipos-nya untuk konfirmasi:");
+    if (ketik === null) return;
+    if (String(ketik).trim() !== v) return toast("no", "ID tidak sama. Tidak ada yang dihapus.");
+    S.hapusBusy = true; render();
+    try {
+      const h = await hapusPetugasTotal(v);
+      if (C.adm.petugas && C.adm.petugas.rows) C.adm.petugas.rows = C.adm.petugas.rows.filter((r) => r.id !== v);
+      S.modal = null;
+      toast("ok", nama + " dihapus (" + fmtNum(h.dokumen) + " dokumen). HP-nya sudah lepas. Angka ringkasan/Organik bersih setelah Perbarui ringkasan.");
+    } catch (e) { toast("no", pesanGagal(e, "Gagal menghapus — sebagian data mungkin sudah terhapus, ulangi tombol yang sama")); }
+    S.hapusBusy = false; render();
+  },
   async bukaJedaAdm(v) {
     if (!confirm("Buka jeda pindah HP mandiri untuk " + v + "?\nPetugas bisa langsung pindah HP sendiri 1x lagi (tetap pakai 4 digit nomor).")) return;
     try {
@@ -4861,6 +4929,16 @@ const DO = {
       toast("ok", "Group \"" + nama + "\" ditambahkan. Langsung bisa dipakai di import, Ubah Group, form Daftar, dan target tugas.");
     } catch (e) { toast("no", pesanGagal(e, "Gagal menambah group")); }
     S.grupBusy = false; render();
+  },
+  async toggleUjiGroup(g) {
+    if (GRP_FIELD[g]) return toast("no", "Direct Sales, YPCR, dan Buddies tidak bisa dijadikan akun uji.");
+    const jadiUji = !GROUPS_UJI.includes(g);
+    if (!confirm(jadiUji
+      ? "Jadikan \"" + g + "\" group AKUN UJI?\nAnggotanya tetap bisa login & tes, tapi TIDAK dihitung di dashboard, Organik, unduhan, leaderboard & peringkat. Group ini juga disembunyikan dari form Daftar.\n\nKlik Perbarui ringkasan setelahnya supaya angka langsung bersih."
+      : "Hitung lagi \"" + g + "\" di statistik?")) return;
+    const uji = jadiUji ? GROUPS_UJI.concat([g]) : GROUPS_UJI.filter((x) => x !== g);
+    try { await simpanGroups(GROUPS.slice(), GROUPS_TUTUP.slice(), uji); toast("ok", "Tersimpan. Klik Perbarui ringkasan di Dashboard."); render(); }
+    catch (e) { toast("no", pesanGagal(e, "Gagal menyimpan")); }
   },
   async toggleTutupGroup(g) {
     const tutup = GROUPS_TUTUP.includes(g) ? GROUPS_TUTUP.filter((x) => x !== g) : GROUPS_TUTUP.concat([g]);
